@@ -20,6 +20,11 @@ impl EnvironmentApi {
         EnvironmentApi {}
     }
 }
+impl Default for EnvironmentApi {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[cfg(windows)]
 impl Environment for EnvironmentApi {

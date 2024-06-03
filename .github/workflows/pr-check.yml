@@ -8,8 +8,8 @@ on:
       - release*
 
 jobs:
-  unit-tests:
-    name: Unit Tests
+  tests:
+    name: Tests
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,7 +45,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: cargo fetch 
+        run: cargo fetch
 
       - name: Run Tests
         run: cargo test --frozen --all-features

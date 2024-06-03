@@ -68,7 +68,7 @@ fn find_conda_binary_in_known_locations(
     for location in known_locations {
         for bin in &conda_bin_names {
             let conda_path = location.join(bin);
-            if let Some(metadata) = std::fs::metadata(&conda_path).ok() {
+            if let Ok(metadata) = std::fs::metadata(&conda_path) {
                 if metadata.is_file() || metadata.is_symlink() {
                     return Some(conda_path);
                 }

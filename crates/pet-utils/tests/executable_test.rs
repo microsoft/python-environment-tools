@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use common::resolve_test_path;
 
+#[cfg(unix)]
 #[test]
 fn find_executables() {
     // .venv

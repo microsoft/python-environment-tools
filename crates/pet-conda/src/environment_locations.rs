@@ -15,7 +15,7 @@ use std::{
 pub fn get_conda_environment_paths(environment: &CondaEnvironmentVariables) -> Vec<PathBuf> {
     let mut env_paths = get_conda_envs_from_environment_txt(environment)
         .iter()
-        .map(|e| PathBuf::from(e))
+        .map(PathBuf::from)
         .collect::<Vec<PathBuf>>();
 
     let mut env_paths_from_conda_rc = get_conda_environment_paths_from_conda_rc(environment);
@@ -83,7 +83,7 @@ pub fn get_conda_environment_paths_from_known_paths(
             if let Ok(entries) = fs::read_dir(full_path) {
                 for entry in entries.filter_map(Result::ok) {
                     let path = entry.path();
-                    if let Some(meta) = fs::metadata(&path).ok() {
+                    if let Ok(meta) = fs::metadata(&path) {
                         if meta.is_dir() {
                             env_paths.push(path);
                         }
@@ -92,7 +92,7 @@ pub fn get_conda_environment_paths_from_known_paths(
             }
         }
     }
-    return env_paths;
+    env_paths
 }
 
 pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
@@ -179,10 +179,10 @@ pub fn get_known_conda_install_locations(environment: &CondaEnvironmentVariables
         PathBuf::from("/miniforge3"),
     ];
     if let Some(ref home) = environment.home {
-        known_paths.push(PathBuf::from(home.clone()).join("anaconda3"));
-        known_paths.push(PathBuf::from(home.clone()).join("miniconda3"));
-        known_paths.push(PathBuf::from(home.clone()).join("miniforge3"));
-        known_paths.push(PathBuf::from(home).join(".conda"));
+        known_paths.push(home.clone().join("anaconda3"));
+        known_paths.push(home.clone().join("miniconda3"));
+        known_paths.push(home.clone().join("miniforge3"));
+        known_paths.push(home.join(".conda"));
     }
     known_paths.append(get_known_conda_locations(environment).as_mut());
     known_paths.dedup();
@@ -224,8 +224,8 @@ pub fn get_known_conda_locations(environment: &CondaEnvironmentVariables) -> Vec
         PathBuf::from("/miniconda3/bin"),
     ];
     if let Some(ref home) = environment.home {
-        known_paths.push(PathBuf::from(home.clone()).join("anaconda3/bin"));
-        known_paths.push(PathBuf::from(home).join("miniconda3/bin"));
+        known_paths.push(home.clone().join("anaconda3/bin"));
+        known_paths.push(home.join("miniconda3/bin"));
     }
     known_paths.append(&mut environment.known_global_search_locations.clone());
     known_paths

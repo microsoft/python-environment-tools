@@ -25,7 +25,7 @@ pub struct CondaEnvironment {
 
 impl CondaEnvironment {
     pub fn from(path: &Path, manager: &Option<CondaManager>) -> Option<Self> {
-        get_conda_environment_info(&path.into(), manager)
+        get_conda_environment_info(path, manager)
     }
 
     pub fn to_python_environment(
@@ -38,15 +38,15 @@ impl CondaEnvironment {
         if is_conda_install(&self.prefix) {
             name = Some("base".to_string());
         } else {
-            name = match self.prefix.file_name() {
-                Some(name) => Some(name.to_str().unwrap_or_default().to_string()),
-                None => None,
-            };
+            name = self
+                .prefix
+                .file_name()
+                .map(|name| name.to_str().unwrap_or_default().to_string());
         }
         // if the conda install folder is parent of the env folder, then we can use named activation.
         // E.g. conda env is = <conda install>/envs/<env name>
         // Then we can use `<conda install>/bin/conda activate -n <env name>`
-        if !self.prefix.starts_with(&conda_dir) {
+        if !self.prefix.starts_with(conda_dir) {
             name = None;
         }
         // This is a root env.
@@ -62,7 +62,7 @@ impl CondaEnvironment {
     }
 }
 fn get_conda_environment_info(
-    env_path: &PathBuf,
+    env_path: &Path,
     manager: &Option<CondaManager>,
 ) -> Option<CondaEnvironment> {
     if !is_conda_env(env_path) {
@@ -74,35 +74,34 @@ fn get_conda_environment_info(
         Some(manager) => Some(manager.conda_dir.clone()),
         None => get_conda_installation_used_to_create_conda_env(env_path),
     };
-    let env_path = env_path.clone();
-    if let Some(python_binary) = find_executable(&env_path) {
-        if let Some(package_info) = CondaPackageInfo::from(&env_path, &Package::Python) {
-            return Some(CondaEnvironment {
-                prefix: env_path,
+    if let Some(python_binary) = find_executable(env_path) {
+        if let Some(package_info) = CondaPackageInfo::from(env_path, &Package::Python) {
+            Some(CondaEnvironment {
+                prefix: env_path.into(),
                 executable: Some(python_binary),
                 version: Some(package_info.version),
                 conda_dir: conda_install_folder,
                 arch: package_info.arch,
-            });
+            })
         } else {
             // No python in this environment.
-            return Some(CondaEnvironment {
-                prefix: env_path,
+            Some(CondaEnvironment {
+                prefix: env_path.into(),
                 executable: Some(python_binary),
                 version: None,
                 conda_dir: conda_install_folder,
                 arch: None,
-            });
+            })
         }
     } else {
         // No python in this environment.
-        return Some(CondaEnvironment {
-            prefix: env_path,
+        Some(CondaEnvironment {
+            prefix: env_path.into(),
             executable: None,
             version: None,
             conda_dir: conda_install_folder,
             arch: None,
-        });
+        })
     }
 }
 
@@ -114,7 +113,7 @@ fn get_conda_environment_info(
  * Sometimes the cmd line contains the fully qualified path to the conda install folder.
  * This function returns the path to the conda installation that was used to create the environment.
  */
-pub fn get_conda_installation_used_to_create_conda_env(env_path: &PathBuf) -> Option<PathBuf> {
+pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Option<PathBuf> {
     // Possible the env_path is the root conda install folder.
     if is_conda_install(env_path) {
         return Some(env_path.to_path_buf());
@@ -162,9 +161,6 @@ pub fn get_activation_command(
     manager: &EnvManager,
     name: Option<String>,
 ) -> Option<Vec<String>> {
-    if env.executable.is_none() {
-        return None;
-    }
     let conda_exe = manager.executable.to_str().unwrap_or_default().to_string();
     if let Some(name) = name {
         Some(vec![

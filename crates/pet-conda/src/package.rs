@@ -79,7 +79,7 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
 
     let history = path.join("history");
     let package_entry = format!(":{}-", name.to_name());
-    if let Some(history_contents) = fs::read_to_string(&history).ok() {
+    if let Ok(history_contents) = fs::read_to_string(history) {
         for line in history_contents
             .lines()
             .filter(|l| l.contains(&package_entry))
@@ -88,8 +88,8 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
             // +conda-forge/osx-arm64::psutil-5.9.8-py312he37b823_0
             // +conda-forge/osx-arm64::python-3.12.2-hdf0ec26_0_cpython
             // +conda-forge/osx-arm64::python_abi-3.12-4_cp312
-            let regex = get_package_version_history_regex(&name);
-            if let Some(captures) = regex.captures(&line) {
+            let regex = get_package_version_history_regex(name);
+            if let Some(captures) = regex.captures(line) {
                 if let Some(version) = captures.get(1) {
                     if let Some(hash) = captures.get(2) {
                         let package_path = format!(
@@ -109,9 +109,9 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
                         // }
                         // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
                         // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
-                        if let Some(contents) = read_to_string(&package_path).ok() {
-                            if let Some(js) =
-                                serde_json::from_str::<CondaMetaPackageStructure>(&contents).ok()
+                        if let Ok(contents) = read_to_string(&package_path) {
+                            if let Ok(js) =
+                                serde_json::from_str::<CondaMetaPackageStructure>(&contents)
                             {
                                 if let Some(channel) = js.channel {
                                     if channel.ends_with("64") {
@@ -147,7 +147,7 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
     );
 
     let package_name = format!("{}-", name.to_name());
-    let regex = get_package_version_regex(&name);
+    let regex = get_package_version_regex(name);
 
     // Fallback, slower approach of enumerating all files.
     if let Ok(entries) = fs::read_dir(path) {
@@ -167,9 +167,9 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
                         // }
                         // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
                         // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
-                        if let Some(contents) = read_to_string(&path).ok() {
-                            if let Some(js) =
-                                serde_json::from_str::<CondaMetaPackageStructure>(&contents).ok()
+                        if let Ok(contents) = read_to_string(&path) {
+                            if let Ok(js) =
+                                serde_json::from_str::<CondaMetaPackageStructure>(&contents)
                             {
                                 if let Some(channel) = js.channel {
                                     if channel.ends_with("64") {

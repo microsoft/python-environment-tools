@@ -52,9 +52,7 @@ fn get_conda_manager_from_env(env_path: &Path) -> Option<CondaManager> {
 
     // We've been given an env thats been created using the -p flag.
     // Get the conda install folder from the history file.
-    if let Some(conda_install_folder) =
-        get_conda_installation_used_to_create_conda_env(&env_path.to_path_buf())
-    {
+    if let Some(conda_install_folder) = get_conda_installation_used_to_create_conda_env(env_path) {
         return get_conda_manager(&conda_install_folder);
     }
     None
@@ -159,7 +157,10 @@ impl Locator for Conda<'_> {
                         return Some(env);
                     }
                 } else {
-                    error!("Unable to find conda Install folder conda install folder env: {:?}", env);
+                    error!(
+                        "Unable to find conda Install folder conda install folder env: {:?}",
+                        env
+                    );
                 }
             }
         }
