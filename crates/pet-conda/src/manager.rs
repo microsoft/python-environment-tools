@@ -1,14 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+use crate::{
+    environment_locations::get_known_conda_locations, package::CondaPackageInfo,
+    utils::CondaEnvironmentVariables,
+};
 use log::warn;
-use pet_core::{manager::EnvManager, manager::EnvManagerType, os_environment::Environment};
+use pet_core::{manager::EnvManager, manager::EnvManagerType};
 use std::{
     env,
     path::{Path, PathBuf},
 };
-
-use crate::{environment_locations::get_known_conda_locations, package::CondaPackageInfo};
 
 fn get_conda_executable(path: &Path) -> Option<PathBuf> {
     #[cfg(windows)]
@@ -42,8 +44,8 @@ fn get_conda_bin_names() -> Vec<&'static str> {
 }
 
 /// Find the conda binary on the PATH environment variable
-pub fn find_conda_binary_on_path(environment: &dyn Environment) -> Option<PathBuf> {
-    let paths = environment.get_env_var("PATH".to_string())?;
+pub fn find_conda_binary_on_path(environment: &CondaEnvironmentVariables) -> Option<PathBuf> {
+    let paths = environment.path.clone()?;
     for path in env::split_paths(&paths) {
         for bin in get_conda_bin_names() {
             let conda_path = path.join(bin);
@@ -58,7 +60,9 @@ pub fn find_conda_binary_on_path(environment: &dyn Environment) -> Option<PathBu
 }
 
 /// Find conda binary in known locations
-fn find_conda_binary_in_known_locations(environment: &dyn Environment) -> Option<PathBuf> {
+fn find_conda_binary_in_known_locations(
+    environment: &CondaEnvironmentVariables,
+) -> Option<PathBuf> {
     let conda_bin_names = get_conda_bin_names();
     let known_locations = get_known_conda_locations(environment);
     for location in known_locations {
@@ -75,7 +79,7 @@ fn find_conda_binary_in_known_locations(environment: &dyn Environment) -> Option
 }
 
 /// Find the conda binary on the system
-pub fn find_conda_binary(environment: &dyn Environment) -> Option<PathBuf> {
+pub fn find_conda_binary(environment: &CondaEnvironmentVariables) -> Option<PathBuf> {
     let conda_binary_on_path = find_conda_binary_on_path(environment);
     match conda_binary_on_path {
         Some(conda_binary_on_path) => Some(conda_binary_on_path),

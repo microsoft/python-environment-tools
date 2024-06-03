@@ -1,37 +1,44 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-use super::{is_conda_env_location, is_conda_install_location, utils::get_conda_package_info};
 use crate::{
-    messaging::{
-        Architecture, EnvManager, PythonEnvironment, PythonEnvironmentBuilder,
-        PythonEnvironmentCategory,
-    },
-    utils::find_python_binary_path,
+    manager::CondaManager,
+    package::{CondaPackageInfo, Package},
+    utils::{is_conda_env, is_conda_install},
 };
-use std::path::PathBuf;
+use pet_core::{
+    arch::Architecture,
+    manager::EnvManager,
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+};
+use pet_utils::executable::find_executable;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct CondaEnvironment {
-    pub env_path: PathBuf,
-    pub python_executable_path: Option<PathBuf>,
+    pub prefix: PathBuf,
+    pub executable: Option<PathBuf>,
     pub version: Option<String>,
-    pub conda_install_folder: Option<PathBuf>,
+    pub conda_dir: Option<PathBuf>,
     pub arch: Option<Architecture>,
 }
 
 impl CondaEnvironment {
+    pub fn from(path: &Path, manager: &Option<CondaManager>) -> Option<Self> {
+        get_conda_environment_info(&path.into(), manager)
+    }
+
     pub fn to_python_environment(
         &self,
         conda_manager: EnvManager,
-        conda_manager_dir: &PathBuf,
+        conda_dir: &PathBuf,
     ) -> PythonEnvironment {
         #[allow(unused_assignments)]
         let mut name: Option<String> = None;
-        if is_conda_install_location(&self.env_path) {
+        if is_conda_install(&self.prefix) {
             name = Some("base".to_string());
         } else {
-            name = match self.env_path.file_name() {
+            name = match self.prefix.file_name() {
                 Some(name) => Some(name.to_str().unwrap_or_default().to_string()),
                 None => None,
             };
@@ -39,59 +46,64 @@ impl CondaEnvironment {
         // if the conda install folder is parent of the env folder, then we can use named activation.
         // E.g. conda env is = <conda install>/envs/<env name>
         // Then we can use `<conda install>/bin/conda activate -n <env name>`
-        if !self.env_path.starts_with(&conda_manager_dir) {
+        if !self.prefix.starts_with(&conda_dir) {
             name = None;
         }
         // This is a root env.
         let builder = PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Conda)
-            .python_executable_path(self.python_executable_path.clone())
+            .executable(self.executable.clone())
             .version(self.version.clone())
-            .env_path(Some(self.env_path.clone()))
+            .prefix(Some(self.prefix.clone()))
             .arch(self.arch.clone())
-            .env_manager(Some(conda_manager.clone()))
-            .python_run_command(get_activation_command(self, &conda_manager, name.clone()));
+            .name(name.clone())
+            .manager(Some(conda_manager.clone()));
 
-        if let Some(name) = name {
-            builder.name(name).build()
-        } else {
-            builder.build()
-        }
+        builder.build()
     }
 }
-pub fn get_conda_environment_info(env_path: &PathBuf) -> Option<CondaEnvironment> {
-    if is_conda_env_location(env_path) {
-        let conda_install_folder = get_conda_installation_used_to_create_conda_env(env_path);
-        let env_path = env_path.clone();
-        if let Some(python_binary) = find_python_binary_path(&env_path) {
-            if let Some(package_info) = get_conda_package_info(&env_path, "python") {
-                return Some(CondaEnvironment {
-                    env_path,
-                    python_executable_path: Some(python_binary),
-                    version: Some(package_info.version),
-                    conda_install_folder,
-                    arch: package_info.arch,
-                });
-            } else {
-                return Some(CondaEnvironment {
-                    env_path,
-                    python_executable_path: Some(python_binary),
-                    version: None,
-                    conda_install_folder,
-                    arch: None,
-                });
-            }
-        } else {
+fn get_conda_environment_info(
+    env_path: &PathBuf,
+    manager: &Option<CondaManager>,
+) -> Option<CondaEnvironment> {
+    if !is_conda_env(env_path) {
+        // Not a conda environment (neither root nor a separate env).
+        return None;
+    }
+    // If we know the conda install folder, then we can use it.
+    let conda_install_folder = match manager {
+        Some(manager) => Some(manager.conda_dir.clone()),
+        None => get_conda_installation_used_to_create_conda_env(env_path),
+    };
+    let env_path = env_path.clone();
+    if let Some(python_binary) = find_executable(&env_path) {
+        if let Some(package_info) = CondaPackageInfo::from(&env_path, &Package::Python) {
             return Some(CondaEnvironment {
-                env_path,
-                python_executable_path: None,
+                prefix: env_path,
+                executable: Some(python_binary),
+                version: Some(package_info.version),
+                conda_dir: conda_install_folder,
+                arch: package_info.arch,
+            });
+        } else {
+            // No python in this environment.
+            return Some(CondaEnvironment {
+                prefix: env_path,
+                executable: Some(python_binary),
                 version: None,
-                conda_install_folder,
+                conda_dir: conda_install_folder,
                 arch: None,
             });
         }
+    } else {
+        // No python in this environment.
+        return Some(CondaEnvironment {
+            prefix: env_path,
+            executable: None,
+            version: None,
+            conda_dir: conda_install_folder,
+            arch: None,
+        });
     }
-
-    None
 }
 
 /**
@@ -104,13 +116,13 @@ pub fn get_conda_environment_info(env_path: &PathBuf) -> Option<CondaEnvironment
  */
 pub fn get_conda_installation_used_to_create_conda_env(env_path: &PathBuf) -> Option<PathBuf> {
     // Possible the env_path is the root conda install folder.
-    if is_conda_install_location(env_path) {
+    if is_conda_install(env_path) {
         return Some(env_path.to_path_buf());
     }
 
     // If this environment is in a folder named `envs`, then the parent directory of `envs` is the root conda install folder.
     if let Some(parent) = env_path.ancestors().nth(2) {
-        if is_conda_install_location(parent) {
+        if is_conda_install(parent) {
             return Some(parent.to_path_buf());
         }
     }
@@ -150,10 +162,10 @@ pub fn get_activation_command(
     manager: &EnvManager,
     name: Option<String>,
 ) -> Option<Vec<String>> {
-    if env.python_executable_path.is_none() {
+    if env.executable.is_none() {
         return None;
     }
-    let conda_exe = manager.executable_path.to_str().unwrap().to_string();
+    let conda_exe = manager.executable.to_str().unwrap_or_default().to_string();
     if let Some(name) = name {
         Some(vec![
             conda_exe,
@@ -167,7 +179,7 @@ pub fn get_activation_command(
             conda_exe,
             "run".to_string(),
             "-p".to_string(),
-            env.env_path.to_str().unwrap().to_string(),
+            env.prefix.to_str().unwrap().to_string(),
             "python".to_string(),
         ])
     }

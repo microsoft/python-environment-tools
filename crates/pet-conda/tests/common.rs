@@ -1,9 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{collections::HashMap, path::PathBuf};
-
-use pet_core::os_environment::Environment;
+use pet_conda::utils::CondaEnvironmentVariables;
+use std::path::PathBuf;
 
 #[allow(dead_code)]
 pub fn resolve_test_path(paths: &[&str]) -> PathBuf {
@@ -15,38 +14,19 @@ pub fn resolve_test_path(paths: &[&str]) -> PathBuf {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
-pub struct TestEnvironment {
-    vars: HashMap<String, String>,
-    home: Option<PathBuf>,
-    root: Option<PathBuf>,
-    globals_locations: Vec<PathBuf>,
-}
-#[allow(dead_code)]
-pub fn create_test_environment(
-    root: Option<PathBuf>,
-    home: Option<PathBuf>,
-    vars: HashMap<String, String>,
-    globals_locations: Vec<PathBuf>,
-) -> TestEnvironment {
-    impl Environment for TestEnvironment {
-        fn get_env_var(&self, key: String) -> Option<String> {
-            self.vars.get(&key).cloned()
-        }
-        fn get_root(&self) -> Option<PathBuf> {
-            self.root.clone()
-        }
-        fn get_user_home(&self) -> Option<PathBuf> {
-            self.home.clone()
-        }
-        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-            self.globals_locations.clone()
-        }
-    }
-    TestEnvironment {
-        vars,
-        home,
-        root,
-        globals_locations,
+pub fn create_env_variables(home: PathBuf, root: PathBuf) -> CondaEnvironmentVariables {
+    CondaEnvironmentVariables {
+        home: Some(home),
+        root: Some(root),
+        allusersprofile: None,
+        conda_prefix: None,
+        conda_root: None,
+        condarc: None,
+        homedrive: None,
+        known_global_search_locations: vec![],
+        path: None,
+        programdata: None,
+        userprofile: None,
+        xdg_config_home: None,
     }
 }

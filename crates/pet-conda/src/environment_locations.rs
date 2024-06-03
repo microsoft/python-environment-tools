@@ -2,28 +2,17 @@
 // Licensed under the MIT License.
 
 use crate::{
-    conda_rc::get_conda_conda_rc,
-    utils::{is_conda_env, is_conda_install},
+    conda_rc::Condarc,
+    utils::{is_conda_env, is_conda_install, CondaEnvironmentVariables},
 };
 use log::trace;
-use pet_core::os_environment::Environment;
 use std::{
     fs,
     path::{Path, PathBuf},
+    thread,
 };
 
-// use super::conda_rc::get_conda_conda_rc;
-// use crate::{
-//     conda::{is_conda_env_location, is_conda_install_location},
-//     known::Environment,
-// };
-// use log::trace;
-// use std::{
-//     collections::HashSet,
-//     path::{Path, PathBuf},
-// };
-
-pub fn get_conda_environment_paths(environment: &dyn Environment) -> Vec<PathBuf> {
+pub fn get_conda_environment_paths(environment: &CondaEnvironmentVariables) -> Vec<PathBuf> {
     let mut env_paths = get_conda_envs_from_environment_txt(environment)
         .iter()
         .map(|e| PathBuf::from(e))
@@ -38,16 +27,26 @@ pub fn get_conda_environment_paths(environment: &dyn Environment) -> Vec<PathBuf
     let mut envs_from_known_paths = get_known_conda_install_locations(environment);
     env_paths.append(&mut envs_from_known_paths);
 
+    env_paths.dedup();
+
     // For each env, check if we have a conda install directory in them and
     // & then iterate through the list of envs in the envs directory.
-    for env_path in env_paths.clone().iter().filter(|e| is_conda_env(e)) {
-        let envs = get_environments_in_conda_dir(&env_path);
-        env_paths.extend(envs);
+    // let env_paths = vec![];
+    let mut threads = vec![];
+    for path in env_paths {
+        let path = path.clone();
+        threads.push(thread::spawn(move || get_environments(&path)));
     }
 
-    // Remove duplicates.
-    env_paths.dedup();
-    env_paths
+    let mut result = vec![];
+    for thread in threads {
+        if let Ok(envs) = thread.join() {
+            result.extend(envs);
+        }
+    }
+
+    result.dedup();
+    result
 }
 
 /**
@@ -55,17 +54,21 @@ pub fn get_conda_environment_paths(environment: &dyn Environment) -> Vec<PathBuf
  * <user home>/.conda/envs
  * <user home>/AppData/Local/conda/conda/envs
  */
-pub fn get_conda_environment_paths_from_conda_rc(environment: &dyn Environment) -> Vec<PathBuf> {
-    if let Some(paths) = get_conda_conda_rc(environment) {
-        paths.env_dirs
+pub fn get_conda_environment_paths_from_conda_rc(
+    environment: &CondaEnvironmentVariables,
+) -> Vec<PathBuf> {
+    if let Some(conda_rc) = Condarc::from(environment) {
+        conda_rc.env_dirs
     } else {
         vec![]
     }
 }
 
-pub fn get_conda_environment_paths_from_known_paths(environment: &dyn Environment) -> Vec<PathBuf> {
+pub fn get_conda_environment_paths_from_known_paths(
+    environment: &CondaEnvironmentVariables,
+) -> Vec<PathBuf> {
     let mut env_paths: Vec<PathBuf> = vec![];
-    if let Some(home) = environment.get_user_home() {
+    if let Some(ref home) = environment.home {
         let known_conda_paths = [
             PathBuf::from(".conda").join("envs"),
             PathBuf::from("AppData")
@@ -92,7 +95,7 @@ pub fn get_conda_environment_paths_from_known_paths(environment: &dyn Environmen
     return env_paths;
 }
 
-pub fn get_environments_in_conda_dir(conda_dir: &Path) -> Vec<PathBuf> {
+pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
     let mut envs: Vec<PathBuf> = vec![];
 
     if is_conda_install(conda_dir) {
@@ -114,9 +117,11 @@ pub fn get_environments_in_conda_dir(conda_dir: &Path) -> Vec<PathBuf> {
     envs
 }
 
-pub fn get_conda_envs_from_environment_txt(environment: &dyn Environment) -> Vec<PathBuf> {
+pub fn get_conda_envs_from_environment_txt(
+    environment: &CondaEnvironmentVariables,
+) -> Vec<PathBuf> {
     let mut envs: Vec<PathBuf> = vec![];
-    if let Some(home) = environment.get_user_home() {
+    if let Some(ref home) = environment.home {
         let home = Path::new(&home);
         let environment_txt = home.join(".conda").join("environments.txt");
         if let Ok(reader) = fs::read_to_string(environment_txt.clone()) {
@@ -131,13 +136,11 @@ pub fn get_conda_envs_from_environment_txt(environment: &dyn Environment) -> Vec
 }
 
 #[cfg(windows)]
-pub fn get_known_conda_install_locations(environment: &dyn Environment) -> Vec<PathBuf> {
-    let user_profile = environment.get_env_var("USERPROFILE".to_string()).unwrap();
-    let program_data = environment.get_env_var("PROGRAMDATA".to_string()).unwrap();
-    let all_user_profile = environment
-        .get_env_var("ALLUSERSPROFILE".to_string())
-        .unwrap();
-    let home_drive = environment.get_env_var("HOMEDRIVE".to_string()).unwrap();
+pub fn get_known_conda_install_locations(environment: &CondaEnvironmentVariables) -> Vec<PathBuf> {
+    let user_profile = environment.userprofile.clone().unwrap_or_default();
+    let program_data = environment.programdata.clone().unwrap_or_default();
+    let all_user_profile = environment.allusersprofile.clone().unwrap_or_default();
+    let home_drive = environment.homedrive.clone().unwrap_or_default();
     let mut known_paths = vec![
         Path::new(&user_profile).join("Anaconda3"),
         Path::new(&program_data).join("Anaconda3"),
@@ -150,7 +153,7 @@ pub fn get_known_conda_install_locations(environment: &dyn Environment) -> Vec<P
         Path::new(&all_user_profile).join("miniforge3"),
         Path::new(&home_drive).join("miniforge3"),
     ];
-    if let Some(home) = environment.get_user_home() {
+    if let Some(home) = environment.clone().home {
         known_paths.push(PathBuf::from(home.clone()).join("anaconda3"));
         known_paths.push(PathBuf::from(home.clone()).join("miniconda3"));
         known_paths.push(PathBuf::from(home.clone()).join("miniforge3"));
@@ -160,7 +163,7 @@ pub fn get_known_conda_install_locations(environment: &dyn Environment) -> Vec<P
 }
 
 #[cfg(unix)]
-pub fn get_known_conda_install_locations(environment: &dyn Environment) -> Vec<PathBuf> {
+pub fn get_known_conda_install_locations(environment: &CondaEnvironmentVariables) -> Vec<PathBuf> {
     let mut known_paths = vec![
         PathBuf::from("/opt/anaconda3"),
         PathBuf::from("/opt/miniconda3"),
@@ -175,23 +178,23 @@ pub fn get_known_conda_install_locations(environment: &dyn Environment) -> Vec<P
         PathBuf::from("/miniforge3"),
         PathBuf::from("/miniforge3"),
     ];
-    if let Some(home) = environment.get_user_home() {
+    if let Some(ref home) = environment.home {
         known_paths.push(PathBuf::from(home.clone()).join("anaconda3"));
         known_paths.push(PathBuf::from(home.clone()).join("miniconda3"));
         known_paths.push(PathBuf::from(home.clone()).join("miniforge3"));
         known_paths.push(PathBuf::from(home).join(".conda"));
     }
+    known_paths.append(get_known_conda_locations(environment).as_mut());
+    known_paths.dedup();
     known_paths
 }
 
 #[cfg(windows)]
-pub fn get_known_conda_locations(environment: &dyn Environment) -> Vec<PathBuf> {
-    let user_profile = environment.get_env_var("USERPROFILE".to_string()).unwrap();
-    let program_data = environment.get_env_var("PROGRAMDATA".to_string()).unwrap();
-    let all_user_profile = environment
-        .get_env_var("ALLUSERSPROFILE".to_string())
-        .unwrap();
-    let home_drive = environment.get_env_var("HOMEDRIVE".to_string()).unwrap();
+pub fn get_known_conda_locations(environment: &CondaEnvironmentVariables) -> Vec<PathBuf> {
+    let user_profile = environment.userprofile.clone().unwrap_or_default();
+    let program_data = environment.programdata.clone().unwrap_or_default();
+    let all_user_profile = environment.allusersprofile.clone().unwrap_or_default();
+    let home_drive = environment.homedrive.clone().unwrap_or_default();
     let mut known_paths = vec![
         Path::new(&user_profile).join("Anaconda3\\Scripts"),
         Path::new(&program_data).join("Anaconda3\\Scripts"),
@@ -202,12 +205,12 @@ pub fn get_known_conda_locations(environment: &dyn Environment) -> Vec<PathBuf> 
         Path::new(&all_user_profile).join("Miniconda3\\Scripts"),
         Path::new(&home_drive).join("Miniconda3\\Scripts"),
     ];
-    known_paths.append(&mut environment.get_know_global_search_locations());
+    known_paths.append(&mut environment.known_global_search_locations.clone());
     known_paths
 }
 
 #[cfg(unix)]
-pub fn get_known_conda_locations(environment: &dyn Environment) -> Vec<PathBuf> {
+pub fn get_known_conda_locations(environment: &CondaEnvironmentVariables) -> Vec<PathBuf> {
     let mut known_paths = vec![
         PathBuf::from("/opt/anaconda3/bin"),
         PathBuf::from("/opt/miniconda3/bin"),
@@ -220,10 +223,10 @@ pub fn get_known_conda_locations(environment: &dyn Environment) -> Vec<PathBuf> 
         PathBuf::from("/anaconda3/bin"),
         PathBuf::from("/miniconda3/bin"),
     ];
-    if let Some(home) = environment.get_user_home() {
+    if let Some(ref home) = environment.home {
         known_paths.push(PathBuf::from(home.clone()).join("anaconda3/bin"));
         known_paths.push(PathBuf::from(home).join("miniconda3/bin"));
     }
-    known_paths.append(&mut environment.get_know_global_search_locations());
+    known_paths.append(&mut environment.known_global_search_locations.clone());
     known_paths
 }

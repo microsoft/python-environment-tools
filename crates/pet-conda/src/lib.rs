@@ -3,8 +3,9 @@
 
 pub mod conda_rc;
 pub mod environment_locations;
-pub mod package;
+pub mod environments;
 pub mod manager;
+pub mod package;
 pub mod utils;
 
 pub fn add(left: usize, right: usize) -> usize {

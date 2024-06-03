@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use common::resolve_test_path;
 
+#[cfg(unix)]
 #[test]
 fn empty_result_for_bogus_paths() {
     let path: PathBuf = resolve_test_path(&["unix", "bogus_path"]).into();
@@ -15,6 +16,7 @@ fn empty_result_for_bogus_paths() {
     assert!(pkg.is_none());
 }
 
+#[cfg(unix)]
 #[test]
 fn get_conda_package_info() {
     let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03"]).into();
@@ -33,6 +35,7 @@ fn get_conda_package_info() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn get_python_package_info() {
     let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03"]).into();
@@ -50,6 +53,8 @@ fn get_python_package_info() {
         ])
     );
 }
+
+#[cfg(unix)]
 #[test]
 fn get_conda_package_info_without_history() {
     let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03-without-history"]).into();
@@ -68,6 +73,7 @@ fn get_conda_package_info_without_history() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn get_python_package_info_without_history() {
     let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03-without-history"]).into();

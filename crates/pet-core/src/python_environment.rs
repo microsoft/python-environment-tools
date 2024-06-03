@@ -126,43 +126,43 @@ impl PythonEnvironmentBuilder {
         }
     }
 
-    pub fn display_name(mut self, display_name: String) -> Self {
-        self.display_name = Some(display_name);
+    pub fn display_name(mut self, display_name: Option<String>) -> Self {
+        self.display_name = display_name;
         self
     }
 
-    pub fn name(mut self, name: String) -> Self {
-        self.name = Some(name);
+    pub fn name(mut self, name: Option<String>) -> Self {
+        self.name = name;
         self
     }
 
-    pub fn executable(mut self, executable: PathBuf) -> Self {
-        self.executable = Some(executable);
+    pub fn executable(mut self, executable: Option<PathBuf>) -> Self {
+        self.executable = executable;
         self
     }
 
-    pub fn version(mut self, version: String) -> Self {
-        self.version = Some(version);
+    pub fn version(mut self, version: Option<String>) -> Self {
+        self.version = version;
         self
     }
 
-    pub fn prefix(mut self, prefix: PathBuf) -> Self {
-        self.prefix = Some(prefix);
+    pub fn prefix(mut self, prefix: Option<PathBuf>) -> Self {
+        self.prefix = prefix;
         self
     }
 
-    pub fn manager(mut self, manager: EnvManager) -> Self {
-        self.manager = Some(manager);
+    pub fn manager(mut self, manager: Option<EnvManager>) -> Self {
+        self.manager = manager;
         self
     }
 
-    pub fn project(mut self, project: PathBuf) -> Self {
-        self.project = Some(project);
+    pub fn project(mut self, project: Option<PathBuf>) -> Self {
+        self.project = project;
         self
     }
 
-    pub fn arch(mut self, arch: Architecture) -> Self {
-        self.arch = Some(arch);
+    pub fn arch(mut self, arch: Option<Architecture>) -> Self {
+        self.arch = arch;
         self
     }
 

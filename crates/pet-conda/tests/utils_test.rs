@@ -2,11 +2,11 @@
 // Licensed under the MIT License.
 
 mod common;
+use common::resolve_test_path;
 use pet_conda::utils;
 use std::path::PathBuf;
 
-use common::resolve_test_path;
-
+#[cfg(unix)]
 #[test]
 fn is_conda_install() {
     let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03"]).into();
@@ -16,6 +16,7 @@ fn is_conda_install() {
     assert!(utils::is_conda_install(&path));
 }
 
+#[cfg(unix)]
 #[test]
 fn is_not_conda_install() {
     let path: PathBuf = resolve_test_path(&["unix", "some bogus directory"]).into();
@@ -27,6 +28,7 @@ fn is_not_conda_install() {
     assert_eq!(utils::is_conda_install(&path), false);
 }
 
+#[cfg(unix)]
 #[test]
 fn is_conda_env() {
     let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03"]).into();
@@ -40,6 +42,7 @@ fn is_conda_env() {
     assert!(utils::is_conda_env(&path));
 }
 
+#[cfg(unix)]
 #[test]
 fn is_not_conda_env() {
     let path: PathBuf = resolve_test_path(&["unix", "some bogus directory"]).into();

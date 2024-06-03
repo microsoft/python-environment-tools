@@ -10,9 +10,18 @@ use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
 lazy_static! {
-    static ref PYTHON_VERSION: Regex = Regex::new("^python-((\\d+\\.*)*)-.*.json$")
+    // Sample => python-3.12.2-hdf0ec26_0_cpython.json
+    static ref PYTHON_VERSION: Regex = Regex::new("^python-([\\d+\\.*]*)-.*.json$")
         .expect("error parsing Version regex for Python Package Version in conda");
-    static ref CONDA_VERSION: Regex = Regex::new("^conda-((\\d+\\.*)*)-.*.json$")
+    // Sample => conda-23.1.0-py310hca03da5_0.json
+    static ref CONDA_VERSION: Regex = Regex::new("^conda-([\\d+\\.*]*)-.*.json$")
+        .expect("error parsing Version regex for Conda Package Version in conda");
+    // Sample => +defaults::python-3.10.9-hc0d8a6c_1
+    // Sample => +conda-forge/osx-arm64::python-3.12.2-hdf0ec26_0_cpython
+    static ref PYTHON_VERSION_IN_HISTORY: Regex = Regex::new(".*python-([\\d+\\.*]*)-(.*)")
+        .expect("error parsing Version regex for Python Package Version in conda");
+    // Sample => +defaults::conda-23.1.0-py310hca03da5_0
+    static ref CONDA_VERSION_IN_HISTORY: Regex = Regex::new(".*conda-([\\d+\\.*]*)-(.*)")
         .expect("error parsing Version regex for Conda Package Version in conda");
 }
 
@@ -69,7 +78,7 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
     let path = path.join("conda-meta");
 
     let history = path.join("history");
-    let package_entry = format!(":{}", name.to_name());
+    let package_entry = format!(":{}-", name.to_name());
     if let Some(history_contents) = fs::read_to_string(&history).ok() {
         for line in history_contents
             .lines()
@@ -79,41 +88,52 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
             // +conda-forge/osx-arm64::psutil-5.9.8-py312he37b823_0
             // +conda-forge/osx-arm64::python-3.12.2-hdf0ec26_0_cpython
             // +conda-forge/osx-arm64::python_abi-3.12-4_cp312
-            if let Some(package_path) = line.split(&package_entry).nth(1) {
-                let package_path = path.join(format!("{}{}.json", name.to_name(), package_path));
-                let mut arch: Option<Architecture> = None;
-                // Sample contents
-                // {
-                //   "build": "h966fe2a_2",
-                //   "build_number": 2,
-                //   "channel": "https://repo.anaconda.com/pkgs/main/win-64",
-                //   "constrains": [],
-                // }
-                // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
-                // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
-                if let Some(contents) = read_to_string(&package_path).ok() {
-                    if let Some(js) =
-                        serde_json::from_str::<CondaMetaPackageStructure>(&contents).ok()
-                    {
-                        if let Some(channel) = js.channel {
-                            if channel.ends_with("64") {
-                                arch = Some(Architecture::X64);
-                            } else if channel.ends_with("32") {
-                                arch = Some(Architecture::X86);
+            let regex = get_package_version_history_regex(&name);
+            if let Some(captures) = regex.captures(&line) {
+                if let Some(version) = captures.get(1) {
+                    if let Some(hash) = captures.get(2) {
+                        let package_path = format!(
+                            "{}-{}-{}.json",
+                            name.to_name(),
+                            version.as_str(),
+                            hash.as_str()
+                        );
+                        let package_path = path.join(package_path);
+                        let mut arch: Option<Architecture> = None;
+                        // Sample contents
+                        // {
+                        //   "build": "h966fe2a_2",
+                        //   "build_number": 2,
+                        //   "channel": "https://repo.anaconda.com/pkgs/main/win-64",
+                        //   "constrains": [],
+                        // }
+                        // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
+                        // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
+                        if let Some(contents) = read_to_string(&package_path).ok() {
+                            if let Some(js) =
+                                serde_json::from_str::<CondaMetaPackageStructure>(&contents).ok()
+                            {
+                                if let Some(channel) = js.channel {
+                                    if channel.ends_with("64") {
+                                        arch = Some(Architecture::X64);
+                                    } else if channel.ends_with("32") {
+                                        arch = Some(Architecture::X86);
+                                    }
+                                }
+                                if let Some(version) = js.version {
+                                    return Some(CondaPackageInfo {
+                                        package: name.clone(),
+                                        path: package_path,
+                                        version,
+                                        arch,
+                                    });
+                                } else {
+                                    warn!(
+                                        "Unable to find version for package {} in {:?}",
+                                        name, package_path
+                                    );
+                                }
                             }
-                        }
-                        if let Some(version) = js.version {
-                            return Some(CondaPackageInfo {
-                                package: name.clone(),
-                                path: package_path,
-                                version,
-                                arch,
-                            });
-                        } else {
-                            warn!(
-                                "Unable to find version for package {} in {:?}",
-                                name, package_path
-                            );
                         }
                     }
                 }
@@ -178,5 +198,11 @@ fn get_package_version_regex(package: &Package) -> &Regex {
     match package {
         Package::Conda => &CONDA_VERSION,
         Package::Python => &PYTHON_VERSION,
+    }
+}
+fn get_package_version_history_regex(package: &Package) -> &Regex {
+    match package {
+        Package::Conda => &CONDA_VERSION_IN_HISTORY,
+        Package::Python => &PYTHON_VERSION_IN_HISTORY,
     }
 }

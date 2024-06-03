@@ -2,17 +2,18 @@
 // Licensed under the MIT License.
 
 mod common;
-use common::{create_test_environment, resolve_test_path};
+use common::{create_env_variables, resolve_test_path};
 use pet_conda::environment_locations::{
-    get_conda_envs_from_environment_txt, get_environments_in_conda_dir, get_known_conda_locations,
+    get_conda_envs_from_environment_txt, get_environments, get_known_conda_locations,
 };
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
+#[cfg(unix)]
 #[test]
 fn read_environment_txt() {
     let root = resolve_test_path(&["unix", "root_empty"]).into();
     let home = resolve_test_path(&["unix", "user_home_with_environments_txt"]).into();
-    let env = create_test_environment(root, home, HashMap::new(), vec![]);
+    let env = create_env_variables(home, root);
 
     let mut environments = get_conda_envs_from_environment_txt(&env);
     environments.sort();
@@ -49,22 +50,24 @@ fn read_environment_txt() {
     assert_eq!(environments, expected);
 }
 
+#[cfg(unix)]
 #[test]
 fn non_existent_envrionments_txt() {
     let root = resolve_test_path(&["unix", "root_empty"]).into();
     let home = resolve_test_path(&["unix", "bogus directory"]).into();
-    let env = create_test_environment(root, home, HashMap::new(), vec![]);
+    let env = create_env_variables(home, root);
 
     let environments = get_conda_envs_from_environment_txt(&env);
 
     assert_eq!(environments.len(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn known_install_locations() {
     let root = resolve_test_path(&["unix", "root_empty"]).into();
     let home = resolve_test_path(&["unix", "user_home"]).into();
-    let env = create_test_environment(root, home, HashMap::new(), vec![]);
+    let env = create_env_variables(home, root);
 
     let mut locations = get_known_conda_locations(&env);
     locations.sort();
@@ -96,11 +99,12 @@ fn known_install_locations() {
     assert_eq!(locations, expected);
 }
 
+#[cfg(unix)]
 #[test]
 fn list_conda_envs_in_install_location() {
     let path = resolve_test_path(&["unix", "anaconda3-2023.03"]);
 
-    let mut locations = get_environments_in_conda_dir(&path);
+    let mut locations = get_environments(&path);
     locations.sort();
 
     assert_eq!(
@@ -117,7 +121,6 @@ fn list_conda_envs_in_install_location() {
 // #[test]
 // fn get_conda_environment_paths_test() {
 //     let now = SystemTime::now();
-
 //     let env = EnvironmentApi {};
 //     let envs = get_conda_environment_paths(&env);
 //     println!("{:?}", envs);
