@@ -27,15 +27,15 @@ impl PyEnvCfg {
         Self { version }
     }
     pub fn find(path: &Path) -> Option<Self> {
-        if let Some(file) = find(&path.to_path_buf()) {
-            parse(&file)
+        if let Some(ref file) = find(path) {
+            parse(file)
         } else {
             None
         }
     }
 }
 
-fn find(path: &PathBuf) -> Option<PathBuf> {
+fn find(path: &Path) -> Option<PathBuf> {
     // env
     // |__ pyvenv.cfg  <--- check if this file exists
     // |__ bin or Scripts
@@ -72,7 +72,7 @@ fn find(path: &PathBuf) -> Option<PathBuf> {
 }
 
 fn parse(file: &Path) -> Option<PyEnvCfg> {
-    let contents = fs::read_to_string(&file).ok()?;
+    let contents = fs::read_to_string(file).ok()?;
     for line in contents.lines() {
         if !line.contains("version") {
             continue;

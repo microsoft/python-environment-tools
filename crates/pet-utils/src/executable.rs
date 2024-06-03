@@ -17,38 +17,26 @@ lazy_static! {
 
 #[cfg(windows)]
 pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
-    for path in vec![
+    [
         env_path.join("Scripts").join("python.exe"),
         env_path.join("Scripts").join("python3.exe"),
         env_path.join("python.exe"),
         env_path.join("python3.exe"),
-    ] {
-        // Should parallelize this
-        // This is legacy logic, need to see where and why this is used before changing it.
-        if fs::metadata(&path).is_ok() {
-            return Some(path);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|path| fs::metadata(path).is_ok())
 }
 
 #[cfg(unix)]
 pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
-    use std::fs;
-
-    for path in vec![
+    [
         env_path.join("bin").join("python"),
         env_path.join("bin").join("python3"),
         env_path.join("python"),
         env_path.join("python3"),
-    ] {
-        // Should parallelize this
-        // This is legacy logic, need to see where and why this is used before changing it.
-        if fs::metadata(&path).is_ok() {
-            return Some(path);
-        }
-    }
-    None
+    ]
+    .into_iter()
+    .find(|path| fs::metadata(path).is_ok())
 }
 
 pub fn find_executables(env_path: &Path) -> Vec<PathBuf> {
@@ -81,8 +69,8 @@ pub fn find_executables(env_path: &Path) -> Vec<PathBuf> {
         if let Ok(entries) = fs::read_dir(env_path) {
             for entry in entries.filter_map(Result::ok) {
                 let file = entry.path();
-                if let Some(metadata) = fs::metadata(&file).ok() {
-                    if is_python_executable_name(&file) && metadata.is_file() {
+                if let Ok(metadata) = fs::metadata(&file) {
+                    if is_python_executable_name(&entry.path()) && metadata.is_file() {
                         python_executables.push(file);
                     }
                 }
@@ -122,7 +110,7 @@ pub fn resolve_symlink(exe: &Path) -> Option<PathBuf> {
 
     // If the file == symlink, then it is not a symlink.
     // We already have the resolved file, no need to return that again.
-    if let Some(real_file) = fs::read_link(&exe).ok() {
+    if let Ok(real_file) = fs::read_link(exe) {
         if real_file == exe {
             None
         } else {

@@ -24,7 +24,7 @@ fn get_conda_rc_search_paths(environment: &CondaEnvironmentVariables) -> Vec<Pat
         "C:\\ProgramData\\conda\\condarc.d",
     ]
     .iter()
-    .map(|p| PathBuf::from(p))
+    .map(PathBuf::from)
     .collect();
 
     if let Some(ref conda_root) = environment.conda_root {
@@ -61,7 +61,7 @@ fn get_conda_rc_search_paths(environment: &CondaEnvironmentVariables) -> Vec<Pat
 
 #[cfg(unix)]
 fn get_conda_rc_search_paths(environment: &CondaEnvironmentVariables) -> Vec<PathBuf> {
-    let mut search_paths: Vec<PathBuf> = vec![
+    let mut search_paths: Vec<PathBuf> = [
         "/etc/conda/.condarc",
         "/etc/conda/condarc",
         "/etc/conda/condarc.d",
@@ -70,13 +70,13 @@ fn get_conda_rc_search_paths(environment: &CondaEnvironmentVariables) -> Vec<Pat
         "/var/lib/conda/condarc.d",
     ]
     .iter()
-    .map(|p| PathBuf::from(p))
+    .map(PathBuf::from)
     .map(|p| {
         // This only applies in tests.
         // We need this, as the root folder cannot be mocked.
         if let Some(ref root) = environment.root {
             // Strip the first `/` (this path is only for testing purposes)
-            root.join(p.to_string_lossy()[1..].to_string())
+            root.join(&p.to_string_lossy()[1..])
         } else {
             p
         }
@@ -147,8 +147,8 @@ fn parse_conda_rc(conda_rc: &PathBuf) -> Option<Condarc> {
             continue;
         }
         if start_consuming_values {
-            if line.trim().starts_with("-") {
-                if let Some(env_dir) = line.splitn(2, '-').nth(1) {
+            if line.trim().starts_with('-') {
+                if let Some(env_dir) = line.split_once('-').map(|x| x.1) {
                     // Directories in conda-rc are where `envs` are stored.
                     env_dirs.push(PathBuf::from(env_dir.trim()).join("envs"));
                 }
@@ -158,5 +158,5 @@ fn parse_conda_rc(conda_rc: &PathBuf) -> Option<Condarc> {
             }
         }
     }
-    return Some(Condarc { env_dirs });
+    Some(Condarc { env_dirs })
 }
