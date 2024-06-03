@@ -1,0 +1,13 @@
+[package]
+name = "pet-conda"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
+lazy_static = "1.4.0"
+pet-core = { path = "../pet-core" }
+pet-utils = { path = "../pet-utils" }
+log = "0.4.21"
+regex = "1.10.4"
