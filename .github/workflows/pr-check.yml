@@ -45,7 +45,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: cargo fetch --frozen
+        run: cargo fetch 
 
       - name: Run Tests
-        run: cargo test --all-features
+        run: cargo test --frozen --all-features

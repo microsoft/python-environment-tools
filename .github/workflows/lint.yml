@@ -24,7 +24,7 @@ jobs:
         run: rustup component add clippy
 
       - name: Cargo Fetch
-        run: cargo fetch --frozen
+        run: cargo fetch
 
       - name: Check
         run: cargo fmt --all -- --check
