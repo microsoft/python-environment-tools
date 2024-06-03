@@ -22,7 +22,7 @@ pub fn is_conda_env(path: &Path) -> bool {
 }
 
 #[derive(Debug, Clone)]
-// NOTE: Do not implt Default trait, as we do not want to ever forget to set the values.
+// NOTE: Do not implement Default trait, as we do not want to ever forget to set the values.
 // Lets be explicit, this way we never miss a value (in Windows or Unix).
 pub struct CondaEnvironmentVariables {
     pub home: Option<PathBuf>,
