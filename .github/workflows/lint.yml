@@ -1,0 +1,33 @@
+name: Lint
+
+on:
+  pull_request:
+  push:
+    branches-ignore:
+      - main
+      - release*
+
+jobs:
+  clippy:
+    name: Clippy and Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Install clippy
+        run: rustup component add clippy
+
+      - name: Cargo Fetch
+        run: cargo fetch --frozen --all-features
+
+      - name: Check
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-features -- -Dwarnings
