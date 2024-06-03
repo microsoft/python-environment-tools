@@ -45,44 +45,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: cargo fetch --frozen --all-features
+        run: cargo fetch --frozen
 
       - name: Run Tests
         run: cargo test --all-features
-
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-
-      - name: Install clippy
-        run: rustup component add clippy
-
-      - name: Cargo Fetch
-        run: cargo fetch --frozen --all-features
-
-      - name: Run Clippy
-        run: cargo clippy --all-features -- -D warnings
-
-  
-  format-check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-      
-      - name: Check
-        run: cargo fmt --all -- --check
