@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use common::resolve_test_path;
 
+#[cfg(unix)]
 #[test]
 fn version_from_sys_prefix() {
     let path: PathBuf = resolve_test_path(&["unix", "pyvenv_cfg", ".venv"]).into();
@@ -18,6 +19,7 @@ fn version_from_sys_prefix() {
     assert_eq!(version, "3.12.1");
 }
 
+#[cfg(unix)]
 #[test]
 fn version_from_sys_prefix_using_version_info_format() {
     let path: PathBuf = resolve_test_path(&["unix", "pyvenv_cfg", "hatch_env"]).into();
@@ -29,6 +31,7 @@ fn version_from_sys_prefix_using_version_info_format() {
     assert_eq!(version, "3.9.6.final.0");
 }
 
+#[cfg(unix)]
 #[test]
 fn no_version_without_pyvenv_cfg_and_without_headers() {
     let path: PathBuf =
@@ -53,6 +56,7 @@ fn no_version_without_pyvenv_cfg_and_without_headers() {
     assert!(version.is_none());
 }
 
+#[cfg(unix)]
 #[test]
 fn no_version_for_invalid_paths() {
     let path: PathBuf = resolve_test_path(&["unix_1234"]).into();
@@ -60,6 +64,7 @@ fn no_version_for_invalid_paths() {
     assert!(version.is_none());
 }
 
+#[cfg(unix)]
 #[test]
 fn version_from_header_files() {
     let path: PathBuf = resolve_test_path(&["unix", "headers", "python3.9.9"]).into();
