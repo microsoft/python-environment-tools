@@ -1,17 +1,16 @@
-name: PR/CI Check
+name: Build
 
 on:
-  pull_request:
   push:
-    branches-ignore:
+    branches:
       - main
       - release*
       - release/*
       - release-*
 
 jobs:
-  tests:
-    name: Tests
+  build:
+    name: Build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -47,7 +46,19 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: cargo fetch
+        run: cargo fetch 
 
-      - name: Run Tests
-        run: cargo test --frozen --all-features
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Archive
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/pet.* artifacts/pet-${{ matrix.target }}.tar.gz
+      
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pet-${{ matrix.target }}
+          path: artifacts/pet-${{ matrix.target }}.tar.gz
+    
