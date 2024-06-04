@@ -140,7 +140,7 @@ pub fn get_shortest_executable(exes: &Option<Vec<PathBuf>>) -> Option<PathBuf> {
         None
     }
 }
-
+        
 #[cfg(test)]
 mod tests {
     use super::*;

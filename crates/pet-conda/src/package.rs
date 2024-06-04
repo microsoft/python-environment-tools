@@ -74,65 +74,76 @@ struct CondaMetaPackageStructure {
 
 /// Get the details of a conda package from the 'conda-meta' directory.
 fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInfo> {
+    if let Some(info) = get_conda_package_info_from_history(path, name) {
+        Some(info)
+    } else {
+        warn!(
+            "Unable to find conda package {} in {:?}, trying slower approach",
+            name, path
+        );
+
+        get_conda_package_info_from_package_json(path, name)
+    }
+}
+
+fn get_conda_package_info_from_history(path: &Path, name: &Package) -> Option<CondaPackageInfo> {
     // conda-meta is in the root of the conda installation folder
     let path = path.join("conda-meta");
-
     let history = path.join("history");
     let package_entry = format!(":{}-", name.to_name());
-    if let Ok(history_contents) = fs::read_to_string(history) {
-        for line in history_contents
-            .lines()
-            .filter(|l| l.contains(&package_entry))
-        {
-            // Sample entry in the history file
-            // +conda-forge/osx-arm64::psutil-5.9.8-py312he37b823_0
-            // +conda-forge/osx-arm64::python-3.12.2-hdf0ec26_0_cpython
-            // +conda-forge/osx-arm64::python_abi-3.12-4_cp312
-            let regex = get_package_version_history_regex(name);
-            if let Some(captures) = regex.captures(line) {
-                if let Some(version) = captures.get(1) {
-                    if let Some(hash) = captures.get(2) {
-                        let package_path = format!(
-                            "{}-{}-{}.json",
-                            name.to_name(),
-                            version.as_str(),
-                            hash.as_str()
-                        );
-                        let package_path = path.join(package_path);
-                        let mut arch: Option<Architecture> = None;
-                        // Sample contents
-                        // {
-                        //   "build": "h966fe2a_2",
-                        //   "build_number": 2,
-                        //   "channel": "https://repo.anaconda.com/pkgs/main/win-64",
-                        //   "constrains": [],
-                        // }
-                        // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
-                        // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
-                        if let Ok(contents) = read_to_string(&package_path) {
-                            if let Ok(js) =
-                                serde_json::from_str::<CondaMetaPackageStructure>(&contents)
-                            {
-                                if let Some(channel) = js.channel {
-                                    if channel.ends_with("64") {
-                                        arch = Some(Architecture::X64);
-                                    } else if channel.ends_with("32") {
-                                        arch = Some(Architecture::X86);
-                                    }
+
+    let history_contents = fs::read_to_string(history).ok()?;
+    for line in history_contents
+        .lines()
+        .filter(|l| l.contains(&package_entry))
+    {
+        // Sample entry in the history file
+        // +conda-forge/osx-arm64::psutil-5.9.8-py312he37b823_0
+        // +conda-forge/osx-arm64::python-3.12.2-hdf0ec26_0_cpython
+        // +conda-forge/osx-arm64::python_abi-3.12-4_cp312
+        let regex = get_package_version_history_regex(name);
+        if let Some(captures) = regex.captures(line) {
+            if let Some(version) = captures.get(1) {
+                if let Some(hash) = captures.get(2) {
+                    let package_path = format!(
+                        "{}-{}-{}.json",
+                        name.to_name(),
+                        version.as_str(),
+                        hash.as_str()
+                    );
+                    let package_path = path.join(package_path);
+                    let mut arch: Option<Architecture> = None;
+                    // Sample contents
+                    // {
+                    //   "build": "h966fe2a_2",
+                    //   "build_number": 2,
+                    //   "channel": "https://repo.anaconda.com/pkgs/main/win-64",
+                    //   "constrains": [],
+                    // }
+                    // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
+                    // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
+                    if let Ok(contents) = read_to_string(&package_path) {
+                        if let Ok(js) = serde_json::from_str::<CondaMetaPackageStructure>(&contents)
+                        {
+                            if let Some(channel) = js.channel {
+                                if channel.ends_with("64") {
+                                    arch = Some(Architecture::X64);
+                                } else if channel.ends_with("32") {
+                                    arch = Some(Architecture::X86);
                                 }
-                                if let Some(version) = js.version {
-                                    return Some(CondaPackageInfo {
-                                        package: name.clone(),
-                                        path: package_path,
-                                        version,
-                                        arch,
-                                    });
-                                } else {
-                                    warn!(
-                                        "Unable to find version for package {} in {:?}",
-                                        name, package_path
-                                    );
-                                }
+                            }
+                            if let Some(version) = js.version {
+                                return Some(CondaPackageInfo {
+                                    package: name.clone(),
+                                    path: package_path,
+                                    version,
+                                    arch,
+                                });
+                            } else {
+                                warn!(
+                                    "Unable to find version for package {} in {:?}",
+                                    name, package_path
+                                );
                             }
                         }
                     }
@@ -140,53 +151,53 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
             }
         }
     }
+    None
+}
 
-    warn!(
-        "Unable to find conda package {} in {:?}, trying slower approach",
-        name, path
-    );
-
+fn get_conda_package_info_from_package_json(
+    path: &Path,
+    name: &Package,
+) -> Option<CondaPackageInfo> {
     let package_name = format!("{}-", name.to_name());
     let regex = get_package_version_regex(name);
+    let path = path.join("conda-meta");
 
     // Fallback, slower approach of enumerating all files.
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            let file_name = path.file_name()?.to_string_lossy();
-            if file_name.starts_with(&package_name) && file_name.ends_with(".json") {
-                if let Some(captures) = regex.captures(&file_name) {
-                    if let Some(version) = captures.get(1) {
-                        let mut arch: Option<Architecture> = None;
-                        // Sample contents
-                        // {
-                        //   "build": "h966fe2a_2",
-                        //   "build_number": 2,
-                        //   "channel": "https://repo.anaconda.com/pkgs/main/win-64",
-                        //   "constrains": [],
-                        // }
-                        // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
-                        // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
-                        if let Ok(contents) = read_to_string(&path) {
-                            if let Ok(js) =
-                                serde_json::from_str::<CondaMetaPackageStructure>(&contents)
-                            {
-                                if let Some(channel) = js.channel {
-                                    if channel.ends_with("64") {
-                                        arch = Some(Architecture::X64);
-                                    } else if channel.ends_with("32") {
-                                        arch = Some(Architecture::X86);
-                                    }
+    let entries = fs::read_dir(path).ok()?;
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+        if file_name.starts_with(&package_name) && file_name.ends_with(".json") {
+            if let Some(captures) = regex.captures(&file_name) {
+                if let Some(version) = captures.get(1) {
+                    let mut arch: Option<Architecture> = None;
+                    // Sample contents
+                    // {
+                    //   "build": "h966fe2a_2",
+                    //   "build_number": 2,
+                    //   "channel": "https://repo.anaconda.com/pkgs/main/win-64",
+                    //   "constrains": [],
+                    // }
+                    // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
+                    // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
+                    if let Ok(contents) = read_to_string(&path) {
+                        if let Ok(js) = serde_json::from_str::<CondaMetaPackageStructure>(&contents)
+                        {
+                            if let Some(channel) = js.channel {
+                                if channel.ends_with("64") {
+                                    arch = Some(Architecture::X64);
+                                } else if channel.ends_with("32") {
+                                    arch = Some(Architecture::X86);
                                 }
                             }
                         }
-                        return Some(CondaPackageInfo {
-                            package: name.clone(),
-                            path: path.clone(),
-                            version: version.as_str().to_string(),
-                            arch,
-                        });
                     }
+                    return Some(CondaPackageInfo {
+                        package: name.clone(),
+                        path: path.clone(),
+                        version: version.as_str().to_string(),
+                        arch,
+                    });
                 }
             }
         }

@@ -4,3 +4,17 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+pet-utils = { path = "../pet-utils" }
+pet-core = { path = "../pet-core" }
+pet-conda = { path = "../pet-conda" }
+pet-jsonrpc = { path = "../pet-jsonrpc" }
+pet-homebrew = { path = "../pet-homebrew" }
+pet-pyenv = { path = "../pet-pyenv" }
+pet-reporter = { path = "../pet-reporter" }
+pet-virtualenvwrapper = { path = "../pet-virtualenvwrapper" }
+pet-env-var-path = { path = "../pet-env-var-path" }
+pet-venv = { path = "../pet-venv" }
+pet-virtualenv = { path = "../pet-virtualenv" }
+pet-pipenv = { path = "../pet-pipenv" }
+pet-global-virtualenvs = { path = "../pet-global-virtualenvs" }
+log = "0.4.21"

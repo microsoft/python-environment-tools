@@ -1,0 +1,11 @@
+[package]
+name = "pet-global-virtualenvs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pet-core = { path = "../pet-core" }
+pet-utils = { path = "../pet-utils" }
+pet-virtualenv = { path = "../pet-virtualenv" }
+pet-conda = { path = "../pet-conda" }
+log = "0.4.21"

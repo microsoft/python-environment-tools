@@ -8,7 +8,7 @@ use pet_core::arch::Architecture;
 
 #[cfg(unix)]
 #[test]
-fn resolve_root_conda_env() {
+fn find_root_conda_env() {
     let path = resolve_test_path(&["unix", "anaconda3-2023.03"]);
 
     let env = CondaEnvironment::from(&path, &None).unwrap();
@@ -25,7 +25,7 @@ fn resolve_root_conda_env() {
 
 #[cfg(unix)]
 #[test]
-fn resolve_root_conda_env_without_history_file() {
+fn find_root_conda_env_without_history_file() {
     let path = resolve_test_path(&["unix", "anaconda3-2023.03-without-history"]);
 
     let env = CondaEnvironment::from(&path, &None).unwrap();
@@ -42,7 +42,7 @@ fn resolve_root_conda_env_without_history_file() {
 
 #[cfg(unix)]
 #[test]
-fn resolve_conda_env() {
+fn find_conda_env() {
     let conda_dir = resolve_test_path(&["unix", "anaconda3-2023.03"]);
     let path = resolve_test_path(&["unix", "anaconda3-2023.03", "envs", "env_python_3"]);
 
@@ -60,7 +60,7 @@ fn resolve_conda_env() {
 
 #[cfg(unix)]
 #[test]
-fn resolve_conda_env_without_python() {
+fn find_conda_env_without_python() {
     let conda_dir = resolve_test_path(&["unix", "anaconda3-2023.03"]);
     let path = resolve_test_path(&["unix", "anaconda3-2023.03", "envs", "without_python"]);
 

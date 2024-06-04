@@ -1,14 +1,8 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+mod core;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub fn send_message<T: serde::Serialize>(method: &'static str, params: Option<T>) {
+    core::send_message(method, params)
 }

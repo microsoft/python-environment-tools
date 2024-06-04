@@ -2,10 +2,10 @@
 // Licensed under the MIT License.
 
 use crate::{
-    environment_locations::get_known_conda_locations, package::CondaPackageInfo,
-    utils::CondaEnvironmentVariables,
+    env_variables::EnvVariables, environment_locations::get_known_conda_locations,
+    environments::get_conda_installation_used_to_create_conda_env, package::CondaPackageInfo,
+    utils::is_conda_env,
 };
-use log::warn;
 use pet_core::{manager::EnvManager, manager::EnvManagerType};
 use std::{
     env,
@@ -44,8 +44,8 @@ fn get_conda_bin_names() -> Vec<&'static str> {
 }
 
 /// Find the conda binary on the PATH environment variable
-pub fn find_conda_binary_on_path(environment: &CondaEnvironmentVariables) -> Option<PathBuf> {
-    let paths = environment.path.clone()?;
+pub fn find_conda_binary_on_path(env_vars: &EnvVariables) -> Option<PathBuf> {
+    let paths = env_vars.path.clone()?;
     for path in env::split_paths(&paths) {
         for bin in get_conda_bin_names() {
             let conda_path = path.join(bin);
@@ -60,11 +60,9 @@ pub fn find_conda_binary_on_path(environment: &CondaEnvironmentVariables) -> Opt
 }
 
 /// Find conda binary in known locations
-fn find_conda_binary_in_known_locations(
-    environment: &CondaEnvironmentVariables,
-) -> Option<PathBuf> {
+fn find_conda_binary_in_known_locations(env_vars: &EnvVariables) -> Option<PathBuf> {
     let conda_bin_names = get_conda_bin_names();
-    let known_locations = get_known_conda_locations(environment);
+    let known_locations = get_known_conda_locations(env_vars);
     for location in known_locations {
         for bin in &conda_bin_names {
             let conda_path = location.join(bin);
@@ -79,11 +77,11 @@ fn find_conda_binary_in_known_locations(
 }
 
 /// Find the conda binary on the system
-pub fn find_conda_binary(environment: &CondaEnvironmentVariables) -> Option<PathBuf> {
-    let conda_binary_on_path = find_conda_binary_on_path(environment);
+pub fn find_conda_binary(env_vars: &EnvVariables) -> Option<PathBuf> {
+    let conda_binary_on_path = find_conda_binary_on_path(env_vars);
     match conda_binary_on_path {
         Some(conda_binary_on_path) => Some(conda_binary_on_path),
-        None => find_conda_binary_in_known_locations(environment),
+        None => find_conda_binary_in_known_locations(env_vars),
     }
 }
 
@@ -91,8 +89,6 @@ pub fn find_conda_binary(environment: &CondaEnvironmentVariables) -> Option<Path
 pub struct CondaManager {
     pub executable: PathBuf,
     pub version: Option<String>,
-    pub company: Option<String>,
-    pub company_display_name: Option<String>,
     pub conda_dir: PathBuf,
 }
 
@@ -104,20 +100,38 @@ impl CondaManager {
             version: self.version.clone(),
         }
     }
+    pub fn from(path: &Path) -> Option<CondaManager> {
+        if let Some(manager) = get_conda_manager(path) {
+            Some(manager)
+        } else {
+            if !is_conda_env(path) {
+                return None;
+            }
+            // Possible this is a conda environment in the `envs` folder
+            let path = path.parent()?.parent()?;
+            if let Some(manager) = get_conda_manager(path) {
+                Some(manager)
+            } else {
+                // Possible this is a conda environment in some other location
+                // Such as global env folders location configured via condarc file
+                // Or a conda env created using `-p` flag.
+                // Get the conda install folder from the history file.
+                let conda_install_folder = get_conda_installation_used_to_create_conda_env(path)?;
+                get_conda_manager(&conda_install_folder)
+            }
+        }
+    }
 }
 
-pub fn get_conda_manager(path: &Path) -> Option<CondaManager> {
+fn get_conda_manager(path: &Path) -> Option<CondaManager> {
     let conda_exe = get_conda_executable(path)?;
     if let Some(conda_pkg) = CondaPackageInfo::from(path, &crate::package::Package::Conda) {
         Some(CondaManager {
             executable: conda_exe,
             version: Some(conda_pkg.version),
-            company: None,
-            company_display_name: None,
             conda_dir: path.to_path_buf(),
         })
     } else {
-        warn!("Could not get conda package info from {:?}", path);
         None
     }
 }

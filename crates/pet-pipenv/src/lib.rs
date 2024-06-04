@@ -1,14 +1,64 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+use std::{fs, path::PathBuf};
+
+use pet_core::{
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    Locator, LocatorResult,
+};
+use pet_utils::env::PythonEnv;
+
+fn get_pipenv_project(env: &PythonEnv) -> Option<PathBuf> {
+    let project_file = env.prefix.clone()?.join(".project");
+    let contents = fs::read_to_string(project_file).ok()?;
+    let project_folder = PathBuf::from(contents.trim().to_string());
+    if fs::metadata(&project_folder).is_ok() {
+        Some(project_folder)
+    } else {
+        None
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn is_pipenv(env: &PythonEnv) -> bool {
+    // If we have a Pipfile, then this is a pipenv environment.
+    // Else likely a virtualenvwrapper or the like.
+    if let Some(project_path) = get_pipenv_project(env) {
+        fs::metadata(project_path.join("Pipfile")).is_ok()
+    } else {
+        false
+    }
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+pub struct PipEnv {}
+
+impl PipEnv {
+    pub fn new() -> PipEnv {
+        PipEnv {}
+    }
+}
+impl Default for PipEnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Locator for PipEnv {
+    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+        if !is_pipenv(env) {
+            return None;
+        }
+        let project_path = get_pipenv_project(env)?;
+        Some(
+            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Pipenv)
+                .executable(Some(env.executable.clone()))
+                .version(env.version.clone())
+                .prefix(env.prefix.clone())
+                .project(Some(project_path))
+                .build(),
+        )
+    }
+
+    fn find(&self) -> Option<LocatorResult> {
+        None
     }
 }

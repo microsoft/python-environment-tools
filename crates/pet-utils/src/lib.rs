@@ -3,6 +3,6 @@
 
 pub mod env;
 pub mod executable;
-mod headers;
-mod pyvenv_cfg;
+pub mod headers;
+pub mod pyvenv_cfg;
 pub mod sys_prefix;

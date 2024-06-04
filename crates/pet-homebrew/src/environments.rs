@@ -1,0 +1,117 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+use lazy_static::lazy_static;
+use pet_core::python_environment::{
+    PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory,
+};
+use regex::Regex;
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
+
+use crate::sym_links::get_known_symlinks;
+
+lazy_static! {
+    static ref PYTHON_VERSION: Regex =
+        Regex::new(r"/(\d+\.\d+\.\d+)/").expect("error parsing Version regex for Homebrew");
+}
+
+pub fn get_python_info(
+    python_exe_from_bin_dir: &Path,
+    reported: &mut HashSet<String>,
+    resolved_exe: &Path,
+) -> Option<PythonEnvironment> {
+    let user_friendly_exe = python_exe_from_bin_dir;
+    let python_version = resolved_exe.to_string_lossy().to_string();
+    let version = match PYTHON_VERSION.captures(&python_version) {
+        Some(captures) => captures.get(1).map(|version| version.as_str().to_string()),
+        None => None,
+    };
+    if reported.contains(&resolved_exe.to_string_lossy().to_string()) {
+        return None;
+    }
+
+    let mut symlinks = vec![user_friendly_exe.to_path_buf()];
+    if let Some(version) = &version {
+        symlinks.append(&mut get_known_symlinks(resolved_exe, version));
+    }
+    symlinks.dedup();
+
+    reported.insert(resolved_exe.to_string_lossy().to_string());
+    let env = PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Homebrew)
+        .executable(Some(user_friendly_exe.to_path_buf()))
+        .version(version)
+        .prefix(get_env_path(resolved_exe))
+        .symlinks(Some(symlinks))
+        .build();
+    Some(env)
+}
+
+fn get_env_path(resolved_file: &Path) -> Option<PathBuf> {
+    // If the fully resolved file path contains the words `/homebrew/` or `/linuxbrew/`
+    // Then we know this is definitely a home brew version of python.
+    // And in these cases we can compute the sysprefix.
+
+    let resolved_file = resolved_file.to_str()?;
+    // 1. MacOS Silicon
+    if resolved_file.starts_with("/opt/homebrew") {
+        // Resolved exe is something like `/opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/python3.12`
+        let reg_ex = Regex::new("/opt/homebrew/Cellar/python@((\\d+\\.?)*)/(\\d+\\.?)*/Frameworks/Python.framework/Versions/(\\d+\\.?)*/bin/python(\\d+\\.?)*").unwrap();
+        let captures = reg_ex.captures(resolved_file)?;
+        let version = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
+        // SysPrefix- /opt/homebrew/opt/python@3.12/Frameworks/Python.framework/Versions/3.12
+        let sys_prefix = PathBuf::from(format!(
+            "/opt/homebrew/opt/python@{}/Frameworks/Python.framework/Versions/{}",
+            version, version
+        ));
+
+        return if sys_prefix.exists() {
+            Some(sys_prefix)
+        } else {
+            None
+        };
+    }
+
+    // 2. Linux
+    if resolved_file.starts_with("/home/linuxbrew/.linuxbrew/Cellar") {
+        // Resolved exe is something like `/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.3/bin/python3.12`
+        let reg_ex = Regex::new("/home/linuxbrew/.linuxbrew/Cellar/python@(\\d+\\.?\\d+\\.?)/(\\d+\\.?\\d+\\.?\\d+\\.?)/bin/python.*").unwrap();
+        let captures = reg_ex.captures(resolved_file)?;
+        let version = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
+        let full_version = captures.get(2).map(|m| m.as_str()).unwrap_or_default();
+        // SysPrefix- /home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.3
+        let sys_prefix = PathBuf::from(format!(
+            "/home/linuxbrew/.linuxbrew/Cellar/python@{}/{}",
+            version, full_version
+        ));
+
+        return if sys_prefix.exists() {
+            Some(sys_prefix)
+        } else {
+            None
+        };
+    }
+
+    // 3. MacOS Intel
+    if resolved_file.starts_with("/usr/local/Cellar") {
+        // Resolved exe is something like `/usr/local/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/python3.12`
+        let reg_ex = Regex::new("/usr/local/Cellar/python@(\\d+\\.?\\d+\\.?)/(\\d+\\.?\\d+\\.?\\d+\\.?)/Frameworks/Python.framework/Versions/(\\d+\\.?\\d+\\.?)/bin/python.*").unwrap();
+        let captures = reg_ex.captures(resolved_file)?;
+        let version = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
+        let full_version = captures.get(2).map(|m| m.as_str()).unwrap_or_default();
+        // SysPrefix- /usr/local/Cellar/python@3.8/3.8.19/Frameworks/Python.framework/Versions/3.8
+        let sys_prefix = PathBuf::from(format!(
+            "/usr/local/Cellar/python@{}/{}/Frameworks/Python.framework/Versions/{}",
+            version, full_version, version
+        ));
+
+        return if sys_prefix.exists() {
+            Some(sys_prefix)
+        } else {
+            None
+        };
+    }
+    None
+}

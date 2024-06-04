@@ -6,13 +6,17 @@ use crate::{
     package::{CondaPackageInfo, Package},
     utils::{is_conda_env, is_conda_install},
 };
+use log::warn;
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
 };
 use pet_utils::executable::find_executable;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug, Clone)]
 pub struct CondaEnvironment {
@@ -30,8 +34,8 @@ impl CondaEnvironment {
 
     pub fn to_python_environment(
         &self,
-        conda_manager: EnvManager,
-        conda_dir: &PathBuf,
+        conda_dir: Option<PathBuf>,
+        conda_manager: Option<EnvManager>,
     ) -> PythonEnvironment {
         #[allow(unused_assignments)]
         let mut name: Option<String> = None;
@@ -46,8 +50,10 @@ impl CondaEnvironment {
         // if the conda install folder is parent of the env folder, then we can use named activation.
         // E.g. conda env is = <conda install>/envs/<env name>
         // Then we can use `<conda install>/bin/conda activate -n <env name>`
-        if !self.prefix.starts_with(conda_dir) {
-            name = None;
+        if let Some(conda_dir) = conda_dir {
+            if !self.prefix.starts_with(conda_dir) {
+                name = None;
+            }
         }
         // This is a root env.
         let builder = PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Conda)
@@ -56,12 +62,13 @@ impl CondaEnvironment {
             .prefix(Some(self.prefix.clone()))
             .arch(self.arch.clone())
             .name(name.clone())
-            .manager(Some(conda_manager.clone()));
+            .manager(conda_manager);
 
         builder.build()
     }
 }
-fn get_conda_environment_info(
+
+pub fn get_conda_environment_info(
     env_path: &Path,
     manager: &Option<CondaManager>,
 ) -> Option<CondaEnvironment> {
@@ -70,10 +77,20 @@ fn get_conda_environment_info(
         return None;
     }
     // If we know the conda install folder, then we can use it.
-    let conda_install_folder = match manager {
+    let mut conda_install_folder = match manager {
         Some(manager) => Some(manager.conda_dir.clone()),
         None => get_conda_installation_used_to_create_conda_env(env_path),
     };
+    if let Some(conda_dir) = &conda_install_folder {
+        if fs::metadata(conda_dir).is_err() {
+            warn!(
+                "Conda install folder {}, does not exist, hence will not be used for the Conda Env: {}",
+                env_path.display(),
+                conda_dir.display()
+            );
+            conda_install_folder = None;
+        }
+    }
     if let Some(python_binary) = find_executable(env_path) {
         if let Some(package_info) = CondaPackageInfo::from(env_path, &Package::Python) {
             Some(CondaEnvironment {
