@@ -94,6 +94,7 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
             }
         }
     }
+    env_paths.append(&mut env_vars.known_global_search_locations.clone());
     env_paths
 }
 

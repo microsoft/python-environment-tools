@@ -140,7 +140,6 @@ impl Locator for PythonOnPath {
 
         let mut already_found: HashMap<PathBuf, RefCell<PythonEnvironment>> = HashMap::new();
         python_executables.into_iter().for_each(|exe| {
-            println!("{:?}", exe);
             if let Some(exe_dir) = exe.parent() {
                 let mut version = None;
                 let symlink = match PyVenvCfg::find(exe_dir) {

@@ -7,7 +7,6 @@ use pet_core::os_environment::{Environment, EnvironmentApi};
 use pet_core::python_environment::PythonEnvironment;
 use pet_core::reporter::Reporter;
 use pet_core::{Locator, LocatorResult};
-use pet_env_var_path::PythonOnPath;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_homebrew::Homebrew;
 use pet_pipenv::PipEnv;
@@ -34,7 +33,7 @@ pub fn find_and_report_envs(reporter: &dyn Reporter) {
     threads.push(thread::spawn(find_in_global_virtual_env_dirs));
 
     // Step 3: Finally find in the current PATH variable
-    threads.push(thread::spawn(find_in_path_env_variable));
+    // threads.push(thread::spawn(find_in_path_env_variable));
 
     // NOTE: Ensure we process the results in the same order as they were started.
     // This will ensure the priority order is maintained.
@@ -208,10 +207,11 @@ fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
     })
 }
 
-fn find_in_path_env_variable() -> Option<LocatorResult> {
-    let environment = EnvironmentApi::new();
-    PythonOnPath::from(&environment).find()
-}
+// This is incomplete
+// fn find_in_path_env_variable() -> Option<LocatorResult> {
+//     let environment = EnvironmentApi::new();
+//     PythonOnPath::from(&environment).find()
+// }
 
 fn report_result(result: Option<LocatorResult>, reporter: &dyn Reporter) {
     if let Some(result) = result {
