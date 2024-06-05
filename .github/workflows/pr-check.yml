@@ -119,6 +119,7 @@ jobs:
       - name: Python in Registry
         if: startsWith( matrix.os, 'windows')
         run: reg query HKLM\SOFTWARE\Python /s
+        shell: cmd
 
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
