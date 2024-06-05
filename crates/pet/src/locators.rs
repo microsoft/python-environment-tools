@@ -136,6 +136,7 @@ fn find_using_global_finders(// dispatcher: &mut dyn MessageDispatcher,
 }
 
 fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
+    #[cfg(unix)]
     use pet_homebrew::Homebrew;
 
     let custom_virtual_env_dirs: Vec<PathBuf> = vec![];
