@@ -132,6 +132,7 @@ jobs:
 
       - name: Find Environments
         run: cargo run --release --target ${{ matrix.target }}
+        shell: bash
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
