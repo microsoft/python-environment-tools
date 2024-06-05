@@ -49,17 +49,10 @@ jobs:
         run: cargo fetch
 
       - name: Add Conda to PATH
-        if: startsWith( matrix.os, 'windows')
         run: |
           echo $CONDA
+          ls $CONDA
           echo "PATH=$PATH;$CONDA/bin" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Add Conda to PATH
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          echo $CONDA
-          echo "PATH=$PATH:$CONDA/bin" >> $GITHUB_ENV
         shell: bash
 
       - name: Check Conda version
@@ -69,9 +62,10 @@ jobs:
         if: startsWith( matrix.os, 'windows')
         run: |
           choco install pyenv-win -y
-          echo PATH=%PATH%;%USERPROFILE%\.pyenv\pyenv-win\bin >> $GITHUB_ENV
-          echo PATH=%PATH%;%USERPROFILE%\.pyenv\pyenv-win\shims >> $GITHUB_ENV
-          %USERPROFILE%\.pyenv\pyenv-win\bin\pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+          echo PATH=$PATH;$USERPROFILE/.pyenv/pyenv-win/bin >> $GITHUB_ENV
+          echo PATH=$PATH;$USERPROFILE/.pyenv/pyenv-win/shims >> $GITHUB_ENV
+          $USERPROFILE/.pyenv/pyenv-win/bin/pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+        shell: bash
 
       - name: Install pyenv
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
