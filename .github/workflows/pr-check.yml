@@ -50,11 +50,15 @@ jobs:
 
       - name: Add Conda to PATH
         if: startsWith( matrix.os, 'windows')
-        run: echo "PATH=%PATH%;%CONDA%/bin" >> "$GITHUB_ENV"
+        run: |
+          echo %CONDA%
+          echo "PATH=%PATH%;%CONDA%/bin" >> $GITHUB_ENV
 
       - name: Add Conda to PATH
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: echo "PATH=$PATH:$CONDA/bin" >> "$GITHUB_ENV"
+        run: |
+          echo $CONDA
+          echo "PATH=$PATH:$CONDA/bin" >> $GITHUB_ENV
 
       - name: Check Conda version
         run: conda info --all
