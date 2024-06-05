@@ -127,7 +127,7 @@ jobs:
         shell: bash
 
       - name: Run Tests
-        run: cargo test --frozen --all-features
+        run: cargo test --frozen --all-features --nocapture
         shell: bash
 
       - name: Find Environments
