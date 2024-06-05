@@ -132,14 +132,14 @@ jobs:
         shell: bash
 
       - name: Run Tests
-        run: cargo test --frozen --all-features
+        run: cargo test --frozen --all-features -- --nocapture
         shell: bash
 
       - name: Find Environments
         if: matrix.run_cli == 'yes'
         run: cargo run --release --target ${{ matrix.target }}
         shell: bash
-        
+
   builds:
     name: Builds
     runs-on: ${{ matrix.os }}
@@ -183,7 +183,9 @@ jobs:
         shell: bash
 
       - name: Run Tests
-        run: cargo test --frozen --all-features
+        # We do not want to run all features, CI is only for tests with Python
+        # Thats a separate job.
+        run: cargo test --frozen
         shell: bash
 
       - name: Build
