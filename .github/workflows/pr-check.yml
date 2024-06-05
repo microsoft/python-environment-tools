@@ -39,14 +39,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
+      - name: Set Python to PATH
+        uses: actions/setup-python@v5
         with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-
-      - name: Cargo Fetch
-        run: cargo fetch
+          python-version: "3.x"
 
       - name: Add Conda to PATH
         if: startsWith( matrix.os, 'windows') || startsWith( matrix.os, 'ubuntu')
@@ -99,6 +95,7 @@ jobs:
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           curl https://pyenv.run | bash
+          ls $HOME/.pyenv/plugins/pyenv-virtualenv
           git clone https://github.com/pyenv/pyenv-virtualenv.git $HOME/.pyenv/plugins/pyenv-virtualenv
           echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
           echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
@@ -113,6 +110,15 @@ jobs:
       - name: Python in Registry
         if: startsWith( matrix.os, 'windows')
         run: reg query HKLM\SOFTWARE\Python /s
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cargo Fetch
+        run: cargo fetch
 
       - name: Run Tests
         run: cargo test --frozen --all-features
