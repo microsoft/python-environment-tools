@@ -37,6 +37,7 @@ fn conda_root_ci() {
     assert_eq!(env.name, Some("base".into()));
     assert_eq!(env.category, PythonEnvironmentCategory::Conda);
     assert_eq!(env.executable, Some(conda_dir.join("bin").join("python")));
+    assert_eq!(env.version, Some(get_version(&info.python_version)));
 
     assert_eq!(env.manager, Some(manager.clone()));
 }
@@ -45,6 +46,7 @@ fn conda_root_ci() {
 struct CondaInfo {
     conda_version: String,
     conda_prefix: String,
+    python_version: String,
     #[allow(dead_code)]
     envs: Vec<String>,
 }
@@ -60,4 +62,11 @@ fn get_conda_info() -> CondaInfo {
     let output = String::from_utf8(output.stdout).unwrap();
     let conda_info: CondaInfo = serde_json::from_str(&output).unwrap();
     conda_info
+}
+
+fn get_version(value: &String) -> String {
+    // Regex to extract just the d.d.d version from the full version string
+    let re = regex::Regex::new(r"\d+\.\d+\.\d+").unwrap();
+    let captures = re.captures(value).unwrap();
+    captures.get(0).unwrap().as_str().to_string()
 }
