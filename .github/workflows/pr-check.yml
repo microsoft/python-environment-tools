@@ -49,9 +49,20 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Homebrew Python
+        if: startsWith( matrix.os, 'macos')
+        run: brew install python
+        shell: bash
+
       - name: Add Conda to PATH
-        if: startsWith( matrix.os, 'windows') || startsWith( matrix.os, 'ubuntu')
-        run: echo "PATH=$PATH;$CONDA/condabin" >> $GITHUB_ENV
+        if: startsWith( matrix.os, 'windows')
+        run: |
+          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
+          echo "PATH=$path" >> $env:GITHUB_ENV
+
+      - name: Add Conda to PATH
+        if: startsWith( matrix.os, 'ubuntu')
+        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
         shell: bash
 
       - name: Install Conda + add to PATH
@@ -110,7 +121,7 @@ jobs:
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           pyenv install --list
-          pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+          pyenv install 3.12.3 3.8.19
         shell: bash
 
         # pyenv-win install list has not updated for a while
@@ -118,7 +129,7 @@ jobs:
         if: startsWith( matrix.os, 'windows')
         run: |
           pyenv install --list
-          pyenv install 3.10.5 3.9.13 3.8.10
+          pyenv install 3.10.5 3.8.10
         shell: bash
 
       - name: Rust Tool Chain setup
