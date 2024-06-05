@@ -60,15 +60,12 @@ jobs:
 
       - name: Check Conda version
         run: conda info --all
-        shell: bash
 
       - name: Install pipenv
         run: pip install pipenv
-        shell: bash
 
       - name: Check pipenv version
         run: pipenv --version
-        shell: bash
 
       - name: Install virtualnvwrapper
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
