@@ -35,6 +35,7 @@ pub fn get_conda_environment_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
         envs
     });
 
+    env_paths = env_paths.iter().map(|p| fix_file_path_casing(&p)).collect();
     env_paths.sort();
     env_paths.dedup();
     // For each env, check if we have a conda install directory in them and
@@ -209,7 +210,10 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     // We use lower cases above, but it could be in any case on disc.
     // We do not want to have duplicates in different cases.
     // & we'd like to preserve the case of the original path as on disc.
-    known_paths = known_paths.iter().map(|p| fix_file_path_casing(&p)).collect();
+    known_paths = known_paths
+        .iter()
+        .map(|p| fix_file_path_casing(&p))
+        .collect();
     known_paths.sort();
     known_paths.dedup();
 

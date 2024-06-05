@@ -11,6 +11,8 @@ use pet_core::{
     LocatorResult,
 };
 #[cfg(windows)]
+use pet_utils::path::fix_file_path_casing;
+#[cfg(windows)]
 use pet_windows_store::is_windows_app_folder_in_program_files;
 #[cfg(windows)]
 use std::{path::PathBuf, sync::Arc};
@@ -94,7 +96,7 @@ fn get_registry_pythons_from_key_for_company(
                     Ok(install_path_key) => {
                         let env_path: String =
                             install_path_key.get_value("").ok().unwrap_or_default();
-                        let env_path = PathBuf::from(env_path);
+                        let env_path = fix_file_path_casing(&PathBuf::from(env_path));
                         if is_windows_app_folder_in_program_files(&env_path) {
                             trace!(
                                 "Found Python ({}) in {}\\Software\\Python\\{}\\{}, but skipping as this is a Windows Store Python",
@@ -152,7 +154,7 @@ fn get_registry_pythons_from_key_for_company(
                             );
                             continue;
                         }
-                        let executable = PathBuf::from(executable);
+                        let executable = fix_file_path_casing(&PathBuf::from(executable));
                         if !executable.exists() {
                             warn!(
                                 "Python executable ({}) file not found for {}\\Software\\Python\\{}\\{}",

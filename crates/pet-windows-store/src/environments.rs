@@ -12,6 +12,8 @@ use pet_core::python_environment::PythonEnvironment;
 #[cfg(windows)]
 use pet_core::{arch::Architecture, python_environment::PythonEnvironmentBuilder};
 #[cfg(windows)]
+use pet_utils::path::fix_file_path_casing;
+#[cfg(windows)]
 use regex::Regex;
 use std::path::PathBuf;
 #[cfg(windows)]
@@ -47,7 +49,7 @@ impl PotentialPython {
         let exe = self.exe.clone().unwrap_or_default();
         let parent = path.parent()?.to_path_buf(); // This dir definitely exists.
         if let Some(result) = get_package_display_name_and_location(&name, hkcu) {
-            let env_path = PathBuf::from(result.env_path);
+            let env_path = fix_file_path_casing(PathBuf::from(result.env_path));
 
             Some(
                 PythonEnvironmentBuilder::new(
