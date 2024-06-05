@@ -61,7 +61,6 @@ jobs:
         run: |
           choco install pyenv-win -y
           pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
-          
 
       - name: Install pyenv
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
@@ -70,6 +69,11 @@ jobs:
           echo PYENV_ROOT="$HOME/.pyenv" >> $GITHUB_ENV
           echo PATH="$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
           ~/.pyenv/bin/pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+
+      - name: Check Conda and Pyenv version
+        run: |
+          conda --version
+          pyenv --version
 
       - name: Run Tests
         run: cargo test --frozen --all-features
