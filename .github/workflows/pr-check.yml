@@ -183,7 +183,9 @@ jobs:
         shell: bash
 
       - name: Run Tests
-        run: cargo test --frozen --all-features
+        # We do not want to run all features, CI is only for tests with Python
+        # Thats a separate job.
+        run: cargo test --frozen
         shell: bash
 
       - name: Build
