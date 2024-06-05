@@ -9,13 +9,12 @@ mod common;
 #[cfg_attr(feature = "ci", test)]
 #[allow(dead_code)]
 fn conda_root_ci() {
-    use std::path::PathBuf;
-
     use pet_conda::Conda;
     use pet_core::{
         manager::EnvManagerType, os_environment::EnvironmentApi,
         python_environment::PythonEnvironmentCategory, Locator,
     };
+    use std::path::PathBuf;
 
     let env = EnvironmentApi::new();
 
