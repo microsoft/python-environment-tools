@@ -175,6 +175,18 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(Path::new(&home_drive).join("miniconda"));
         known_paths.push(Path::new(&home_drive).join("miniforge3"));
     }
+    if let Some(ref conda_root) = env_vars.conda_root {
+        known_paths.push(PathBuf::from(conda_root.clone()));
+    }
+    if let Some(ref conda_prefix) = env_vars.conda_prefix {
+        known_paths.push(PathBuf::from(conda_prefix.clone()));
+    }
+    if let Some(ref conda) = env_vars.conda {
+        let conda = PathBuf::from(conda);
+        if let Some(parent) = conda.parent() {
+            known_paths.push(parent.to_path_buf());
+        }
+    }
     if let Some(home) = env_vars.clone().home {
         known_paths.push(home.clone().join("anaconda3"));
         known_paths.push(home.clone().join("miniconda3"));
