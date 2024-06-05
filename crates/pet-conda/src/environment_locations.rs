@@ -201,6 +201,8 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
                 .join("conda"),
         );
     }
+    known_paths.sort();
+    known_paths.dedup();
     known_paths
 }
 
