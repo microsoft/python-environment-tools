@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-pub mod jsonrpc;
-pub mod stdio;
 mod environment;
+pub mod jsonrpc;
 mod manager;
+pub mod stdio;

@@ -245,7 +245,8 @@ mod tests {
 
         assert_eq!(conda_dir, PathBuf::from("C:\\Users\\donja\\miniconda3"));
 
-        let line = "# cmd: C:\\Users\\donja\\miniconda3\\Scripts\\conda-script.py create -n samlpe1";
+        let line =
+            "# cmd: C:\\Users\\donja\\miniconda3\\Scripts\\conda-script.py create -n samlpe1";
         let conda_dir = get_conda_dir_from_cmd(line.to_string()).unwrap();
 
         assert_eq!(conda_dir, PathBuf::from("C:\\Users\\donja\\miniconda3"));
