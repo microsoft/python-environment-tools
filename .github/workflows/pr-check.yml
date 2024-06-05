@@ -67,14 +67,14 @@ jobs:
       - name: Check pipenv version
         run: pipenv --version
 
-      - name: Install virtualnvwrapper
+      - name: Install virtualenvwrapper
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           pip install virtualenvwrapper
           echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
         shell: bash
 
-      - name: Install virtualnvwrapper-win
+      - name: Install virtualenvwrapper-win
         if: startsWith( matrix.os, 'windows')
         run: |
           pip install virtualenvwrapper-win
@@ -102,9 +102,18 @@ jobs:
         shell: bash
 
       - name: Install Pyenv Python(s)
+        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           pyenv install --list
           pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+        shell: bash
+
+        # pyenv-win install list has not updated for a while
+      - name: Install Pyenv Python(s)
+        if: startsWith( matrix.os, 'windows')
+        run: |
+          pyenv install --list
+          pyenv install 3.10.5 3.9.13 3.8.10
         shell: bash
 
       - name: Python in Registry
