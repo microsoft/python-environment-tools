@@ -46,19 +46,13 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo Fetch
-        run: cargo fetch 
+        run: cargo fetch
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Archive
-        run: |
-          mkdir -p artifacts
-          cp target/${{ matrix.target }}/release/pet* artifacts/pet-${{ matrix.target }}.tar.gz
-      
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: pet-${{ matrix.target }}
-          path: artifacts/pet-${{ matrix.target }}.tar.gz
-    
+          path: artifacts/pet*
