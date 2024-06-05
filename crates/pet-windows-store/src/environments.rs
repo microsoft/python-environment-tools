@@ -187,14 +187,13 @@ struct StorePythonInfo {
 #[cfg(windows)]
 fn get_package_display_name_and_location(name: &String, hkcu: &RegKey) -> Option<StorePythonInfo> {
     use log::trace;
-    use pet_utils::path::normalize;
 
     if let Some(name) = get_package_full_name_from_registry(name, hkcu) {
         let key = format!("Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages\\{}", name);
         trace!("Opening registry key {:?}", key);
         let package_key = hkcu.open_subkey(key).ok()?;
         let display_name = package_key.get_value("DisplayName").ok()?;
-        let env_path = normalize(package_key.get_value("PackageRootFolder").ok()?);
+        let env_path = package_key.get_value("PackageRootFolder").ok()?;
 
         return Some(StorePythonInfo {
             display_name,

@@ -1,9 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
-
 use crate::path::normalize;
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct PythonEnv {

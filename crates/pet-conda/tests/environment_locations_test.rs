@@ -2,15 +2,14 @@
 // Licensed under the MIT License.
 
 mod common;
-use common::{create_env_variables, resolve_test_path};
-use pet_conda::environment_locations::{
-    get_conda_envs_from_environment_txt, get_environments, get_known_conda_locations,
-};
-use std::path::PathBuf;
 
 #[cfg(unix)]
 #[test]
 fn read_environment_txt() {
+    use common::{create_env_variables, resolve_test_path};
+    use pet_conda::environment_locations::get_conda_envs_from_environment_txt;
+    use std::path::PathBuf;
+
     let root = resolve_test_path(&["unix", "root_empty"]).into();
     let home = resolve_test_path(&["unix", "user_home_with_environments_txt"]).into();
     let env = create_env_variables(home, root);
@@ -53,6 +52,9 @@ fn read_environment_txt() {
 #[cfg(unix)]
 #[test]
 fn non_existent_envrionments_txt() {
+    use common::{create_env_variables, resolve_test_path};
+    use pet_conda::environment_locations::get_conda_envs_from_environment_txt;
+
     let root = resolve_test_path(&["unix", "root_empty"]).into();
     let home = resolve_test_path(&["unix", "bogus directory"]).into();
     let env = create_env_variables(home, root);
@@ -65,6 +67,10 @@ fn non_existent_envrionments_txt() {
 #[cfg(unix)]
 #[test]
 fn known_install_locations() {
+    use common::{create_env_variables, resolve_test_path};
+    use pet_conda::environment_locations::get_known_conda_locations;
+    use std::path::PathBuf;
+
     let root = resolve_test_path(&["unix", "root_empty"]).into();
     let home = resolve_test_path(&["unix", "user_home"]).into();
     let env = create_env_variables(home, root);
@@ -102,6 +108,9 @@ fn known_install_locations() {
 #[cfg(unix)]
 #[test]
 fn list_conda_envs_in_install_location() {
+    use common::resolve_test_path;
+    use pet_conda::environment_locations::get_environments;
+
     let path = resolve_test_path(&["unix", "anaconda3-2023.03"]);
 
     let mut locations = get_environments(&path);

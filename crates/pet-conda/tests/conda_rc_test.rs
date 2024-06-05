@@ -2,14 +2,13 @@
 // Licensed under the MIT License.
 
 mod common;
-use common::resolve_test_path;
-use pet_conda::conda_rc::Condarc;
-use std::path::PathBuf;
 
 #[cfg(unix)]
 #[test]
 fn no_conda_rc() {
     use common::create_env_variables;
+    use common::resolve_test_path;
+    use pet_conda::conda_rc::Condarc;
 
     let root = resolve_test_path(&["unix", "root_empty"]);
     let home = resolve_test_path(&["unix", "user_home_with_environments_txt"]);
@@ -24,6 +23,9 @@ fn no_conda_rc() {
 #[test]
 fn finds_conda_rc() {
     use common::create_env_variables;
+    use common::resolve_test_path;
+    use pet_conda::conda_rc::Condarc;
+    use std::path::PathBuf;
 
     let root = resolve_test_path(&["unix", "conda_rc", "root"]);
     let home = resolve_test_path(&["unix", "conda_rc", "user_home"]);
@@ -44,6 +46,9 @@ fn finds_conda_rc() {
 #[test]
 fn finds_conda_rc_from_conda_root_env_variable() {
     use common::create_env_variables;
+    use common::resolve_test_path;
+    use pet_conda::conda_rc::Condarc;
+    use std::path::PathBuf;
 
     let root = resolve_test_path(&["unix", "conda_rc_conda_root_var", "root"]);
     let home = resolve_test_path(&["unix", "conda_rc_conda_root_var", "user_home"]);
@@ -75,6 +80,9 @@ fn finds_conda_rc_from_conda_root_env_variable() {
 #[test]
 fn finds_conda_rc_from_root() {
     use common::create_env_variables;
+    use common::resolve_test_path;
+    use pet_conda::conda_rc::Condarc;
+    use std::path::PathBuf;
 
     let root = resolve_test_path(&["unix", "conda_rc_root", "root"]);
     let home = resolve_test_path(&["unix", "conda_rc_root", "user_home"]);

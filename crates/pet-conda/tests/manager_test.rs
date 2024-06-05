@@ -2,12 +2,13 @@
 // Licensed under the MIT License.
 
 mod common;
-use common::resolve_test_path;
-use pet_conda::manager::CondaManager;
 
 #[cfg(unix)]
 #[test]
 fn finds_manager_from_root_env() {
+    use common::resolve_test_path;
+    use pet_conda::manager::CondaManager;
+
     let path = resolve_test_path(&["unix", "anaconda3-2023.03"]);
 
     let manager = CondaManager::from(&path).unwrap();
@@ -19,6 +20,9 @@ fn finds_manager_from_root_env() {
 #[cfg(unix)]
 #[test]
 fn finds_manager_from_root_within_an_env() {
+    use common::resolve_test_path;
+    use pet_conda::manager::CondaManager;
+
     let conda_dir = resolve_test_path(&["unix", "anaconda3-2023.03"]);
     let path = resolve_test_path(&["unix", "anaconda3-2023.03", "envs", "env_python_3"]);
 
@@ -39,6 +43,9 @@ fn finds_manager_from_root_within_an_env() {
 #[cfg(unix)]
 #[test]
 fn does_not_find_conda_env_for_bogus_dirs() {
+    use common::resolve_test_path;
+    use pet_conda::manager::CondaManager;
+
     let path = resolve_test_path(&["unix", "bogus_directory"]);
 
     assert_eq!(CondaManager::from(&path).is_none(), true);
