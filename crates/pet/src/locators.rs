@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use log::{error, info, warn};
+use log::{error, info};
 use pet_conda::Conda;
 use pet_core::os_environment::{Environment, EnvironmentApi};
 use pet_core::python_environment::PythonEnvironment;
@@ -190,15 +190,18 @@ fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
             // Before venv, as all venvs are also virtualenvwrapper environments.
             // Before virtualenv as this is more specific.
             // All venvs are also virtualenvs environments.
+            let mut found = false;
             for locator in &venv_type_locators {
                 if let Some(env) = locator.as_ref().from(&env) {
                     environments.push(env);
+                    found = true;
                     break;
-                } else {
-                    // We have no idea what this is.
-                    // Lets keep track of this and we can resolve this later.
-                    warn!("Unknown environment: {:?}", env);
                 }
+            }
+            if !found {
+                // We have no idea what this is.
+                // We have check all of the resolvers.
+                error!("Unknown Global Virtual Environment: {:?}", env);
             }
         }
     }
