@@ -235,6 +235,7 @@ pub fn get_activation_command(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
     use super::*;
 
     #[test]

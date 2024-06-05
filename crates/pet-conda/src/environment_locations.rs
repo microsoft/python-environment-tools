@@ -182,10 +182,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(PathBuf::from(conda_prefix.clone()));
     }
     if let Some(ref conda) = env_vars.conda {
-        let conda = PathBuf::from(conda);
-        if let Some(parent) = conda.parent() {
-            known_paths.push(parent.to_path_buf());
-        }
+        known_paths.push(PathBuf::from(conda));
     }
     if let Some(home) = env_vars.clone().home {
         known_paths.push(home.clone().join("anaconda3"));
@@ -233,10 +230,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(PathBuf::from(conda_prefix.clone()));
     }
     if let Some(ref conda) = env_vars.conda {
-        let conda = PathBuf::from(conda);
-        if let Some(parent) = conda.parent() {
-            known_paths.push(parent.to_path_buf());
-        }
+        known_paths.push(PathBuf::from(conda));
     }
     if let Some(ref home) = env_vars.home {
         known_paths.push(home.clone().join("anaconda"));
