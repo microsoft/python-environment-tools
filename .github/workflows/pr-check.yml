@@ -50,7 +50,7 @@ jobs:
 
       - name: Add Conda to PATH
         run: |
-          if [-eq "${{ matrix.os }}" "windows-latest"}]; then
+          if [-eq "${{ matrix.os }}" "windows-latest"]; then
             echo "PATH=$PATH;$CONDA" >> "$GITHUB_ENV"
           else
             echo "PATH=$PATH:$CONDA" >> "$GITHUB_ENV"
@@ -61,12 +61,15 @@ jobs:
         run: |
           choco install pyenv-win -y
           pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+          
 
       - name: Install pyenv
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           curl https://pyenv.run | bash
-          pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+          echo PYENV_ROOT="$HOME/.pyenv" >> $GITHUB_ENV
+          echo PATH="$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
+          ~/.pyenv/bin/pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
 
       - name: Run Tests
         run: cargo test --frozen --all-features
