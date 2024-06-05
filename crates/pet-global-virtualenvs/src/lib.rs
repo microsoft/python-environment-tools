@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_conda::utils::is_conda_env;
-use pet_utils::path::fix_file_path_casing;
+use pet_utils::path::normalize;
 use std::{fs, path::PathBuf};
 
 fn get_global_virtualenv_dirs(
@@ -12,7 +12,7 @@ fn get_global_virtualenv_dirs(
     let mut venv_dirs: Vec<PathBuf> = vec![];
 
     if let Some(work_on_home) = work_on_home_env_var {
-        let work_on_home = fix_file_path_casing(&PathBuf::from(work_on_home));
+        let work_on_home = normalize(PathBuf::from(work_on_home));
         if fs::metadata(&work_on_home).is_ok() {
             venv_dirs.push(work_on_home);
         }

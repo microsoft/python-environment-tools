@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use pet_utils::path::normalize;
 use serde::{Deserialize, Serialize};
 
 use crate::{arch::Architecture, manager::EnvManager};
@@ -166,7 +167,14 @@ impl PythonEnvironmentBuilder {
     }
 
     pub fn executable(mut self, executable: Option<PathBuf>) -> Self {
-        self.executable = executable;
+        self.executable.clone_from(&executable);
+        if let Some(exe) = executable {
+            if let Some(parent) = exe.parent() {
+                if let Some(file_name) = exe.file_name() {
+                    self.executable = Some(normalize(parent).join(file_name))
+                }
+            }
+        }
         self
     }
 
@@ -176,7 +184,10 @@ impl PythonEnvironmentBuilder {
     }
 
     pub fn prefix(mut self, prefix: Option<PathBuf>) -> Self {
-        self.prefix = prefix;
+        self.prefix.clone_from(&prefix);
+        if let Some(resolved) = prefix {
+            self.prefix = Some(normalize(resolved))
+        }
         self
     }
 
@@ -186,7 +197,10 @@ impl PythonEnvironmentBuilder {
     }
 
     pub fn project(mut self, project: Option<PathBuf>) -> Self {
-        self.project = project;
+        self.project.clone_from(&project);
+        if let Some(resolved) = project {
+            self.project = Some(normalize(resolved))
+        }
         self
     }
 

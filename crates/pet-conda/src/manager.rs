@@ -135,20 +135,3 @@ fn get_conda_manager(path: &Path) -> Option<CondaManager> {
         None
     }
 }
-
-// pub fn get_conda_version(conda_binary: &PathBuf) -> Option<String> {
-//     let mut parent = conda_binary.parent()?;
-//     if parent.ends_with("bin") {
-//         parent = parent.parent()?;
-//     }
-//     if parent.ends_with("Library") {
-//         parent = parent.parent()?;
-//     }
-//     match get_conda_package_info(&parent, "conda") {
-//         Some(result) => Some(result.version),
-//         None => match get_conda_package_info(&parent.parent()?, "conda") {
-//             Some(result) => Some(result.version),
-//             None => None,
-//         },
-//     }
-// }
