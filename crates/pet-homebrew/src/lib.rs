@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use env_variables::EnvVariables;
-use environments::get_python_info;
 use environment_locations::get_homebrew_prefix_bin;
+use environments::get_python_info;
 use pet_core::{
     os_environment::Environment, python_environment::PythonEnvironment, Locator, LocatorResult,
 };
@@ -11,8 +11,8 @@ use pet_utils::{env::PythonEnv, executable::resolve_symlink};
 use std::{collections::HashSet, path::PathBuf};
 
 mod env_variables;
-mod environments;
 mod environment_locations;
+mod environments;
 mod sym_links;
 
 pub struct Homebrew {
@@ -20,7 +20,6 @@ pub struct Homebrew {
 }
 
 impl Homebrew {
-    #[cfg(unix)]
     pub fn from(environment: &dyn Environment) -> Homebrew {
         Homebrew {
             environment: EnvVariables::from(environment),

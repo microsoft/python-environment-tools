@@ -130,6 +130,7 @@ impl Locator for PythonOnPath {
         // Possible both of the above are symlinks and point to the same file.
         // Hence sort on length of the path.
         // So that we process generic python3 before python3.10
+        python_executables.sort();
         python_executables.dedup();
         python_executables.sort_by(|a, b| {
             a.to_str()

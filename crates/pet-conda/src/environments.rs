@@ -152,24 +152,59 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
             // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
             // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
             // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-            let start_index = line.to_lowercase().find("# cmd:")? + "# cmd:".len();
-            let end_index = line.to_lowercase().find(" create -")?;
-            let cmd_line = PathBuf::from(line[start_index..end_index].trim().to_string());
-            if let Some(cmd_line) = cmd_line.parent() {
-                if let Some(conda_dir) = cmd_line.file_name() {
-                    if conda_dir.to_ascii_lowercase() == "bin"
-                        || conda_dir.to_ascii_lowercase() == "scripts"
-                    {
-                        if let Some(conda_dir) = cmd_line.parent() {
-                            return Some(conda_dir.to_path_buf());
-                        }
-                    }
-                    return Some(cmd_line.to_path_buf());
-                }
+            if let Some(conda_dir) = get_conda_dir_from_cmd(line.into()) {
+                return Some(conda_dir);
             }
         }
     }
 
+    None
+}
+
+fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
+    // Sample lines
+    // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+    // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
+    // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+    let start_index = cmd_line.to_lowercase().find("# cmd:")? + "# cmd:".len();
+    let end_index = cmd_line.to_lowercase().find(" create -")?;
+    let cmd_line = PathBuf::from(cmd_line[start_index..end_index].trim().to_string());
+    if let Some(cmd_line) = cmd_line.parent() {
+        if let Some(conda_dir) = cmd_line.file_name() {
+            if conda_dir.to_ascii_lowercase() == "bin"
+                || conda_dir.to_ascii_lowercase() == "scripts"
+            {
+                if let Some(conda_dir) = cmd_line.parent() {
+                    return Some(conda_dir.to_path_buf());
+                }
+            }
+            // Sometimes we can have paths like
+            // # cmd: C:\Users\donja\miniconda3\lib\site-packages\conda\__main__.py create --yes --prefix .conda python=3.9
+            let mut cmd_line = cmd_line.to_path_buf();
+            if cmd_line
+                .to_str()
+                .unwrap_or_default()
+                .contains("site-packages")
+                && cmd_line.to_str().unwrap_or_default().contains("lib")
+            {
+                loop {
+                    if cmd_line
+                        .to_str()
+                        .unwrap_or_default()
+                        .contains("site-packages")
+                    {
+                        let _ = cmd_line.pop();
+                    } else {
+                        break;
+                    }
+                }
+                if cmd_line.ends_with("lib") {
+                    let _ = cmd_line.pop();
+                }
+            }
+            return Some(cmd_line.to_path_buf());
+        }
+    }
     None
 }
 
@@ -195,5 +230,30 @@ pub fn get_activation_command(
             env.prefix.to_str().unwrap().to_string(),
             "python".to_string(),
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn parse_cmd_line() {
+        let line = "# cmd: C:\\Users\\donja\\miniconda3\\lib\\site-packages\\conda\\__main__.py create --yes --prefix .conda python=3.9";
+        let conda_dir = get_conda_dir_from_cmd(line.to_string()).unwrap();
+
+        assert_eq!(conda_dir, PathBuf::from("C:\\Users\\donja\\miniconda3"));
+
+        let line = "# cmd: C:\\Users\\donja\\miniconda3\\Scripts\\conda-script.py create -n samlpe1";
+        let conda_dir = get_conda_dir_from_cmd(line.to_string()).unwrap();
+
+        assert_eq!(conda_dir, PathBuf::from("C:\\Users\\donja\\miniconda3"));
+
+        // From root install folder
+        let line = "# cmd: build.py --product miniconda --python 3.9 --installer-type exe --output-dir C:\\ci\\containers\\000029l07m4\\tmp\\build\\dd3144c1\\output-installer/220421/ --standalone C:\\ci\\containers\\000029l07m4\\tmp\\build\\dd3144c1\\mc/standalone_conda/conda.exe";
+        let conda_dir = get_conda_dir_from_cmd(line.to_string());
+
+        assert!(conda_dir.is_none());
     }
 }

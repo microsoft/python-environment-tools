@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 use pet_core::os_environment::Environment;
@@ -9,20 +9,12 @@ use std::path::PathBuf;
 // Lets be explicit, this way we never miss a value (in Windows or Unix).
 pub struct EnvVariables {
     pub home: Option<PathBuf>,
-    pub root: Option<PathBuf>,
-    pub path: Option<String>,
-    pub homebrew_prefix: Option<String>,
-    pub known_global_search_locations: Vec<PathBuf>,
 }
 
 impl EnvVariables {
     pub fn from(env: &dyn Environment) -> Self {
         EnvVariables {
             home: env.get_user_home(),
-            root: env.get_root(),
-            path: env.get_env_var("PATH".to_string()),
-            homebrew_prefix: env.get_env_var("HOMEBREW_PREFIX".to_string()),
-            known_global_search_locations: env.get_know_global_search_locations(),
         }
     }
 }

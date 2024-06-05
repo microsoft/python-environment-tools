@@ -3,12 +3,18 @@ name = "pet"
 version = "0.1.0"
 edition = "2021"
 
+[target.'cfg(windows)'.dependencies]
+pet-windows-store = { path = "../pet-windows-store" }
+pet-windows-registry = { path = "../pet-windows-registry" }
+
+[target.'cfg(unix)'.dependencies]
+pet-homebrew = { path = "../pet-homebrew" }
+
 [dependencies]
 pet-utils = { path = "../pet-utils" }
 pet-core = { path = "../pet-core" }
 pet-conda = { path = "../pet-conda" }
 pet-jsonrpc = { path = "../pet-jsonrpc" }
-pet-homebrew = { path = "../pet-homebrew" }
 pet-pyenv = { path = "../pet-pyenv" }
 pet-reporter = { path = "../pet-reporter" }
 pet-virtualenvwrapper = { path = "../pet-virtualenvwrapper" }

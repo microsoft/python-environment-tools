@@ -33,8 +33,9 @@ pub fn get_conda_environment_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
         }
         envs
     });
-    env_paths.dedup();
 
+    env_paths.sort();
+    env_paths.dedup();
     // For each env, check if we have a conda install directory in them and
     // & then iterate through the list of envs in the envs directory.
     // let env_paths = vec![];
@@ -51,6 +52,7 @@ pub fn get_conda_environment_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
         }
     }
 
+    result.sort();
     result.dedup();
     result
 }
@@ -116,6 +118,7 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
         envs.push(conda_dir.to_path_buf());
     }
 
+    envs.sort();
     envs.dedup();
     envs
 }
@@ -141,24 +144,29 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     let user_profile = env_vars.userprofile.clone().unwrap_or_default();
     let program_data = env_vars.programdata.clone().unwrap_or_default();
     let all_user_profile = env_vars.allusersprofile.clone().unwrap_or_default();
-    let home_drive = env_vars.homedrive.clone().unwrap_or_default();
+    let mut home_drive = env_vars.homedrive.clone().unwrap_or_default();
     let mut known_paths = vec![
-        Path::new(&user_profile).join("Anaconda3"),
-        Path::new(&program_data).join("Anaconda3"),
-        Path::new(&all_user_profile).join("Anaconda3"),
-        Path::new(&home_drive).join("Anaconda3"),
-        Path::new(&user_profile).join("Miniconda3"),
-        Path::new(&program_data).join("Miniconda3"),
-        Path::new(&all_user_profile).join("Miniconda3"),
-        Path::new(&home_drive).join("Miniconda3"),
-        Path::new(&all_user_profile).join("miniforge3"),
-        Path::new(&home_drive).join("miniforge3"),
     ];
+    for env_variable in &[program_data, all_user_profile, user_profile] {
+        if !env_variable.is_empty() {
+            known_paths.push(Path::new(&env_variable).join("anaconda3"));
+            known_paths.push(Path::new(&env_variable).join("miniconda3"));
+            known_paths.push(Path::new(&env_variable).join("miniforge3"));
+        }
+    }
+    if !home_drive.is_empty() {
+        if home_drive.ends_with(':') {
+            home_drive = format!("{}\\", home_drive);
+        }
+        known_paths.push(Path::new(&home_drive).join("anaconda3"));
+        known_paths.push(Path::new(&home_drive).join("miniconda"));
+        known_paths.push(Path::new(&home_drive).join("miniforge3"));
+    }
     if let Some(home) = env_vars.clone().home {
-        known_paths.push(PathBuf::from(home.clone()).join("anaconda3"));
-        known_paths.push(PathBuf::from(home.clone()).join("miniconda3"));
-        known_paths.push(PathBuf::from(home.clone()).join("miniforge3"));
-        known_paths.push(PathBuf::from(home).join(".conda"));
+        known_paths.push(home.clone().join("anaconda3"));
+        known_paths.push(home.clone().join("miniconda3"));
+        known_paths.push(home.clone().join("miniforge3"));
+        known_paths.push(home.join(".conda"));
     }
     known_paths
 }
@@ -186,6 +194,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(home.join(".conda"));
     }
     known_paths.append(get_known_conda_locations(env_vars).as_mut());
+    known_paths.sort();
     known_paths.dedup();
     known_paths
 }

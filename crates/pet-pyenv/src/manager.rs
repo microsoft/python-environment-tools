@@ -7,6 +7,7 @@ use crate::{
 };
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::path::Path;
 use std::{fs, path::PathBuf};
 
 lazy_static! {
@@ -79,12 +80,13 @@ fn get_pyenv_info(environment: &EnvVariables) -> PyEnvInfo {
 
 #[cfg(windows)]
 fn get_pyenv_manager_version(
-    _pyenv_binary_path: &PathBuf,
+    _pyenv_binary_path: &Path,
     environment: &EnvVariables,
 ) -> Option<String> {
     // In windows, the version is stored in the `.pyenv/.version` file
+
     let pyenv_dir = get_pyenv_dir(environment)?;
-    let mut version_file = PathBuf::from(&pyenv_dir).join(".version");
+    let mut version_file = pyenv_dir.join(".version");
     if !version_file.exists() {
         // We might have got the path `~/.pyenv/pyenv-win`
         version_file = pyenv_dir.parent()?.join(".version");
@@ -103,7 +105,7 @@ fn get_pyenv_manager_version(
 }
 
 #[cfg(unix)]
-fn get_pyenv_manager_version(pyenv_exe: &PathBuf, _environment: &EnvVariables) -> Option<String> {
+fn get_pyenv_manager_version(pyenv_exe: &Path, _environment: &EnvVariables) -> Option<String> {
     let real_path = fs::read_link(pyenv_exe).ok()?;
     // Look for version in path
     // Sample /opt/homebrew/Cellar/pyenv/2.4.0/libexec/pyenv

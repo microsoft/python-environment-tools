@@ -8,7 +8,6 @@ use pet_core::python_environment::PythonEnvironment;
 use pet_core::reporter::Reporter;
 use pet_core::{Locator, LocatorResult};
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
-use pet_homebrew::Homebrew;
 use pet_pipenv::PipEnv;
 use pet_pyenv::PyEnv;
 use pet_utils::env::PythonEnv;
@@ -60,6 +59,9 @@ fn find_using_global_finders(// dispatcher: &mut dyn MessageDispatcher,
     // As they are very specific and guaranteed to be specific type.
     #[cfg(windows)]
     fn find() -> Vec<JoinHandle<std::option::Option<LocatorResult>>> {
+        use pet_windows_registry::WindowsRegistry;
+        use pet_windows_store::WindowsStore;
+        // use pet_win
         // The order matters,
         // Windows store can sometimes get detected via registry locator (but we want to avoid that),
         //  difficult to repro, but we have see this on Karthiks machine
@@ -67,35 +69,31 @@ fn find_using_global_finders(// dispatcher: &mut dyn MessageDispatcher,
         // Conda is best done last, as Windows Registry and Pyenv can also contain conda envs,
         // Thus lets leave the generic conda locator to last to find all remaining conda envs.
         // pyenv can be treated as a virtualenvwrapper environment, hence virtualenvwrapper needs to be detected first
+        let environment = EnvironmentApi::new();
+        let conda_locator = Arc::new(Conda::from(&environment));
+        let conda_locator1 = conda_locator.clone();
+        let conda_locator2 = conda_locator.clone();
+        let conda_locator3 = conda_locator.clone();
         vec![
-            // // 1. windows store
-            // thread::spawn(|| {
-            //     let environment = EnvironmentApi::new();
-            //     let mut windows_store = windows_store::WindowsStore::with(&environment);
-            //     windows_store.find()
-            // }),
-            // // 2. windows registry
-            // thread::spawn(|| {
-            //     let environment = EnvironmentApi::new();
-            //     let mut conda_locator = conda::Conda::with(&environment);
-            //     windows_registry::WindowsRegistry::with(&mut conda_locator).find()
-            // }),
-            // // 3. virtualenvwrapper
-            // thread::spawn(|| {
-            //     let environment = EnvironmentApi::new();
-            //     virtualenvwrapper::VirtualEnvWrapper::with(&environment).find()
-            // }),
-            // // 4. pyenv
-            // thread::spawn(|| {
-            //     let environment = EnvironmentApi::new();
-            //     let mut conda_locator = conda::Conda::with(&environment);
-            //     pyenv::PyEnv::with(&environment, &mut conda_locator).find()
-            // }),
-            // // 5. conda
-            // thread::spawn(|| {
-            //     let environment = EnvironmentApi::new();
-            //     conda::Conda::with(&environment).find()
-            // }),
+            // 1. windows store
+            thread::spawn(|| {
+                let environment = EnvironmentApi::new();
+                WindowsStore::from(&environment).find()
+            }),
+            // 2. windows registry
+            thread::spawn(|| WindowsRegistry::from(conda_locator1).find()),
+            // 3. virtualenvwrapper
+            thread::spawn(|| {
+                let environment = EnvironmentApi::new();
+                VirtualEnvWrapper::from(&environment).find()
+            }),
+            // 4. pyenv
+            thread::spawn(|| {
+                let environment = EnvironmentApi::new();
+                PyEnv::from(&environment, conda_locator2).find()
+            }),
+            // 5. conda
+            thread::spawn(move || conda_locator3.find()),
         ]
     }
 
@@ -107,7 +105,7 @@ fn find_using_global_finders(// dispatcher: &mut dyn MessageDispatcher,
         // Conda is best done last, as pyenv can also contain conda envs,
         // Thus lets leave the generic conda locator to last to find all remaining conda envs.
 
-        use pet_virtualenvwrapper::VirtualEnvWrapper;
+        use pet_homebrew::Homebrew;
 
         let environment = EnvironmentApi::new();
         let conda_locator = Arc::new(Conda::from(&environment));
@@ -138,6 +136,8 @@ fn find_using_global_finders(// dispatcher: &mut dyn MessageDispatcher,
 }
 
 fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
+    use pet_homebrew::Homebrew;
+
     let custom_virtual_env_dirs: Vec<PathBuf> = vec![];
 
     // Step 1: These environments take precedence over all others.

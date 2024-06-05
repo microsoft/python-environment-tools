@@ -18,7 +18,7 @@ impl Condarc {
 
 #[cfg(windows)]
 fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
-    let mut search_paths: Vec<PathBuf> = vec![
+    let mut search_paths: Vec<PathBuf> = [
         "C:\\ProgramData\\conda\\.condarc",
         "C:\\ProgramData\\conda\\condarc",
         "C:\\ProgramData\\conda\\condarc.d",

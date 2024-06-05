@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::sym_links::get_known_symlinks;
 use lazy_static::lazy_static;
 use pet_core::python_environment::{
     PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory,
@@ -10,8 +11,6 @@ use std::{
     collections::HashSet,
     path::{Path, PathBuf},
 };
-
-use crate::sym_links::get_known_symlinks;
 
 lazy_static! {
     static ref PYTHON_VERSION: Regex =
@@ -37,6 +36,7 @@ pub fn get_python_info(
     if let Some(version) = &version {
         symlinks.append(&mut get_known_symlinks(resolved_exe, version));
     }
+    symlinks.sort();
     symlinks.dedup();
 
     reported.insert(resolved_exe.to_string_lossy().to_string());

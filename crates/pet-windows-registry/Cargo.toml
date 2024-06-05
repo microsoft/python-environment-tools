@@ -3,4 +3,14 @@ name = "pet-windows-registry"
 version = "0.1.0"
 edition = "2021"
 
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52.0"
+
 [dependencies]
+pet-windows-store = { path = "../pet-windows-store" }
+pet-core = { path = "../pet-core" }
+pet-utils = { path = "../pet-utils" }
+pet-conda = { path = "../pet-conda" }
+log = "0.4.21"
+lazy_static = "1.4.0"
+regex = "1.10.4"

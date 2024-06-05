@@ -5,19 +5,19 @@ use crate::env_variables::EnvVariables;
 use std::{fs, path::PathBuf};
 
 #[cfg(windows)]
-pub fn get_home_pyenv_dir(environment: &EnvVariables) -> Option<PathBuf> {
-    let home = environment.home?;
+pub fn get_home_pyenv_dir(env_vars: &EnvVariables) -> Option<PathBuf> {
+    let home = env_vars.home.clone()?;
     Some(home.join(".pyenv").join("pyenv-win"))
 }
 
 #[cfg(unix)]
-pub fn get_home_pyenv_dir(environment: &EnvVariables) -> Option<PathBuf> {
-    let home = environment.home.clone()?;
+pub fn get_home_pyenv_dir(env_vars: &EnvVariables) -> Option<PathBuf> {
+    let home = env_vars.home.clone()?;
     Some(home.join(".pyenv"))
 }
 
-pub fn get_binary_from_known_paths(environment: &EnvVariables) -> Option<PathBuf> {
-    for known_path in &environment.known_global_search_locations {
+pub fn get_binary_from_known_paths(env_vars: &EnvVariables) -> Option<PathBuf> {
+    for known_path in &env_vars.known_global_search_locations {
         let exe = if cfg!(windows) {
             known_path.join("pyenv.exe")
         } else {
@@ -32,7 +32,7 @@ pub fn get_binary_from_known_paths(environment: &EnvVariables) -> Option<PathBuf
     None
 }
 
-pub fn get_pyenv_dir(environment: &EnvVariables) -> Option<PathBuf> {
+pub fn get_pyenv_dir(env_vars: &EnvVariables) -> Option<PathBuf> {
     // Check if the pyenv environment variables exist: PYENV on Windows, PYENV_ROOT on Unix.
     // They contain the path to pyenv's installation folder.
     // If they don't exist, use the default path: ~/.pyenv/pyenv-win on Windows, ~/.pyenv on Unix.
@@ -40,8 +40,8 @@ pub fn get_pyenv_dir(environment: &EnvVariables) -> Option<PathBuf> {
     // See https://github.com/pyenv/pyenv#locating-the-python-installation for general usage,
     // And https://github.com/pyenv-win/pyenv-win for Windows specifics.
 
-    match &environment.pyenv_root {
+    match &env_vars.pyenv_root {
         Some(dir) => Some(PathBuf::from(dir)),
-        None => environment.pyenv.as_ref().map(PathBuf::from),
+        None => env_vars.pyenv.as_ref().map(PathBuf::from),
     }
 }
