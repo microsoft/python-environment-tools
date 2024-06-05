@@ -107,15 +107,29 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
         envs.push(conda_dir.to_path_buf());
 
         if let Ok(entries) = fs::read_dir(conda_dir.join("envs")) {
-            for entry in entries.filter_map(Result::ok) {
-                let path = entry.path();
-                if is_conda_env(&path) {
-                    envs.push(path);
-                }
-            }
+            envs.append(
+                &mut entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter(|p| is_conda_env(p))
+                    .collect(),
+            );
         }
     } else if is_conda_env(conda_dir) {
         envs.push(conda_dir.to_path_buf());
+    } else if fs::metadata(conda_dir.join("envs")).is_ok() {
+        // This could be a directory where conda environments are stored.
+        // I.e. its not necessarily the root conda install directory.
+        // E.g. C:\Users\donjayamanne\.conda
+        if let Ok(entries) = fs::read_dir(conda_dir.join("envs")) {
+            envs.append(
+                &mut entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter(|p| is_conda_env(p))
+                    .collect(),
+            );
+        }
     }
 
     envs.sort();
@@ -165,7 +179,15 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(home.clone().join("anaconda3"));
         known_paths.push(home.clone().join("miniconda3"));
         known_paths.push(home.clone().join("miniforge3"));
+        // E.g. C:\Users\user name\.conda where we have `envs`` under this directory.
         known_paths.push(home.join(".conda"));
+        // E.g. C:\Users\user name\AppData\Local\conda\conda\envs
+        known_paths.push(
+            home.join("AppData")
+                .join("Local")
+                .join("conda")
+                .join("conda"),
+        );
     }
     known_paths
 }
