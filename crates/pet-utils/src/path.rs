@@ -6,7 +6,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub fn get_absolute_path(path: &Path) -> PathBuf {
+// This function is used to fix the casing of the file path.
+// by returning the actual path with the correct casing as found on the OS.
+// This is a noop for Unix systems.
+// I.e. this function is only useful on Windows.
+pub fn fix_file_path_casing(path: &Path) -> PathBuf {
     // Return the path as is.
     if cfg!(unix) {
         return path.to_path_buf();
