@@ -49,12 +49,12 @@ jobs:
         run: cargo fetch
 
       - name: Add Conda to PATH
-        run: |
-          if [-eq "${{ matrix.os }}" "windows-latest"]; then
-            echo "PATH=$PATH;$CONDA" >> "$GITHUB_ENV"
-          else
-            echo "PATH=$PATH:$CONDA" >> "$GITHUB_ENV"
-          fi
+        if: startsWith( matrix.os, 'windows')
+        run: echo "PATH=$PATH;$CONDA" >> "$GITHUB_ENV"
+
+      - name: Add Conda to PATH
+        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        run: echo "PATH=$PATH:$CONDA" >> "$GITHUB_ENV"
 
       - name: Install pyenv
         if: startsWith( matrix.os, 'windows')
