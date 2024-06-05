@@ -77,13 +77,6 @@ jobs:
       - name: Check Conda version
         run: conda info --all
 
-      - name: Create Conda Environment
-        run: |
-          conda create -n test-env1 python=3.12 -y
-          conda create -n test-env-no-python -y
-          conda create -p ./prefix-envs/.conda1 python=3.12 -y
-          conda create -p ./prefix-envs/.conda-nopy -y
-
       - name: Install pipenv
         run: pip install pipenv
 
