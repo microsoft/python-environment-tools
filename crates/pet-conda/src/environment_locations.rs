@@ -145,8 +145,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     let program_data = env_vars.programdata.clone().unwrap_or_default();
     let all_user_profile = env_vars.allusersprofile.clone().unwrap_or_default();
     let mut home_drive = env_vars.homedrive.clone().unwrap_or_default();
-    let mut known_paths = vec![
-    ];
+    let mut known_paths = vec![];
     for env_variable in &[program_data, all_user_profile, user_profile] {
         if !env_variable.is_empty() {
             known_paths.push(Path::new(&env_variable).join("anaconda3"));
