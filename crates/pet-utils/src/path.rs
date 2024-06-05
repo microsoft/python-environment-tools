@@ -9,7 +9,6 @@ use std::{
 // Similar to fs::canonicalize, but ignores UNC paths and returns the path as is (for windows).
 pub fn normalize<P: AsRef<Path>>(path: P) -> PathBuf {
     if let Ok(resolved) = fs::canonicalize(&path) {
-        // Return the path as is.
         if cfg!(unix) {
             return resolved;
         }
