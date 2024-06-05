@@ -212,7 +212,7 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
             // The casing in history might not be same as that on disc
             // We do not want to have duplicates in different cases.
             // & we'd like to preserve the case of the original path as on disc.
-            return Some(get_absolute_path(cmd_line).to_path_buf());
+            return Some(get_absolute_path(&cmd_line).to_path_buf());
         }
     }
     None

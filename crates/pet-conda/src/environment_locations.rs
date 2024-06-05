@@ -208,7 +208,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     // We use lower cases above, but it could be in any case on disc.
     // We do not want to have duplicates in different cases.
     // & we'd like to preserve the case of the original path as on disc.
-    known_paths = known_paths.iter().map(get_absolute_path).collect();
+    known_paths = known_paths.iter().map(|p| get_absolute_path(&p)).collect();
     known_paths.sort();
     known_paths.dedup();
 
