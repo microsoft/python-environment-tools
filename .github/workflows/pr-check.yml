@@ -56,8 +56,9 @@ jobs:
 
       - name: Add Conda to PATH
         if: startsWith( matrix.os, 'windows')
-        run: echo "PATH=$PATH:/c/Miniconda/condabin" >> $GITHUB_ENV
-        shell: bash
+        run: |
+          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
+          echo "PATH=$path" >> $env:GITHUB_ENV
 
       - name: Add Conda to PATH
         if: startsWith( matrix.os, 'ubuntu')
@@ -75,7 +76,6 @@ jobs:
 
       - name: Check Conda version
         run: conda info --all
-        shell: bash
 
       - name: Create Conda Environment
         run: |
@@ -83,7 +83,6 @@ jobs:
           conda create -n test-env-no-python -y
           conda create -p ./prefix-envs/.conda1 python=3.12 -y
           conda create -p ./prefix-envs/.conda-nopy -y
-        shell: bash
 
       - name: Install pipenv
         run: pip install pipenv
