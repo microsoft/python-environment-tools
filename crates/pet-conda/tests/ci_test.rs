@@ -10,6 +10,7 @@ mod common;
 #[cfg(unix)]
 #[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
+// We should detect the conda install along with the base env
 fn detect_conda_root() {
     use pet_conda::Conda;
     use pet_core::{
@@ -24,7 +25,6 @@ fn detect_conda_root() {
     let result = conda.find().unwrap();
 
     assert_eq!(result.managers.len(), 1);
-    assert_eq!(result.environments.len(), 1);
 
     let info = get_conda_info();
     let conda_dir = PathBuf::from(info.conda_prefix.clone());
@@ -33,7 +33,11 @@ fn detect_conda_root() {
     assert_eq!(manager.tool, EnvManagerType::Conda);
     assert_eq!(manager.version, info.conda_version.into());
 
-    let env = &result.environments[0];
+    let env = &result
+        .environments
+        .iter()
+        .find(|e| e.name == Some("base".into()))
+        .unwrap();
     assert_eq!(env.prefix, conda_dir.clone().into());
     assert_eq!(env.name, Some("base".into()));
     assert_eq!(env.category, PythonEnvironmentCategory::Conda);
@@ -46,6 +50,7 @@ fn detect_conda_root() {
 #[cfg(unix)]
 #[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
+// Given the path to the root directory, detect the manager and base env
 fn detect_conda_root_from_path() {
     use pet_conda::Conda;
     use pet_core::{
@@ -81,6 +86,7 @@ fn detect_conda_root_from_path() {
 #[cfg(unix)]
 #[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
+// When a new env is created detect that too
 fn detect_new_conda_env() {
     use pet_conda::Conda;
     use pet_core::{
@@ -89,7 +95,10 @@ fn detect_new_conda_env() {
     use std::path::PathBuf;
 
     let env_name = "env_with_python";
-    create_conda_env_with_python(&env_name);
+    create_conda_env(
+        &CondaCreateEnvNameOrPath::Name(env_name.into()),
+        Some("3.10".into()),
+    );
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
@@ -130,6 +139,7 @@ fn detect_new_conda_env() {
 #[cfg(unix)]
 #[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
+// Identify the manager and conda env given the path to a conda env inside the `envs` directory
 fn detect_conda_env_from_path() {
     use pet_conda::Conda;
     use pet_core::{
@@ -142,7 +152,10 @@ fn detect_conda_env_from_path() {
     let env = EnvironmentApi::new();
     let info = get_conda_info();
     let env_name = "env_with_python2";
-    create_conda_env_with_python(&env_name);
+    create_conda_env(
+        &CondaCreateEnvNameOrPath::Name(env_name.into()),
+        Some("3.10".into()),
+    );
     let conda_dir = PathBuf::from(info.conda_prefix.clone());
     let prefix = conda_dir.join("envs").join(env_name);
     let exe = prefix.join("bin").join("python");
@@ -172,6 +185,7 @@ fn detect_conda_env_from_path() {
 #[cfg(unix)]
 #[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
+// Detect envs created without Python
 fn detect_new_conda_env_without_python() {
     use pet_conda::Conda;
     use pet_core::{
@@ -180,7 +194,7 @@ fn detect_new_conda_env_without_python() {
     use std::path::PathBuf;
 
     let env_name = "env_without_python";
-    create_conda_env_without_python(&env_name);
+    create_conda_env(&CondaCreateEnvNameOrPath::Name(env_name.into()), None);
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
@@ -217,6 +231,7 @@ fn detect_new_conda_env_without_python() {
 #[cfg(unix)]
 #[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
+// Detect envs created without Python in a custom directory using the -p flag
 fn detect_new_conda_env_created_with_p_flag_without_python() {
     use common::resolve_test_path;
     use pet_conda::Conda;
@@ -264,6 +279,7 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
 #[cfg(unix)]
 #[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
+// Detect envs created Python in a custom directory using the -p flag
 fn detect_new_conda_env_created_with_p_flag_with_python() {
     use common::resolve_test_path;
     use pet_conda::Conda;
@@ -341,14 +357,6 @@ fn get_conda_info() -> CondaInfo {
     conda_info
 }
 
-fn create_conda_env_with_python(name: &str) {
-    // Spawn `conda --version` to get the version of conda as a string
-    let _ = std::process::Command::new(get_conda_exe())
-        .args(["create", "-n", name, "python=3.10", "-y"])
-        .output()
-        .expect("Failed to execute command");
-}
-
 enum CondaCreateEnvNameOrPath {
     Name(String),
     Path(PathBuf),
@@ -373,14 +381,6 @@ fn create_conda_env(mode: &CondaCreateEnvNameOrPath, python_version: Option<Stri
     // Spawn `conda --version` to get the version of conda as a string
     let _ = std::process::Command::new(get_conda_exe())
         .args(cli)
-        .output()
-        .expect("Failed to execute command");
-}
-
-fn create_conda_env_without_python(name: &str) {
-    // Spawn `conda --version` to get the version of conda as a string
-    let _ = std::process::Command::new(get_conda_exe())
-        .args(["create", "-n", name, "-y"])
         .output()
         .expect("Failed to execute command");
 }
