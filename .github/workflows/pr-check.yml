@@ -116,11 +116,6 @@ jobs:
           pyenv install 3.10.5 3.9.13 3.8.10
         shell: bash
 
-      - name: Python in Registry
-        if: startsWith( matrix.os, 'windows')
-        run: reg query HKLM\SOFTWARE\Python /s
-        shell: cmd
-
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
         with:
