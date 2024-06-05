@@ -60,6 +60,7 @@ jobs:
 
       - name: Check Conda version
         run: conda info --all
+        shell: bash
 
       - name: Install pipenv
         run: pip install pipenv
@@ -67,6 +68,7 @@ jobs:
 
       - name: Check pipenv version
         run: pipenv --version
+        shell: bash
 
       - name: Install virtualnvwrapper
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
@@ -79,7 +81,7 @@ jobs:
         if: startsWith( matrix.os, 'windows')
         run: |
           pip install virtualenvwrapper-win
-          echo "WORKON_HOME=$USERPROFILE\.virtualenvs" >> $GITHUB_ENV
+          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
         shell: bash
 
       - name: Install pyenv
@@ -100,6 +102,7 @@ jobs:
 
       - name: Check Pyenv version
         run: pyenv --version
+        shell: bash
 
       - name: Install Pyenv Python(s)
         run: pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
@@ -117,12 +120,15 @@ jobs:
 
       - name: Cargo Fetch
         run: cargo fetch
+        shell: bash
 
       - name: Run Tests
         run: cargo test --frozen --all-features
+        shell: bash
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
