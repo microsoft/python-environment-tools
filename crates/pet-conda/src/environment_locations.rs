@@ -7,6 +7,7 @@ use crate::{
     utils::{is_conda_env, is_conda_install},
 };
 use log::trace;
+use pet_utils::path::get_absolute_path;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -145,7 +146,7 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
         if let Ok(reader) = fs::read_to_string(environment_txt.clone()) {
             trace!("Found environments.txt file {:?}", environment_txt);
             for line in reader.lines() {
-                envs.push(PathBuf::from(line.to_string()));
+                envs.push(get_absolute_path(&PathBuf::from(line.to_string())));
             }
         }
     }
