@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 mod common;
@@ -212,6 +214,108 @@ fn detect_new_conda_env_without_python() {
     assert_eq!(env.manager, Some(manager.clone()));
 }
 
+#[cfg(unix)]
+#[cfg_attr(feature = "ci_conda", test)]
+#[allow(dead_code)]
+fn detect_new_conda_env_created_with_p_flag_without_python() {
+    use common::resolve_test_path;
+    use pet_conda::Conda;
+    use pet_core::{
+        os_environment::EnvironmentApi, python_environment::PythonEnvironmentCategory, Locator,
+    };
+    use std::path::PathBuf;
+
+    let env_name = "env_without_python3";
+    let prefix = resolve_test_path(&["unix", env_name]);
+    create_conda_env(&CondaCreateEnvNameOrPath::Path(prefix.clone()), None);
+    let env = EnvironmentApi::new();
+
+    let conda = Conda::from(&env);
+    let result = conda.find().unwrap();
+
+    assert_eq!(result.managers.len(), 1);
+
+    let manager = &result.managers[0];
+
+    let info = get_conda_info();
+    let conda_dir = PathBuf::from(info.conda_prefix.clone());
+    let env = result
+        .environments
+        .iter()
+        .find(|x| x.prefix == Some(prefix.clone()))
+        .expect(
+            format!(
+                "New Environment not created, detected envs {:?}",
+                result.environments
+            )
+            .as_str(),
+        );
+
+    let prefix = conda_dir.clone().join("envs").join(env_name);
+    assert_eq!(env.prefix, prefix.clone().into());
+    assert_eq!(env.name, None);
+    assert_eq!(env.category, PythonEnvironmentCategory::Conda);
+    assert_eq!(env.executable.is_none(), true);
+    assert_eq!(env.version.is_none(), true);
+
+    assert_eq!(env.manager, Some(manager.clone()));
+}
+
+#[cfg(unix)]
+#[cfg_attr(feature = "ci_conda", test)]
+#[allow(dead_code)]
+fn detect_new_conda_env_created_with_p_flag_with_python() {
+    use common::resolve_test_path;
+    use pet_conda::Conda;
+    use pet_core::{
+        os_environment::EnvironmentApi, python_environment::PythonEnvironmentCategory, Locator,
+    };
+    use std::path::PathBuf;
+
+    let env_name = "env_with_python3";
+    let prefix = resolve_test_path(&["unix", env_name]);
+    let exe = prefix.join("bin").join("python");
+    create_conda_env(
+        &CondaCreateEnvNameOrPath::Path(prefix.clone()),
+        Some("3.10".into()),
+    );
+    let env = EnvironmentApi::new();
+
+    let conda = Conda::from(&env);
+    let result = conda.find().unwrap();
+
+    assert_eq!(result.managers.len(), 1);
+
+    let manager = &result.managers[0];
+
+    let info = get_conda_info();
+    let conda_dir = PathBuf::from(info.conda_prefix.clone());
+    let env = result
+        .environments
+        .iter()
+        .find(|x| x.prefix == Some(prefix.clone()))
+        .expect(
+            format!(
+                "New Environment not created, detected envs {:?}",
+                result.environments
+            )
+            .as_str(),
+        );
+
+    let prefix = conda_dir.clone().join("envs").join(env_name);
+    assert_eq!(env.prefix, prefix.clone().into());
+    assert_eq!(env.name, None);
+    assert_eq!(env.category, PythonEnvironmentCategory::Conda);
+    assert_eq!(env.executable, exe.into());
+    assert!(
+        env.version.clone().unwrap_or_default().starts_with("3.10"),
+        "Expected 3.10, but got Version: {:?}",
+        env.version
+    );
+
+    assert_eq!(env.manager, Some(manager.clone()));
+}
+
 #[derive(Deserialize)]
 struct CondaInfo {
     conda_version: String,
@@ -241,6 +345,34 @@ fn create_conda_env_with_python(name: &str) {
     // Spawn `conda --version` to get the version of conda as a string
     let _ = std::process::Command::new(get_conda_exe())
         .args(["create", "-n", name, "python=3.10", "-y"])
+        .output()
+        .expect("Failed to execute command");
+}
+
+enum CondaCreateEnvNameOrPath {
+    Name(String),
+    Path(PathBuf),
+}
+
+fn create_conda_env(mode: &CondaCreateEnvNameOrPath, python_version: Option<String>) {
+    let mut cli: Vec<String> = vec!["create".to_string()];
+    match mode {
+        CondaCreateEnvNameOrPath::Name(name) => {
+            cli.push("-n".to_string());
+            cli.push(name.to_string());
+        }
+        CondaCreateEnvNameOrPath::Path(path) => {
+            cli.push("-p".to_string());
+            cli.push(path.to_str().unwrap().to_string());
+        }
+    }
+    if let Some(ref python_version) = python_version {
+        cli.push(format!("python={}", python_version.as_str()));
+    }
+    cli.push("-y".to_string());
+    // Spawn `conda --version` to get the version of conda as a string
+    let _ = std::process::Command::new(get_conda_exe())
+        .args(cli)
         .output()
         .expect("Failed to execute command");
 }
