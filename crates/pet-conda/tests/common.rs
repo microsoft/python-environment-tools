@@ -22,6 +22,7 @@ pub fn create_env_variables(home: PathBuf, root: PathBuf) -> EnvVariables {
         allusersprofile: None,
         conda_prefix: None,
         conda_root: None,
+        conda: None,
         condarc: None,
         homedrive: None,
         known_global_search_locations: vec![],
