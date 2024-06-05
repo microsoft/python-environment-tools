@@ -2,7 +2,9 @@
 // Licensed under the MIT License.
 
 use crate::{env_variables::EnvVariables, environment_locations::get_work_on_home_path};
-use pet_utils::{env::PythonEnv, executable::find_executable, pyvenv_cfg::PyVenvCfg};
+use pet_utils::{
+    env::PythonEnv, executable::find_executable, path::fix_file_path_casing, pyvenv_cfg::PyVenvCfg,
+};
 use pet_virtualenv::is_virtualenv;
 use std::{fs, path::PathBuf};
 
@@ -26,7 +28,7 @@ pub fn is_virtualenvwrapper(env: &PythonEnv, environment: &EnvVariables) -> bool
 pub fn get_project(env: &PythonEnv) -> Option<PathBuf> {
     let project_file = env.prefix.clone()?.join(".project");
     let contents = fs::read_to_string(project_file).ok()?;
-    let project_folder = PathBuf::from(contents.trim().to_string());
+    let project_folder = fix_file_path_casing(&PathBuf::from(contents.trim().to_string()));
     if fs::metadata(&project_folder).is_ok() {
         Some(project_folder)
     } else {

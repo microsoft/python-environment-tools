@@ -12,7 +12,7 @@ use pet_core::{
     manager::EnvManager,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
 };
-use pet_utils::executable::find_executable;
+use pet_utils::{executable::find_executable, path::fix_file_path_casing};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -175,7 +175,12 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
                 || conda_dir.to_ascii_lowercase() == "scripts"
             {
                 if let Some(conda_dir) = cmd_line.parent() {
-                    return Some(conda_dir.to_path_buf());
+                    // Ensure the casing of the paths are correct.
+                    // Its possible the actual path is in a different case.
+                    // The casing in history might not be same as that on disc
+                    // We do not want to have duplicates in different cases.
+                    // & we'd like to preserve the case of the original path as on disc.
+                    return Some(fix_file_path_casing(conda_dir).to_path_buf());
                 }
             }
             // Sometimes we can have paths like
@@ -202,7 +207,12 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
                     let _ = cmd_line.pop();
                 }
             }
-            return Some(cmd_line.to_path_buf());
+            // Ensure the casing of the paths are correct.
+            // Its possible the actual path is in a different case.
+            // The casing in history might not be same as that on disc
+            // We do not want to have duplicates in different cases.
+            // & we'd like to preserve the case of the original path as on disc.
+            return Some(fix_file_path_casing(&cmd_line).to_path_buf());
         }
     }
     None

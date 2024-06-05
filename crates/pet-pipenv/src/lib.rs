@@ -7,12 +7,12 @@ use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     Locator, LocatorResult,
 };
-use pet_utils::env::PythonEnv;
+use pet_utils::{env::PythonEnv, path::fix_file_path_casing};
 
 fn get_pipenv_project(env: &PythonEnv) -> Option<PathBuf> {
     let project_file = env.prefix.clone()?.join(".project");
     let contents = fs::read_to_string(project_file).ok()?;
-    let project_folder = PathBuf::from(contents.trim().to_string());
+    let project_folder = fix_file_path_casing(&PathBuf::from(contents.trim().to_string()));
     if fs::metadata(&project_folder).is_ok() {
         Some(project_folder)
     } else {

@@ -7,6 +7,7 @@ use crate::{
     utils::{is_conda_env, is_conda_install},
 };
 use log::trace;
+use pet_utils::path::fix_file_path_casing;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -34,6 +35,7 @@ pub fn get_conda_environment_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
         envs
     });
 
+    env_paths = env_paths.iter().map(|p| fix_file_path_casing(p)).collect();
     env_paths.sort();
     env_paths.dedup();
     // For each env, check if we have a conda install directory in them and
@@ -145,7 +147,7 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
         if let Ok(reader) = fs::read_to_string(environment_txt.clone()) {
             trace!("Found environments.txt file {:?}", environment_txt);
             for line in reader.lines() {
-                envs.push(PathBuf::from(line.to_string()));
+                envs.push(fix_file_path_casing(&PathBuf::from(line.to_string())));
             }
         }
     }
@@ -155,6 +157,8 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
 
 #[cfg(windows)]
 pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
+    use pet_utils::path::fix_file_path_casing;
+
     let user_profile = env_vars.userprofile.clone().unwrap_or_default();
     let program_data = env_vars.programdata.clone().unwrap_or_default();
     let all_user_profile = env_vars.allusersprofile.clone().unwrap_or_default();
@@ -200,6 +204,19 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     }
     known_paths.sort();
     known_paths.dedup();
+    // Ensure the casing of the paths are correct.
+    // Its possible the actual path is in a different case.
+    // E.g. instead of C:\username\miniconda it might bt C:\username\Miniconda
+    // We use lower cases above, but it could be in any case on disc.
+    // We do not want to have duplicates in different cases.
+    // & we'd like to preserve the case of the original path as on disc.
+    known_paths = known_paths
+        .iter()
+        .map(|p| fix_file_path_casing(p))
+        .collect();
+    known_paths.sort();
+    known_paths.dedup();
+
     known_paths
 }
 
@@ -243,6 +260,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     known_paths.append(get_known_conda_locations(env_vars).as_mut());
     known_paths.sort();
     known_paths.dedup();
+
     known_paths
 }
 
