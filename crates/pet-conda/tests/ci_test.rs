@@ -6,7 +6,7 @@ use serde::Deserialize;
 mod common;
 
 #[cfg(unix)]
-#[cfg_attr(feature = "ci", test)]
+#[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
 fn detect_conda_root() {
     use pet_conda::Conda;
@@ -42,7 +42,7 @@ fn detect_conda_root() {
 }
 
 #[cfg(unix)]
-#[cfg_attr(feature = "ci", test)]
+#[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
 fn detect_new_conda_env() {
     use pet_conda::Conda;
@@ -57,7 +57,6 @@ fn detect_new_conda_env() {
 
     let conda = Conda::from(&env);
     let result = conda.find().unwrap();
-    println!("After creating Env {:?}", result);
 
     assert_eq!(result.managers.len(), 1);
 
@@ -92,7 +91,7 @@ fn detect_new_conda_env() {
 }
 
 #[cfg(unix)]
-#[cfg_attr(feature = "ci", test)]
+#[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
 fn detect_new_conda_env_without_python() {
     use pet_conda::Conda;
@@ -107,7 +106,6 @@ fn detect_new_conda_env_without_python() {
 
     let conda = Conda::from(&env);
     let result = conda.find().unwrap();
-    println!("After creating Env {:?}", result);
 
     assert_eq!(result.managers.len(), 1);
 

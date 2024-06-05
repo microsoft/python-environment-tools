@@ -117,25 +117,3 @@ fn list_conda_envs_in_install_location() {
         ]
     );
 }
-
-// #[test]
-// fn get_conda_environment_paths_test() {
-//     let now = SystemTime::now();
-//     let env = EnvironmentApi {};
-//     let envs = get_conda_environment_paths(&env);
-//     println!("{:?}", envs);
-//     println!("{:?}", envs);
-//     println!("{:?}", envs);
-//     println!("{:?}", envs);
-//     println!("{:?}", envs);
-//     match now.elapsed() {
-//         Ok(elapsed) => {
-//             println!("Native Locator took {} milliseconds.", elapsed.as_millis());
-//             println!("Native Locator took {} milliseconds.", elapsed.as_millis());
-//             println!("Native Locator took {} milliseconds.", elapsed.as_millis());
-//         }
-//         Err(e) => {
-//             log::error!("Error getting elapsed time: {:?}", e);
-//         }
-//     }
-// }

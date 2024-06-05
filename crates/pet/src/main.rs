@@ -21,7 +21,6 @@ enum Commands {
 
 fn main() {
     let cli = Cli::parse();
-    println!("{:?}", cli);
 
     match cli.command {
         Some(Commands::Server) => find_and_report_envs_jsonrpc(),
