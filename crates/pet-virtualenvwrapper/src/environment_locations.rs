@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use pet_utils::path::normalize;
+
 use crate::env_variables::EnvVariables;
 use std::{fs, path::PathBuf};
 
@@ -13,11 +15,11 @@ fn get_default_virtualenvwrapper_path(env_vars: &EnvVariables) -> Option<PathBuf
     if let Some(user_home) = &env_vars.home {
         let home = user_home.join("Envs");
         if fs::metadata(&home).is_ok() {
-            return Some(home);
+            return Some(normalize(home));
         }
         let home = user_home.join("virtualenvs");
         if fs::metadata(&home).is_ok() {
-            return Some(home);
+            return Some(normalize(home));
         }
     }
     None
@@ -30,7 +32,7 @@ fn get_default_virtualenvwrapper_path(env_vars: &EnvVariables) -> Option<PathBuf
     if let Some(home) = &env_vars.home {
         let home = home.join(".virtualenvs");
         if fs::metadata(&home).is_ok() {
-            return Some(home);
+            return Some(normalize(&home));
         }
     }
     None
@@ -42,7 +44,7 @@ pub fn get_work_on_home_path(environment: &EnvVariables) -> Option<PathBuf> {
     if let Some(work_on_home) = &environment.workon_home {
         if let Ok(work_on_home) = std::fs::canonicalize(work_on_home) {
             if fs::metadata(&work_on_home).is_ok() {
-                return Some(work_on_home);
+                return Some(normalize(&work_on_home));
             }
         }
     }

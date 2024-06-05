@@ -1,19 +1,21 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use pet_utils::path::normalize;
+
 use crate::env_variables::EnvVariables;
 use std::{fs, path::PathBuf};
 
 #[cfg(windows)]
 pub fn get_home_pyenv_dir(env_vars: &EnvVariables) -> Option<PathBuf> {
     let home = env_vars.home.clone()?;
-    Some(home.join(".pyenv").join("pyenv-win"))
+    Some(normalize(home.join(".pyenv").join("pyenv-win")))
 }
 
 #[cfg(unix)]
 pub fn get_home_pyenv_dir(env_vars: &EnvVariables) -> Option<PathBuf> {
     let home = env_vars.home.clone()?;
-    Some(home.join(".pyenv"))
+    Some(normalize(home.join(".pyenv")))
 }
 
 pub fn get_binary_from_known_paths(env_vars: &EnvVariables) -> Option<PathBuf> {
@@ -25,7 +27,7 @@ pub fn get_binary_from_known_paths(env_vars: &EnvVariables) -> Option<PathBuf> {
         };
         if let Ok(metadata) = fs::metadata(&exe) {
             if metadata.is_file() {
-                return Some(exe);
+                return Some(normalize(exe));
             }
         }
     }

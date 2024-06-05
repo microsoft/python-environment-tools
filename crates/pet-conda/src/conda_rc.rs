@@ -3,7 +3,7 @@
 
 use crate::env_variables::EnvVariables;
 use log::trace;
-use pet_utils::path::fix_file_path_casing;
+use pet_utils::path::normalize;
 use std::{fs, path::PathBuf};
 
 #[derive(Debug)]
@@ -155,9 +155,7 @@ fn parse_conda_rc(conda_rc: &PathBuf) -> Option<Condarc> {
             if line.trim().starts_with('-') {
                 if let Some(env_dir) = line.split_once('-').map(|x| x.1) {
                     // Directories in conda-rc are where `envs` are stored.
-                    env_dirs.push(fix_file_path_casing(
-                        &PathBuf::from(env_dir.trim()).join("envs"),
-                    ));
+                    env_dirs.push(normalize(&PathBuf::from(env_dir.trim()).join("envs")));
                 }
                 continue;
             } else {
