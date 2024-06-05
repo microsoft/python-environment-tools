@@ -51,7 +51,7 @@ jobs:
       - name: Add Conda to PATH
         run: |
           echo $CONDA
-          ls $CONDA
+          ls $CONDA/condabin
           echo "PATH=$PATH;$CONDA/bin" >> $GITHUB_ENV
         shell: bash
 
