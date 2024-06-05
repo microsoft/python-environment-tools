@@ -200,6 +200,20 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     }
     known_paths.sort();
     known_paths.dedup();
+    // Ensure the casing of the paths are correct.
+    // Its possible the actual path is in a different case.
+    // E.g. instead of C:\username\miniconda it might bt C:\username\Miniconda
+    // We use lower cases above, but it could be in any case on disc.
+    // We do not want to have duplicates in different cases.
+    // & we'd like to preserve the case of the original path as on disc.
+    known_paths = known_paths
+        .iter()
+        .map(fs::canonicalize)
+        .filter_map(Result::ok)
+        .collect();
+    known_paths.sort();
+    known_paths.dedup();
+
     known_paths
 }
 
@@ -243,6 +257,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     known_paths.append(get_known_conda_locations(env_vars).as_mut());
     known_paths.sort();
     known_paths.dedup();
+
     known_paths
 }
 
