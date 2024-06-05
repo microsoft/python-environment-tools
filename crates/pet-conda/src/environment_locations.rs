@@ -155,6 +155,8 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
 
 #[cfg(windows)]
 pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
+    use pet_utils::path::get_absolute_path;
+
     let user_profile = env_vars.userprofile.clone().unwrap_or_default();
     let program_data = env_vars.programdata.clone().unwrap_or_default();
     let all_user_profile = env_vars.allusersprofile.clone().unwrap_or_default();
@@ -206,11 +208,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     // We use lower cases above, but it could be in any case on disc.
     // We do not want to have duplicates in different cases.
     // & we'd like to preserve the case of the original path as on disc.
-    known_paths = known_paths
-        .iter()
-        .map(fs::canonicalize)
-        .filter_map(Result::ok)
-        .collect();
+    known_paths = known_paths.iter().map(get_absolute_path).collect();
     known_paths.sort();
     known_paths.dedup();
 
