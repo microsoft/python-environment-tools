@@ -17,6 +17,8 @@ impl Condarc {
 }
 
 #[cfg(windows)]
+// Search paths documented here
+// https://conda.io/projects/conda/en/latest/user-guide/configuration/use-condarc.html#searching-for-condarc
 fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
     let mut search_paths: Vec<PathBuf> = [
         "C:\\ProgramData\\conda\\.condarc",
@@ -60,6 +62,8 @@ fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
 }
 
 #[cfg(unix)]
+// Search paths documented here
+// https://conda.io/projects/conda/en/latest/user-guide/configuration/use-condarc.html#searching-for-condarc
 fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
     let mut search_paths: Vec<PathBuf> = [
         "/etc/conda/.condarc",
