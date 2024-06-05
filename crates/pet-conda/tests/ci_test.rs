@@ -44,6 +44,41 @@ fn detect_conda_root() {
 #[cfg(unix)]
 #[cfg_attr(feature = "ci_conda", test)]
 #[allow(dead_code)]
+fn detect_conda_root_from_path() {
+    use pet_conda::Conda;
+    use pet_core::{
+        manager::EnvManagerType, os_environment::EnvironmentApi,
+        python_environment::PythonEnvironmentCategory, Locator,
+    };
+    use pet_utils::env::PythonEnv;
+    use std::path::PathBuf;
+
+    let env = EnvironmentApi::new();
+    let info = get_conda_info();
+    let conda_dir = PathBuf::from(info.conda_prefix.clone());
+    let exe = conda_dir.join("bin").join("python");
+    let conda = Conda::from(&env);
+
+    let python_env = PythonEnv::new(exe, Some(conda_dir.clone()), None);
+    let env = conda.from(&python_env).unwrap();
+
+    assert_eq!(env.manager.is_some(), true);
+
+    let manager = env.manager.unwrap();
+    assert_eq!(manager.executable, conda_dir.join("bin").join("conda"));
+    assert_eq!(manager.tool, EnvManagerType::Conda);
+    assert_eq!(manager.version, info.conda_version.into());
+
+    assert_eq!(env.prefix, conda_dir.clone().into());
+    assert_eq!(env.name, Some("base".into()));
+    assert_eq!(env.category, PythonEnvironmentCategory::Conda);
+    assert_eq!(env.executable, Some(conda_dir.join("bin").join("python")));
+    assert_eq!(env.version, Some(get_version(&info.python_version)));
+}
+
+#[cfg(unix)]
+#[cfg_attr(feature = "ci_conda", test)]
+#[allow(dead_code)]
 fn detect_new_conda_env() {
     use pet_conda::Conda;
     use pet_core::{
@@ -88,6 +123,48 @@ fn detect_new_conda_env() {
     );
 
     assert_eq!(env.manager, Some(manager.clone()));
+}
+
+#[cfg(unix)]
+#[cfg_attr(feature = "ci_conda", test)]
+#[allow(dead_code)]
+fn detect_conda_env_from_path() {
+    use pet_conda::Conda;
+    use pet_core::{
+        manager::EnvManagerType, os_environment::EnvironmentApi,
+        python_environment::PythonEnvironmentCategory, Locator,
+    };
+    use pet_utils::env::PythonEnv;
+    use std::path::PathBuf;
+
+    let env = EnvironmentApi::new();
+    let info = get_conda_info();
+    let env_name = "env_with_python2";
+    create_conda_env_with_python(&env_name);
+    let conda_dir = PathBuf::from(info.conda_prefix.clone());
+    let prefix = conda_dir.join("envs").join(env_name);
+    let exe = prefix.join("bin").join("python");
+    let conda = Conda::from(&env);
+
+    let python_env = PythonEnv::new(exe.clone(), Some(prefix.clone()), None);
+    let env = conda.from(&python_env).unwrap();
+
+    assert_eq!(env.manager.is_some(), true);
+
+    let manager = env.manager.unwrap();
+    assert_eq!(manager.executable, conda_dir.join("bin").join("conda"));
+    assert_eq!(manager.tool, EnvManagerType::Conda);
+    assert_eq!(manager.version, info.conda_version.into());
+
+    assert_eq!(env.prefix, prefix.clone().into());
+    assert_eq!(env.name, Some(env_name.into()));
+    assert_eq!(env.category, PythonEnvironmentCategory::Conda);
+    assert_eq!(env.executable, exe.clone().into());
+    assert!(
+        env.version.clone().unwrap_or_default().starts_with("3.10"),
+        "Expected 3.10, but got Version: {:?}",
+        env.version
+    );
 }
 
 #[cfg(unix)]
