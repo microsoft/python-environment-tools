@@ -33,7 +33,7 @@ impl EnvVariables {
             allusersprofile: env.get_env_var("ALLUSERSPROFILE".to_string()),
             programdata: env.get_env_var("PROGRAMDATA".to_string()),
             homedrive: env.get_env_var("HOMEDRIVE".to_string()),
-            conda_root: env.get_env_var("ALLUSERSPROFILE".to_string()),
+            conda_root: env.get_env_var("CONDA_ROOT".to_string()),
             conda_prefix: env.get_env_var("CONDA_PREFIX".to_string()),
             condarc: env.get_env_var("CONDARC".to_string()),
             xdg_config_home: env.get_env_var("XDG_CONFIG_HOME".to_string()),

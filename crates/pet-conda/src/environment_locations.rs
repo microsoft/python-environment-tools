@@ -172,22 +172,31 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
 
 #[cfg(unix)]
 pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
-    let mut known_paths = vec![
-        PathBuf::from("/opt/anaconda3"),
-        PathBuf::from("/opt/miniconda3"),
-        PathBuf::from("/usr/local/anaconda3"),
-        PathBuf::from("/usr/local/miniconda3"),
-        PathBuf::from("/usr/anaconda3"),
-        PathBuf::from("/usr/miniconda3"),
-        PathBuf::from("/home/anaconda3"),
-        PathBuf::from("/home/miniconda3"),
-        PathBuf::from("/anaconda3"),
-        PathBuf::from("/miniconda3"),
-        PathBuf::from("/miniforge3"),
-        PathBuf::from("/miniforge3"),
+    let mut known_paths = vec![];
+    let directories_to_look_in = [
+        "/opt",
+        "/opt",
+        "/usr/share",
+        "/usr/local",
+        "/usr",
+        "/home",
+        "", // We need to look in `/anaconda3` and `/miniconda3` as well.
     ];
+    for directory in directories_to_look_in.iter() {
+        known_paths.push(PathBuf::from(format!("{}/anaconda", directory)));
+        known_paths.push(PathBuf::from(format!("{}/anaconda3", directory)));
+        known_paths.push(PathBuf::from(format!("{}/miniconda", directory)));
+        known_paths.push(PathBuf::from(format!("{}/miniconda3", directory)));
+        known_paths.push(PathBuf::from(format!("{}/miniforge", directory)));
+        known_paths.push(PathBuf::from(format!("{}/miniforge3", directory)));
+    }
+    if let Some(ref conda_root) = env_vars.conda_root {
+        known_paths.push(PathBuf::from(conda_root.clone()));
+    }
     if let Some(ref home) = env_vars.home {
+        known_paths.push(home.clone().join("anaconda"));
         known_paths.push(home.clone().join("anaconda3"));
+        known_paths.push(home.clone().join("miniconda"));
         known_paths.push(home.clone().join("miniconda3"));
         known_paths.push(home.clone().join("miniforge3"));
         known_paths.push(home.join(".conda"));
