@@ -11,7 +11,7 @@ pub fn find_and_report_envs_jsonrpc() {
     locators::find_and_report_envs(&jsonrpc_reporter);
 }
 pub fn find_and_report_envs_stdio() {
-    stdio::initialize_logger(log::LevelFilter::Trace);
+    stdio::initialize_logger(log::LevelFilter::Info);
     let jsonrpc_reporter = stdio::create_reporter();
     locators::find_and_report_envs(&jsonrpc_reporter);
 }

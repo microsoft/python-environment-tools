@@ -24,3 +24,4 @@ pet-virtualenv = { path = "../pet-virtualenv" }
 pet-pipenv = { path = "../pet-pipenv" }
 pet-global-virtualenvs = { path = "../pet-global-virtualenvs" }
 log = "0.4.21"
+clap = { version = "4.5.4", features = ["derive"] }
