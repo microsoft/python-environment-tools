@@ -14,11 +14,12 @@ use pet_core::{
 use pet_windows_store::is_windows_app_folder_in_program_files;
 #[cfg(windows)]
 use std::{path::PathBuf, sync::Arc};
+#[cfg(windows)]
+use winreg::RegKey;
 
 #[cfg(windows)]
 pub fn get_registry_pythons(conda_locator: &Arc<dyn CondaLocator>) -> Option<LocatorResult> {
     use log::{trace, warn};
-    use winreg::RegKey;
 
     let mut environments = vec![];
     let mut managers: Vec<EnvManager> = vec![];
