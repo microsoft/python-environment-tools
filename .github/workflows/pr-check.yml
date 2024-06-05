@@ -57,7 +57,7 @@ jobs:
         run: echo "PATH=$PATH:$CONDA" >> "$GITHUB_ENV"
 
       - name: Check Conda version
-        run: conda --version
+        run: conda info --all
 
       - name: Install pyenv
         if: startsWith( matrix.os, 'windows')
