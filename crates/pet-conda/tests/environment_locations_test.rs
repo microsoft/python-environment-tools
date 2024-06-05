@@ -59,7 +59,7 @@ fn non_existent_envrionments_txt() {
 
     let environments = get_conda_envs_from_environment_txt(&env);
 
-    assert_eq!(environments.len(), 0);
+    assert!(environments.is_empty());
 }
 
 #[cfg(unix)]

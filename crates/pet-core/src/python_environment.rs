@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{arch::Architecture, manager::EnvManager};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[derive(Debug)]
 pub enum PythonEnvironmentCategory {
@@ -24,8 +24,18 @@ pub enum PythonEnvironmentCategory {
     WindowsStore,
     WindowsRegistry,
 }
+impl Ord for PythonEnvironmentCategory {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        format!("{:?}", self).cmp(&format!("{:?}", other))
+    }
+}
+impl PartialOrd for PythonEnvironmentCategory {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[derive(Debug)]
 // Python environment.
@@ -53,6 +63,25 @@ pub struct PythonEnvironment {
     // Some of the known symlinks for the environment.
     // E.g. in the case of Homebrew there are a number of symlinks that are created.
     pub symlinks: Option<Vec<PathBuf>>,
+}
+impl Ord for PythonEnvironment {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        format!(
+            "{:?}=>{:?}",
+            self.executable.clone().unwrap_or_default(),
+            self.prefix.clone().unwrap_or_default()
+        )
+        .cmp(&format!(
+            "{:?}=>{:?}",
+            other.executable.clone().unwrap_or_default(),
+            other.prefix.clone().unwrap_or_default()
+        ))
+    }
+}
+impl PartialOrd for PythonEnvironment {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Default for PythonEnvironment {
@@ -166,8 +195,8 @@ impl PythonEnvironmentBuilder {
         self
     }
 
-    pub fn symlinks(mut self, symlinks: Vec<PathBuf>) -> Self {
-        self.symlinks = Some(symlinks);
+    pub fn symlinks(mut self, symlinks: Option<Vec<PathBuf>>) -> Self {
+        self.symlinks = symlinks;
         self
     }
 

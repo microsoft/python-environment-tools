@@ -1,10 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::Path};
 
 // conda-meta must exist as this contains a mandatory `history` file.
 pub fn is_conda_install(path: &Path) -> bool {
@@ -19,22 +16,4 @@ pub fn is_conda_env(path: &Path) -> bool {
     } else {
         false
     }
-}
-
-#[derive(Debug, Clone)]
-// NOTE: Do not implement Default trait, as we do not want to ever forget to set the values.
-// Lets be explicit, this way we never miss a value (in Windows or Unix).
-pub struct CondaEnvironmentVariables {
-    pub home: Option<PathBuf>,
-    pub root: Option<PathBuf>,
-    pub path: Option<String>,
-    pub userprofile: Option<String>,
-    pub allusersprofile: Option<String>,
-    pub programdata: Option<String>,
-    pub homedrive: Option<String>,
-    pub conda_root: Option<String>,
-    pub conda_prefix: Option<String>,
-    pub condarc: Option<String>,
-    pub xdg_config_home: Option<String>,
-    pub known_global_search_locations: Vec<PathBuf>,
 }

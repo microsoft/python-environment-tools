@@ -3,10 +3,19 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[derive(Debug, PartialEq)]
 pub enum Architecture {
     X64,
     X86,
+}
+impl Ord for Architecture {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        format!("{:?}", self).cmp(&format!("{:?}", other))
+    }
+}
+impl PartialOrd for Architecture {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }

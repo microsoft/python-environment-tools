@@ -18,11 +18,11 @@ lazy_static! {
 const PYVENV_CONFIG_FILE: &str = "pyvenv.cfg";
 
 #[derive(Debug)]
-pub struct PyEnvCfg {
+pub struct PyVenvCfg {
     pub version: String,
 }
 
-impl PyEnvCfg {
+impl PyVenvCfg {
     fn new(version: String) -> Self {
         Self { version }
     }
@@ -71,7 +71,7 @@ fn find(path: &Path) -> Option<PathBuf> {
     None
 }
 
-fn parse(file: &Path) -> Option<PyEnvCfg> {
+fn parse(file: &Path) -> Option<PyVenvCfg> {
     let contents = fs::read_to_string(file).ok()?;
     for line in contents.lines() {
         if !line.contains("version") {
@@ -79,12 +79,12 @@ fn parse(file: &Path) -> Option<PyEnvCfg> {
         }
         if let Some(captures) = VERSION.captures(line) {
             if let Some(value) = captures.get(1) {
-                return Some(PyEnvCfg::new(value.as_str().to_string()));
+                return Some(PyVenvCfg::new(value.as_str().to_string()));
             }
         }
         if let Some(captures) = VERSION_INFO.captures(line) {
             if let Some(value) = captures.get(1) {
-                return Some(PyEnvCfg::new(value.as_str().to_string()));
+                return Some(PyVenvCfg::new(value.as_str().to_string()));
             }
         }
     }
