@@ -88,14 +88,14 @@ jobs:
           choco install pyenv-win -y
           echo "PATH=$PATH;$USERPROFILE/.pyenv/pyenv-win/bin" >> $GITHUB_ENV
           echo "PATH=$PATH;$USERPROFILE/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
-          echo "PYENV_ROOT="$USERPROFILE/.pyenv/pyenv-win" >> $GITHUB_ENV
+          echo "PYENV_ROOT=$USERPROFILE/.pyenv/pyenv-win" >> $GITHUB_ENV
         shell: bash
 
       - name: Install pyenv and pyenv-virtualenv
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           curl https://pyenv.run | bash
-          ls $HOME/.pyenv/plugins/pyenv-virtualenv
+          ls -a $HOME/.pyenv/plugins/pyenv-virtualenv
           git clone https://github.com/pyenv/pyenv-virtualenv.git $HOME/.pyenv/plugins/pyenv-virtualenv
           echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
           echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
