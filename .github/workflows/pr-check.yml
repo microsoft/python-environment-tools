@@ -130,6 +130,9 @@ jobs:
         run: cargo test --frozen --all-features
         shell: bash
 
+      - name: Find Environments
+        run: cargo run --release --target ${{ matrix.target }}
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
         shell: bash
