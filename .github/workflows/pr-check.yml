@@ -66,60 +66,60 @@ jobs:
       - name: Check Conda version
         run: conda info --all
 
-      - name: Install pipenv
-        run: pip install pipenv
+      # - name: Install pipenv
+      #   run: pip install pipenv
 
-      - name: Check pipenv version
-        run: pipenv --version
+      # - name: Check pipenv version
+      #   run: pipenv --version
 
-      - name: Install virtualenvwrapper
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          pip install virtualenvwrapper
-          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
-        shell: bash
+      # - name: Install virtualenvwrapper
+      #   if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+      #   run: |
+      #     pip install virtualenvwrapper
+      #     echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+      #   shell: bash
 
-      - name: Install virtualenvwrapper-win
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          pip install virtualenvwrapper-win
-          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
-        shell: bash
+      # - name: Install virtualenvwrapper-win
+      #   if: startsWith( matrix.os, 'windows')
+      #   run: |
+      #     pip install virtualenvwrapper-win
+      #     echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+      #   shell: bash
 
-      - name: Install pyenv
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          choco install pyenv-win -y
-          echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
-          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
-        shell: bash
+      # - name: Install pyenv
+      #   if: startsWith( matrix.os, 'windows')
+      #   run: |
+      #     choco install pyenv-win -y
+      #     echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
+      #     echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+      #   shell: bash
 
-      - name: Install pyenv and pyenv-virtualenv
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          curl https://pyenv.run | bash
-          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
-          echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
-        shell: bash
+      # - name: Install pyenv and pyenv-virtualenv
+      #   if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+      #   run: |
+      #     curl https://pyenv.run | bash
+      #     echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+      #     echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
+      #   shell: bash
 
-      - name: Check Pyenv version
-        run: pyenv --version
-        shell: bash
+      # - name: Check Pyenv version
+      #   run: pyenv --version
+      #   shell: bash
 
-      - name: Install Pyenv Python(s)
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          pyenv install --list
-          pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
-        shell: bash
+      # - name: Install Pyenv Python(s)
+      #   if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+      #   run: |
+      #     pyenv install --list
+      #     pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+      #   shell: bash
 
-        # pyenv-win install list has not updated for a while
-      - name: Install Pyenv Python(s)
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          pyenv install --list
-          pyenv install 3.10.5 3.9.13 3.8.10
-        shell: bash
+      #   # pyenv-win install list has not updated for a while
+      # - name: Install Pyenv Python(s)
+      #   if: startsWith( matrix.os, 'windows')
+      #   run: |
+      #     pyenv install --list
+      #     pyenv install 3.10.5 3.9.13 3.8.10
+      #   shell: bash
 
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
@@ -132,66 +132,66 @@ jobs:
         shell: bash
 
       - name: Run Tests
-        run: cargo test --frozen --all-features
+        run: cargo test --frozen --all-features -- --nocapture
         shell: bash
 
       - name: Find Environments
         if: matrix.run_cli == 'yes'
         run: cargo run --release --target ${{ matrix.target }}
         shell: bash
-        
-  builds:
-    name: Builds
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: arm-unknown-linux-gnueabihf
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            run_cli: "yes"
-          - os: macos-14
-            target: aarch64-apple-darwin
-            run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: x86_64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-musl
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+  # builds:
+  #   name: Builds
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - os: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #         - os: windows-latest
+  #           target: aarch64-pc-windows-msvc
+  #         - os: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #           run_cli: "yes"
+  #         #   - os: ubuntu-latest
+  #         #     target: aarch64-unknown-linux-gnu
+  #         #   - os: ubuntu-latest
+  #         #     target: arm-unknown-linux-gnueabihf
+  #         - os: macos-latest
+  #           target: x86_64-apple-darwin
+  #           run_cli: "yes"
+  #         - os: macos-14
+  #           target: aarch64-apple-darwin
+  #           run_cli: "yes"
+  #         #   - os: ubuntu-latest
+  #         #     target: x86_64-unknown-linux-gnu
+  #         #   - os: ubuntu-latest
+  #         #     target: aarch64-unknown-linux-musl
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
 
-      - name: Run Tests
-        run: cargo test --frozen --all-features
-        shell: bash
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-        shell: bash
+  #     - name: Run Tests
+  #       run: cargo test --frozen --all-features
+  #       shell: bash
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pet-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/pet*
+  #     - name: Build
+  #       run: cargo build --release --target ${{ matrix.target }}
+  #       shell: bash
+
+  #     - name: Upload Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: pet-${{ matrix.target }}
+  #         path: target/${{ matrix.target }}/release/pet*

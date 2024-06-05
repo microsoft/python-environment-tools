@@ -191,6 +191,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
 
 [[package]]
+name = "needs_env_var"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4993ef217a71dd939d08c47d0230bfca02aeedcf108c46c800eb60caa51dc467"
+
+[[package]]
 name = "pet"
 version = "0.1.0"
 dependencies = [
@@ -219,6 +225,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "needs_env_var",
  "pet-core",
  "pet-utils",
  "regex",
