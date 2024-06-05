@@ -50,11 +50,7 @@ jobs:
 
       - name: Add Conda to PATH
         if: startsWith( matrix.os, 'windows') || startsWith( matrix.os, 'ubuntu')
-        run: |
-          echo $CONDA
-          echo "condabin contents:"
-          ls $CONDA/condabin
-          echo "PATH=$PATH;$CONDA/condabin" >> $GITHUB_ENV
+        run: echo "PATH=$PATH;$CONDA/condabin" >> $GITHUB_ENV
         shell: bash
 
       - name: Install Conda + add to PATH
@@ -62,30 +58,61 @@ jobs:
         run: |
           curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
           bash ~/miniconda.sh -b -p ~/miniconda
-          echo PATH=$PATH:$HOME/miniconda/bin >> $GITHUB_ENV
+          echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
+          echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
+        shell: bash
 
       - name: Check Conda version
         run: conda info --all
+
+      - name: Install pipenv
+        run: pip install --user pipenv
+        shell: bash
+
+      - name: Check pipenv version
+        run: pipenv --version
+
+      - name: Install virtualnvwrapper
+        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        run: |
+          pip install --user virtualenvwrapper
+          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install virtualnvwrapper-win
+        if: startsWith( matrix.os, 'windows')
+        run: |
+          pip install --user virtualenvwrapper-win
+          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+        shell: bash
 
       - name: Install pyenv
         if: startsWith( matrix.os, 'windows')
         run: |
           choco install pyenv-win -y
-          echo PATH=$PATH;$USERPROFILE/.pyenv/pyenv-win/bin >> $GITHUB_ENV
-          echo PATH=$PATH;$USERPROFILE/.pyenv/pyenv-win/shims >> $GITHUB_ENV
-          $USERPROFILE/.pyenv/pyenv-win/bin/pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+          echo "PATH=$PATH;$USERPROFILE/.pyenv/pyenv-win/bin" >> $GITHUB_ENV
+          echo "PATH=$PATH;$USERPROFILE/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
+          echo "PYENV_ROOT="$USERPROFILE/.pyenv/pyenv-win" >> $GITHUB_ENV
         shell: bash
 
-      - name: Install pyenv
+      - name: Install pyenv and pyenv-virtualenv
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           curl https://pyenv.run | bash
-          echo PYENV_ROOT="$HOME/.pyenv" >> $GITHUB_ENV
-          echo PATH="$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
-          ~/.pyenv/bin/pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+          git clone https://github.com/pyenv/pyenv-virtualenv.git $HOME/.pyenv/plugins/pyenv-virtualenv
+          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+          echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
+        shell: bash
 
       - name: Check Pyenv version
         run: pyenv --version
+
+      - name: Install Pyenv Python(s)
+        run: pyenv install 3.12.3 3.11.9 3.10.14 3.9.19 3.8.19
+
+      - name: Python in Registry
+        if: startsWith( matrix.os, 'windows')
+        run: reg query HKLM\SOFTWARE\Python /s
 
       - name: Run Tests
         run: cargo test --frozen --all-features
