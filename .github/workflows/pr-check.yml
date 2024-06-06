@@ -91,7 +91,8 @@ jobs:
         run: pipenv --version
 
       - name: Install virtualenvwrapper
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        if: startsWith( matrix.os, 'ubuntu')
         run: |
           pip install virtualenvwrapper
           echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
