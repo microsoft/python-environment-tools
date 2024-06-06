@@ -6,6 +6,7 @@ use log::warn;
 use pet_core::arch::Architecture;
 use regex::Regex;
 use serde::Deserialize;
+use std::backtrace::Backtrace;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
 
@@ -62,6 +63,7 @@ pub struct CondaPackageInfo {
 
 impl CondaPackageInfo {
     pub fn from(path: &Path, package: &Package) -> Option<Self> {
+        println!("CondaPackageInfo.from backtrace: {}", Backtrace::capture());
         get_conda_package_info(path, package)
     }
 }
