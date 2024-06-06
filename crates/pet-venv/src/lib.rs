@@ -42,7 +42,10 @@ impl Locator for Venv {
             }
             let version = match env.version {
                 Some(ref v) => Some(v.clone()),
-                None => match &env.prefix { Some(prefix) => Headers::get_version(prefix), None=> None }
+                None => match &env.prefix {
+                    Some(prefix) => Headers::get_version(prefix),
+                    None => None,
+                },
             };
             Some(
                 PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Venv)
