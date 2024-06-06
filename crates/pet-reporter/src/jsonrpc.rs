@@ -39,6 +39,9 @@ impl Reporter for JsonRpcReporter {
             }
         }
     }
+    fn report_completion(&self, duration: std::time::Duration) {
+        send_message("exit", duration.as_millis().into())
+    }
 }
 
 pub fn create_reporter() -> impl Reporter {

@@ -12,10 +12,7 @@ use pet_core::{
     Locator, LocatorResult,
 };
 use pet_utils::{
-    env::PythonEnv,
-    executable::{find_executables, get_shortest_executable, resolve_symlink},
-    headers::Headers,
-    pyvenv_cfg::PyVenvCfg,
+    env::PythonEnv, executable::{find_executables, get_shortest_executable}, headers::Headers, path::resolve_symlink, pyvenv_cfg::PyVenvCfg
 };
 use regex::Regex;
 

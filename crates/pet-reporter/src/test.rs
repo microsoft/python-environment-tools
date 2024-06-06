@@ -30,6 +30,9 @@ impl Reporter for TestReporter {
             }
         }
     }
+    fn report_completion(&self, _duration: std::time::Duration) {
+        //
+    }
 }
 
 pub fn create_reporter() -> TestReporter {

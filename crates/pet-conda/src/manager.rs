@@ -2,9 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::{
-    env_variables::EnvVariables, environment_locations::get_known_conda_locations,
-    environments::get_conda_installation_used_to_create_conda_env, package::CondaPackageInfo,
-    utils::is_conda_env,
+    env_variables::EnvVariables, environments::get_conda_installation_used_to_create_conda_env,
+    package::CondaPackageInfo, utils::is_conda_env,
 };
 use pet_core::{manager::EnvManager, manager::EnvManagerType};
 use std::{
@@ -44,7 +43,7 @@ fn get_conda_bin_names() -> Vec<&'static str> {
 }
 
 /// Find the conda binary on the PATH environment variable
-pub fn find_conda_binary_on_path(env_vars: &EnvVariables) -> Option<PathBuf> {
+pub fn find_conda_binary(env_vars: &EnvVariables) -> Option<PathBuf> {
     let paths = env_vars.path.clone()?;
     for path in env::split_paths(&paths) {
         for bin in get_conda_bin_names() {
@@ -57,32 +56,6 @@ pub fn find_conda_binary_on_path(env_vars: &EnvVariables) -> Option<PathBuf> {
         }
     }
     None
-}
-
-/// Find conda binary in known locations
-fn find_conda_binary_in_known_locations(env_vars: &EnvVariables) -> Option<PathBuf> {
-    let conda_bin_names = get_conda_bin_names();
-    let known_locations = get_known_conda_locations(env_vars);
-    for location in known_locations {
-        for bin in &conda_bin_names {
-            let conda_path = location.join(bin);
-            if let Ok(metadata) = std::fs::metadata(&conda_path) {
-                if metadata.is_file() || metadata.is_symlink() {
-                    return Some(conda_path);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Find the conda binary on the system
-pub fn find_conda_binary(env_vars: &EnvVariables) -> Option<PathBuf> {
-    let conda_binary_on_path = find_conda_binary_on_path(env_vars);
-    match conda_binary_on_path {
-        Some(conda_binary_on_path) => Some(conda_binary_on_path),
-        None => find_conda_binary_in_known_locations(env_vars),
-    }
 }
 
 #[derive(Debug, Clone)]

@@ -66,47 +66,6 @@ fn non_existent_envrionments_txt() {
 
 #[cfg(unix)]
 #[test]
-fn known_install_locations() {
-    use common::{create_env_variables, resolve_test_path};
-    use pet_conda::environment_locations::get_known_conda_locations;
-    use std::path::PathBuf;
-
-    let root = resolve_test_path(&["unix", "root_empty"]).into();
-    let home = resolve_test_path(&["unix", "user_home"]).into();
-    let env = create_env_variables(home, root);
-
-    let mut locations = get_known_conda_locations(&env);
-    locations.sort();
-
-    let mut expected = [
-        vec![
-            "/opt/anaconda3/bin",
-            "/opt/miniconda3/bin",
-            "/usr/local/anaconda3/bin",
-            "/usr/local/miniconda3/bin",
-            "/usr/anaconda3/bin",
-            "/usr/miniconda3/bin",
-            "/home/anaconda3/bin",
-            "/home/miniconda3/bin",
-            "/anaconda3/bin",
-            "/miniconda3/bin",
-        ]
-        .iter()
-        .map(PathBuf::from)
-        .collect::<Vec<PathBuf>>(),
-        vec![
-            resolve_test_path(&["unix", "user_home", "anaconda3", "bin"]),
-            resolve_test_path(&["unix", "user_home", "miniconda3", "bin"]),
-        ],
-    ]
-    .concat();
-    expected.sort();
-
-    assert_eq!(locations, expected);
-}
-
-#[cfg(unix)]
-#[test]
 fn list_conda_envs_in_install_location() {
     use common::resolve_test_path;
     use pet_conda::environment_locations::get_environments;

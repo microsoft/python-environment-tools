@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 // Similar to fs::canonicalize, but ignores UNC paths and returns the path as is (for windows).
 pub fn normalize<P: AsRef<Path>>(path: P) -> PathBuf {
     // On unix do not use canonicalize, results in weird issues with homebrew paths
+    // Even readlink does the same thing
+    // Running readlink for a path thats not a symlink ends up returning relative paths for some reason.
+    // A better solution is to first check if a path is a symlink and then resolve it.
     #[cfg(unix)]
     return path.as_ref().to_path_buf();
 
@@ -29,4 +32,31 @@ pub fn normalize<P: AsRef<Path>>(path: P) -> PathBuf {
     } else {
         path.as_ref().to_path_buf()
     }
+}
+
+// Resolves symlinks to the real file.
+// If the real file == exe, then it is not a symlink.
+pub fn resolve_symlink(exe: &Path) -> Option<PathBuf> {
+    let name = exe.file_name()?.to_string_lossy();
+    // In bin directory of homebrew, we have files like python-build, python-config, python3-config
+    if !name.starts_with("python") || name.ends_with("-config") || name.ends_with("-build") {
+        return None;
+    }
+
+    // Running readlink for a path thats not a symlink ends up returning relative paths for some reason.
+    // A better solution is to first check if a path is a symlink and then resolve it.
+    if let Ok(metadata) = std::fs::symlink_metadata(exe) {
+        if metadata.is_file() || !metadata.file_type().is_symlink() {
+            return Some(exe.to_path_buf());
+        }
+        if let Ok(readlink) = std::fs::canonicalize(exe) {
+            if readlink == exe {
+                return None;
+            } else {
+                return Some(readlink);
+            }
+        }
+        return Some(exe.to_path_buf());
+    }
+    Some(exe.to_path_buf())
 }

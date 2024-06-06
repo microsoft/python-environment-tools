@@ -59,5 +59,8 @@ pub fn list_global_virtual_envs_paths(
         }
     }
 
+    python_envs.sort();
+    python_envs.dedup();
+
     python_envs
 }
