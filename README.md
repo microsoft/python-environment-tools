@@ -19,6 +19,10 @@ Performant Python environment tooling and support, such as locating all global P
 - Discovery of all global Python installs
 - Discovery of all Python virtual environments
 
+## Key Methodology
+
+We leverage Rust's performance to quickly scan for Python environments available to the user. When we find them, we gather all relevant information immediately to avoid the need for repeated discovery.
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
