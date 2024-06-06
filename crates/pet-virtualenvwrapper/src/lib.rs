@@ -9,7 +9,7 @@ use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     Locator, LocatorResult,
 };
-use pet_utils::env::PythonEnv;
+use pet_utils::{env::PythonEnv, headers::Headers};
 
 mod env_variables;
 mod environment_locations;
@@ -36,12 +36,19 @@ impl Locator for VirtualEnvWrapper {
         if let Some(filename) = &env.prefix {
             name = filename.to_str().map(|f| f.to_string());
         }
+        let version = match env.version {
+            Some(ref v) => Some(v.clone()),
+            None => match &env.prefix {
+                Some(prefix) => Headers::get_version(prefix),
+                None => None,
+            },
+        };
 
         Some(
             PythonEnvironmentBuilder::new(PythonEnvironmentCategory::VirtualEnvWrapper)
                 .name(name)
                 .executable(Some(env.executable.clone()))
-                .version(env.version.clone())
+                .version(version)
                 .prefix(env.prefix.clone())
                 .project(get_project(env))
                 .build(),

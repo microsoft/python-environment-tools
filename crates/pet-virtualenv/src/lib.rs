@@ -7,7 +7,7 @@ use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     Locator, LocatorResult,
 };
-use pet_utils::env::PythonEnv;
+use pet_utils::{env::PythonEnv, headers::Headers};
 
 pub fn is_virtualenv(env: &PythonEnv) -> bool {
     if env.prefix.is_none() {
@@ -70,12 +70,19 @@ impl Locator for VirtualEnv {
             if let Some(filename) = &env.prefix {
                 name = filename.to_str().map(|f| f.to_string());
             }
+            let version = match env.version {
+                Some(ref v) => Some(v.clone()),
+                None => match &env.prefix {
+                    Some(prefix) => Headers::get_version(prefix),
+                    None => None,
+                },
+            };
 
             Some(
                 PythonEnvironmentBuilder::new(PythonEnvironmentCategory::VirtualEnv)
                     .name(name)
                     .executable(Some(env.executable.clone()))
-                    .version(env.version.clone())
+                    .version(version)
                     .prefix(env.prefix.clone())
                     .build(),
             )

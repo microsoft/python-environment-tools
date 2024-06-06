@@ -5,7 +5,7 @@ use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     Locator, LocatorResult,
 };
-use pet_utils::{env::PythonEnv, pyvenv_cfg::PyVenvCfg};
+use pet_utils::{env::PythonEnv, headers::Headers, pyvenv_cfg::PyVenvCfg};
 
 fn is_venv_internal(env: &PythonEnv) -> Option<bool> {
     // env path cannot be empty.
@@ -40,12 +40,15 @@ impl Locator for Venv {
             if let Some(filename) = &env.prefix {
                 name = filename.to_str().map(|f| f.to_string());
             }
-
+            let version = match env.version {
+                Some(ref v) => Some(v.clone()),
+                None => match &env.prefix { Some(prefix) => Headers::get_version(prefix), None=> None }
+            };
             Some(
                 PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Venv)
                     .name(name)
                     .executable(Some(env.executable.clone()))
-                    .version(env.version.clone())
+                    .version(version)
                     .prefix(env.prefix.clone())
                     .build(),
             )

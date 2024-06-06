@@ -1,18 +1,18 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 // Similar to fs::canonicalize, but ignores UNC paths and returns the path as is (for windows).
 pub fn normalize<P: AsRef<Path>>(path: P) -> PathBuf {
     // On unix do not use canonicalize, results in weird issues with homebrew paths
-    if cfg!(unix) {
-        return path.as_ref().to_path_buf();
-    }
+    #[cfg(unix)]
+    return path.as_ref().to_path_buf();
 
+    #[cfg(windows)]
+    use std::fs;
+
+    #[cfg(windows)]
     if let Ok(resolved) = fs::canonicalize(&path) {
         if cfg!(unix) {
             return resolved;
