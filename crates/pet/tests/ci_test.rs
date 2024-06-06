@@ -11,7 +11,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 lazy_static! {
-    static ref PYTHON_VERSION: Regex = Regex::new("([\\d+\\.?]*)")
+    static ref PYTHON_VERSION: Regex = Regex::new("([\\d+\\.?]*).*")
         .expect("error parsing Version regex for Python Version in test");
 }
 
@@ -88,20 +88,13 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
         );
     }
     if let Some(version) = environment.clone().version {
-        let interpreter_version = get_version(&interpreter_info.clone().sysVersion);
-        let expected_version_parts = interpreter_version.split('.').collect::<Vec<_>>();
-
+        let expected_version = &interpreter_info.clone().sysVersion;
         let version = get_version(&version);
-        let version_parts = version.split('.').collect::<Vec<_>>();
-        let version_parts = version_parts
-            .iter()
-            .take(expected_version_parts.len())
-            .map(|s| s.to_string())
-            .collect::<Vec<String>>();
-        assert_eq!(
-            version_parts,
-            expected_version_parts,
-            "Version mismatch for {:?}",
+        assert!(
+            expected_version.starts_with(&version),
+            "Version mismatch for (expected {:?} to start with {:?}) for {:?}",
+            expected_version,
+            version,
             environment.clone()
         );
     }
@@ -194,5 +187,10 @@ fn get_python_interpreter_info(cli: &Vec<String>) -> InterpreterInfo {
 fn get_version(value: &String) -> String {
     // Regex to extract just the d.d.d version from the full version string
     let captures = PYTHON_VERSION.captures(value).unwrap();
-    captures.get(0).unwrap().as_str().to_string()
+    let version = captures.get(1).unwrap().as_str().to_string();
+    if version.ends_with('.') {
+        version[..version.len() - 1].to_string()
+    } else {
+        version
+    }
 }

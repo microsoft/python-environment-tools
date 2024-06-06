@@ -107,11 +107,11 @@ pub fn resolve_symlink(exe: &Path) -> Option<PathBuf> {
     if !name.starts_with("python") || name.ends_with("-config") || name.ends_with("-build") {
         return None;
     }
-    if let Ok(metadata) = std::fs::symlink_metadata(&exe) {
+    if let Ok(metadata) = std::fs::symlink_metadata(exe) {
         if metadata.is_file() || !metadata.file_type().is_symlink() {
             return Some(exe.to_path_buf());
         }
-        if let Ok(readlink) = std::fs::canonicalize(&exe) {
+        if let Ok(readlink) = std::fs::canonicalize(exe) {
             if readlink == exe {
                 return None;
             } else {
@@ -120,7 +120,7 @@ pub fn resolve_symlink(exe: &Path) -> Option<PathBuf> {
         }
         return Some(exe.to_path_buf());
     }
-    return Some(exe.to_path_buf());
+    Some(exe.to_path_buf())
 }
 
 // Given a list of executables, return the one with the shortest path.
