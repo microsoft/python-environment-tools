@@ -1,14 +1,21 @@
-# Project
+# Python environment tools for Visual Studio Code
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+Performant Python environment tooling and support, such as locating all global Python installs and virtual environments. Powers environment environment tooling for the [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) in [Visual Studio Code](https://code.visualstudio.com/).
 
-As the maintainer of this project, please make a few updates:
+## Environment Types Supported 
+- Windows Registry
+- Windows Store
+- PyEnv
+- Conda
+- PipEnv
+- Homebrew
+- VirtualEnvWrapper
+- Venv
+- VirtualEnv
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+## Features 
+- Discovery of all global Python installs
+- Discovery of all Python virtual environments
 
 ## Contributing
 
