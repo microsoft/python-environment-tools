@@ -113,6 +113,8 @@ jobs:
           choco install pyenv-win -y
           echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
           echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+          eval "$(pyenv virtualenv-init -)"
+          pyenv virtualenv 3.12 my-virtual-env-3.12
         shell: bash
 
       - name: Install pyenv and pyenv-virtualenv
