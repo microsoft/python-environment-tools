@@ -123,8 +123,6 @@ jobs:
           curl https://pyenv.run | bash
           echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
           echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
-          eval "$(pyenv virtualenv-init -)"
-          pyenv virtualenv 3.12 my-virtual-env-3.12
         shell: bash
 
       - name: Check Pyenv version
@@ -144,6 +142,13 @@ jobs:
         run: |
           pyenv install --list
           pyenv install 3.10.5 3.8.10
+        shell: bash
+
+      - name: Create pyenv-virtualenv envs
+        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        run: |
+          eval "$(pyenv virtualenv-init -)"
+          pyenv virtualenv 3.12 my-virtual-env-3.12
         shell: bash
 
       - name: Rust Tool Chain setup
