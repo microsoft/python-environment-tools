@@ -19,8 +19,6 @@ Performant Python environment tooling and support, such as locating all global P
 - Venv
 - VirtualEnv
 - Python on your PATH
-- Mamba
-- Micromamba
 
 ## Features 
 
