@@ -53,7 +53,7 @@ fn verify_validity_of_discovered_envs() {
 }
 
 #[cfg(unix)]
-// #[cfg(target_os = "linux")]
+#[cfg(target_os = "linux")]
 #[cfg_attr(feature = "ci", test)]
 #[allow(dead_code)]
 // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
