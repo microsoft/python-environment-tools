@@ -96,7 +96,7 @@ jobs:
           pip install virtualenvwrapper
           echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
           mkdir -p $HOME/.virtualenvs
-          source /usr/local/bin/virtualenvwrapper.sh
+          source virtualenvwrapper.sh
           mkvirtualenv venv_wrapper_env1
         shell: bash
 
