@@ -98,6 +98,7 @@ impl CondaManager {
 
 fn get_conda_manager(path: &Path) -> Option<CondaManager> {
     let conda_exe = get_conda_executable(path)?;
+    println!("FINDING Conda Manager in path {:?}", path);
     if let Some(conda_pkg) = CondaPackageInfo::from(path, &crate::package::Package::Conda) {
         Some(CondaManager {
             executable: conda_exe,

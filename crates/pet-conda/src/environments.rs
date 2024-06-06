@@ -76,6 +76,7 @@ pub fn get_conda_environment_info(
         // Not a conda environment (neither root nor a separate env).
         return None;
     }
+    println!("GETTING Conda env info from path {:?}", env_path);
     // If we know the conda install folder, then we can use it.
     let mut conda_install_folder = match manager {
         Some(manager) => Some(manager.conda_dir.clone()),
