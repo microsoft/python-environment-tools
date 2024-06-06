@@ -161,6 +161,11 @@ jobs:
 
       - name: Find Environments
         if: matrix.run_cli == 'yes'
+        run: RUST_BACKTRACE=1 cargo run --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Find Environments
+        if: matrix.run_cli == 'yes'
         run: RUST_BACKTRACE=1 cargo run --release --target ${{ matrix.target }}
         shell: bash
 
