@@ -25,9 +25,9 @@ fn verify_validity_of_discovered_envs() {
     use std::thread;
 
     use pet::locators;
-    use pet_reporter::{stdio, test};
+    use pet_reporter::test;
 
-    stdio::initialize_logger(log::LevelFilter::Warn);
+    // stdio::initialize_logger(log::LevelFilter::Warn);
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
 
@@ -59,9 +59,9 @@ fn verify_validity_of_discovered_envs() {
 // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
 fn check_if_virtualenvwrapper_exists() {
     use pet::locators;
-    use pet_reporter::{stdio, test};
+    use pet_reporter::test;
 
-    stdio::initialize_logger(log::LevelFilter::Warn);
+    // stdio::initialize_logger(log::LevelFilter::Warn);
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
 
@@ -92,9 +92,9 @@ fn check_if_virtualenvwrapper_exists() {
 // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
 fn check_if_pyenv_virtualenv_exists() {
     use pet::locators;
-    use pet_reporter::{stdio, test};
+    use pet_reporter::test;
 
-    stdio::initialize_logger(log::LevelFilter::Warn);
+    // stdio::initialize_logger(log::LevelFilter::Warn);
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
 
