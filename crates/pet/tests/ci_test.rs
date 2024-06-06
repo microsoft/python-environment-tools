@@ -110,17 +110,13 @@ fn get_conda_exe() -> &'static str {
 struct InterpreterInfo {
     #[allow(non_snake_case)]
     sysPrefix: String,
-    #[allow(dead_code)]
     executable: String,
-    #[allow(dead_code)]
     #[allow(non_snake_case)]
     sysVersion: String,
-    #[allow(dead_code)]
     #[allow(non_snake_case)]
     is64Bit: bool,
-    #[allow(dead_code)]
-    #[allow(non_snake_case)]
-    versionInfo: (u16, u16, u16, String, u16),
+    // #[allow(non_snake_case)]
+    // versionInfo: (u16, u16, u16, String, u16),
 }
 
 fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
