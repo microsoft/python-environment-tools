@@ -96,16 +96,10 @@ impl Conda {
 
         if let Some(manager) = CondaManager::from(conda_dir) {
             managers.insert(conda_dir.into(), manager.clone());
-            return Some(manager);
+            Some(manager)
+        } else {
+            None
         }
-
-        // We could not find the manager, this is an error.
-        error!(
-            "Manager not found for conda dir: {:?}, known managers include {:?}",
-            conda_dir,
-            managers.values()
-        );
-        None
     }
 }
 
@@ -193,7 +187,7 @@ impl Locator for Conda {
                     // We will still return the conda env even though we do not have the manager.
                     // This might seem incorrect, however the tool is about discovering environments.
                     // The client can activate this env either using another conda manager or using the activation scripts
-                    error!("Unable to find Conda Manager for Conda env (even though we have a conda_dir): {:?}", known_env);
+                    error!("Unable to find Conda Manager for Conda env (even though we have a conda_dir {:?}): Env Details = {:?}", conda_dir, known_env);
                     let env = known_env.to_python_environment(Some(conda_dir.clone()), None);
                     environments.insert(known_env.prefix.clone(), env.clone());
                     new_environments.push(env);
