@@ -1,8 +1,9 @@
 # Python environment tools for Visual Studio Code
 
-Performant Python environment tooling and support, such as locating all global Python installs and virtual environments. Powers environment environment tooling for the [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) in [Visual Studio Code](https://code.visualstudio.com/).
+Performant Python environment tooling and support, such as locating all global Python installs and virtual environments.
 
 ## Environment Types Supported 
+
 - Windows Registry
 - Windows Store
 - PyEnv
@@ -14,6 +15,7 @@ Performant Python environment tooling and support, such as locating all global P
 - VirtualEnv
 
 ## Features 
+
 - Discovery of all global Python installs
 - Discovery of all Python virtual environments
 
