@@ -92,6 +92,10 @@ pub fn get_conda_environment_info(
         }
     }
     if let Some(python_binary) = find_executable(env_path) {
+        println!(
+            "Conda env {:?} and conda_dir {:?}",
+            env_path, conda_install_folder
+        );
         if let Some(package_info) = CondaPackageInfo::from(env_path, &Package::Python) {
             Some(CondaEnvironment {
                 prefix: env_path.into(),
