@@ -4,15 +4,23 @@ Performant Python environment tooling and support, such as locating all global P
 
 ## Environment Types Supported 
 
-- Windows Registry
+- python.org
 - Windows Store
 - PyEnv
+- PyEnv-Win
+- PyEnv-Virtualenv
 - Conda
+- Miniconda
+- Miniforge
 - PipEnv
 - Homebrew
 - VirtualEnvWrapper
+- VirtualEnvWrapper-Win
 - Venv
 - VirtualEnv
+- Python on your PATH
+- Mamba
+- Micromamba
 
 ## Features 
 
