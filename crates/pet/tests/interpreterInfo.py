@@ -5,10 +5,10 @@ import json
 import sys
 
 obj = {}
-obj["versionInfo"] = tuple(sys.version_info)
-obj["sysPrefix"] = sys.prefix
-obj["sysVersion"] = sys.version
-obj["is64Bit"] = sys.maxsize > 2**32
+obj["version_info"] = tuple(sys.version_info)
+obj["sys_prefix"] = sys.prefix
+obj["sys_version"] = sys.version
+obj["is64_bit"] = sys.maxsize > 2**32
 obj["executable"] = sys.executable
 
 # Everything after this is the information we need

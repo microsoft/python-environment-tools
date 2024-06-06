@@ -118,7 +118,7 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
             );
         }
         // Then read the .condarc in the conda install folder as well.
-        if let Some(mut conda_rc) = Condarc::from_path(&conda_dir) {
+        if let Some(mut conda_rc) = Condarc::from_path(conda_dir) {
             envs.append(&mut conda_rc.env_dirs);
         }
     } else if is_conda_env(conda_dir) {

@@ -136,13 +136,13 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     if let Some(prefix) = environment.clone().prefix {
         assert_eq!(
             prefix.to_str().unwrap(),
-            interpreter_info.clone().sysPrefix,
+            interpreter_info.clone().sys_prefix,
             "Prefix mismatch for {:?}",
             environment.clone()
         );
     }
     if let Some(arch) = environment.clone().arch {
-        let expected_arch = if interpreter_info.clone().is64Bit {
+        let expected_arch = if interpreter_info.clone().is64_bit {
             Architecture::X64
         } else {
             Architecture::X86
@@ -155,7 +155,7 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
         );
     }
     if let Some(version) = environment.clone().version {
-        let expected_version = &interpreter_info.clone().sysVersion;
+        let expected_version = &interpreter_info.clone().sys_version;
         let version = get_version(&version);
         assert!(
             expected_version.starts_with(&version),
@@ -175,15 +175,11 @@ fn get_conda_exe() -> &'static str {
 
 #[derive(Deserialize, Clone)]
 struct InterpreterInfo {
-    #[allow(non_snake_case)]
-    sysPrefix: String,
+    sys_prefix: String,
     executable: String,
-    #[allow(non_snake_case)]
-    sysVersion: String,
-    #[allow(non_snake_case)]
-    is64Bit: bool,
-    // #[allow(non_snake_case)]
-    // versionInfo: (u16, u16, u16, String, u16),
+    sys_version: String,
+    is64_bit: bool,
+    // version_info: (u16, u16, u16, String, u16),
 }
 
 fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
