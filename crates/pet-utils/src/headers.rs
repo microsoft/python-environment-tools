@@ -6,7 +6,7 @@ use regex::Regex;
 use std::{fs, path::Path};
 
 lazy_static! {
-    static ref VERSION: Regex = Regex::new(r#"#define\s+PY_VERSION\s+"((\d+\.?)*)"#)
+    static ref VERSION: Regex = Regex::new(r#"#define\s+PY_VERSION\s+"((\d+\.?)*.*)\""#)
         .expect("error parsing Version regex for partchlevel.h");
 }
 
@@ -33,9 +33,31 @@ pub fn get_version(path: &Path) -> Option<String> {
     if path.ends_with(bin) {
         path.pop();
     }
-    let headers_path = if cfg!(windows) { "Headers" } else { "include" };
-    let patchlevel_h = path.join(headers_path).join("patchlevel.h");
-    let contents = fs::read_to_string(patchlevel_h).ok()?;
+    let headers_path = path.join(if cfg!(windows) { "Headers" } else { "include" });
+    let patchlevel_h = headers_path.join("patchlevel.h");
+    let mut contents = "".to_string();
+    if let Ok(result) = fs::read_to_string(patchlevel_h) {
+        contents = result;
+    } else if fs::metadata(&headers_path).is_err() {
+        // Such a path does not exist, get out.
+        return None;
+    } else {
+        // Try the other path
+        // Sometimes we have it in a sub directory such as `python3.10`
+        if let Ok(readdir) = fs::read_dir(&headers_path) {
+            for path in readdir.filter_map(Result::ok).map(|e| e.path()) {
+                if let Ok(metadata) = fs::metadata(&path) {
+                    if metadata.is_dir() {
+                        let patchlevel_h = path.join("patchlevel.h");
+                        if let Ok(result) = fs::read_to_string(patchlevel_h) {
+                            contents = result;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
     for line in contents.lines() {
         if let Some(captures) = VERSION.captures(line) {
             if let Some(value) = captures.get(1) {

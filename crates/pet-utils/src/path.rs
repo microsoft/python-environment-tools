@@ -8,6 +8,11 @@ use std::{
 
 // Similar to fs::canonicalize, but ignores UNC paths and returns the path as is (for windows).
 pub fn normalize<P: AsRef<Path>>(path: P) -> PathBuf {
+    // On unix do not use canonicalize, results in weird issues with homebrew paths
+    if cfg!(unix) {
+        return path.as_ref().to_path_buf();
+    }
+
     if let Ok(resolved) = fs::canonicalize(&path) {
         if cfg!(unix) {
             return resolved;

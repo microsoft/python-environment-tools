@@ -3,7 +3,7 @@
 
 use pet_reporter::{self, jsonrpc, stdio};
 
-mod locators;
+pub mod locators;
 
 pub fn find_and_report_envs_jsonrpc() {
     jsonrpc::initialize_logger(log::LevelFilter::Trace);

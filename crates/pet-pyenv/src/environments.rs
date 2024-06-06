@@ -9,7 +9,7 @@ use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     LocatorResult,
 };
-use pet_utils::{executable::find_executable, pyvenv_cfg::PyVenvCfg};
+use pet_utils::{executable::find_executable, headers::Headers, pyvenv_cfg::PyVenvCfg};
 use regex::Regex;
 use std::{fs, path::Path, sync::Arc};
 
@@ -72,6 +72,8 @@ pub fn get_pure_python_environment(
 ) -> Option<PythonEnvironment> {
     let file_name = path.file_name()?.to_string_lossy().to_string();
     let version = get_version(&file_name)?;
+    // If we can get the version from the header files, thats more accurate.
+    let version = Headers::get_version(path).unwrap_or(version.clone());
 
     let arch = if file_name.ends_with("-win32") {
         Some(Architecture::X86)
