@@ -75,6 +75,8 @@ fn check_if_virtualenvwrapper_exists() {
 
     assert!(environments.iter().any(|env| env.category
         == PythonEnvironmentCategory::VirtualEnvWrapper
+        && env.executable.is_some()
+        && env.prefix.is_some()
         && env.name.clone().unwrap_or_default() == "venv_wrapper_env1"));
 }
 
