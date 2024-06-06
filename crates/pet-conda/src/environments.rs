@@ -14,7 +14,8 @@ use pet_core::{
 };
 use pet_utils::{executable::find_executable, path::normalize};
 use std::{
-    backtrace::Backtrace, fs, path::{Path, PathBuf}
+    fs,
+    path::{Path, PathBuf},
 };
 
 #[derive(Debug, Clone)]
@@ -75,8 +76,6 @@ pub fn get_conda_environment_info(
         // Not a conda environment (neither root nor a separate env).
         return None;
     }
-    println!("GETTING Conda env info from path {:?}", env_path);
-    println!("Custom backtrace: {}", Backtrace::capture());
     // If we know the conda install folder, then we can use it.
     let mut conda_install_folder = match manager {
         Some(manager) => Some(manager.conda_dir.clone()),

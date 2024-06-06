@@ -28,7 +28,6 @@ pub fn is_virtualenvwrapper(env: &PythonEnv, environment: &EnvVariables) -> bool
 pub fn get_project(env: &PythonEnv) -> Option<PathBuf> {
     let project_file = env.prefix.clone()?.join(".project");
     let contents = fs::read_to_string(&project_file).ok()?;
-    println!("contents of project file {:?}: {:?}", project_file, contents);
     let project_folder = normalize(PathBuf::from(contents.trim().to_string()));
     if fs::metadata(&project_folder).is_ok() {
         Some(normalize(&project_folder))
