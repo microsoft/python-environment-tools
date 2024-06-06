@@ -195,6 +195,7 @@ name = "pet"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "lazy_static",
  "log",
  "pet-conda",
  "pet-core",
@@ -211,6 +212,9 @@ dependencies = [
  "pet-virtualenvwrapper",
  "pet-windows-registry",
  "pet-windows-store",
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

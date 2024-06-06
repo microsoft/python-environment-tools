@@ -1,9 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::{environment::Environment, manager::Manager};
+use crate::{
+    environment::{get_environment_key, Environment},
+    manager::Manager,
+};
 use env_logger::Builder;
-use log::{error, LevelFilter};
+use log::LevelFilter;
 use pet_core::{manager::EnvManager, python_environment::PythonEnvironment, reporter::Reporter};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -43,20 +46,6 @@ pub fn create_reporter() -> impl Reporter {
     StdioReporter {
         reported_managers: Arc::new(Mutex::new(HashSet::new())),
         reported_environments: Arc::new(Mutex::new(HashSet::new())),
-    }
-}
-
-fn get_environment_key(env: &PythonEnvironment) -> Option<&PathBuf> {
-    if let Some(exe) = &env.executable {
-        Some(exe)
-    } else if let Some(prefix) = &env.prefix {
-        Some(prefix)
-    } else {
-        error!(
-            "Failed to report environment due to lack of exe & prefix: {:?}",
-            env
-        );
-        None
     }
 }
 

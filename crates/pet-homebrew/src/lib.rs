@@ -7,7 +7,10 @@ use environments::get_python_info;
 use pet_core::{
     os_environment::Environment, python_environment::PythonEnvironment, Locator, LocatorResult,
 };
-use pet_utils::{env::PythonEnv, executable::resolve_symlink};
+use pet_utils::{
+    env::PythonEnv,
+    executable::{find_executables, resolve_symlink},
+};
 use std::{collections::HashSet, path::PathBuf};
 
 mod env_variables;
@@ -84,24 +87,25 @@ impl Locator for Homebrew {
         let mut reported: HashSet<String> = HashSet::new();
         let mut environments: Vec<PythonEnvironment> = vec![];
         for homebrew_prefix_bin in get_homebrew_prefix_bin(&self.environment) {
-            for file in std::fs::read_dir(&homebrew_prefix_bin)
-                .ok()?
-                .filter_map(Result::ok)
-                .filter(|f| {
-                    let file_name = f.file_name().to_str().unwrap_or_default().to_lowercase();
-                    file_name.starts_with("python")
-                    // If this file name is `python3`, then ignore this for now.
+            for file in find_executables(&homebrew_prefix_bin).iter().filter(|f| {
+                let file_name = f
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default()
+                    .to_lowercase();
+                file_name.starts_with("python")
+                // If this file name is `python3`, then ignore this for now.
                     // We would prefer to use `python3.x` instead of `python3`.
                     // That way its more consistent and future proof
                         && file_name != "python3"
                         && file_name != "python"
-                })
-            {
+            }) {
                 // Sometimes we end up with other python installs in the Homebrew bin directory.
                 // E.g. /usr/local/bin is treated as a location where homebrew can be found (homebrew bin)
                 // However this is a very generic location, and we might end up with other python installs here.
                 // Hence call `resolve` to correctly identify homebrew python installs.
-                let env_to_resolve = PythonEnv::new(file.path(), None, None);
+                let env_to_resolve = PythonEnv::new(file.clone(), None, None);
                 if let Some(env) = resolve(&env_to_resolve, &mut reported) {
                     environments.push(env);
                 }

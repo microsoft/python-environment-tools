@@ -28,7 +28,7 @@ pub fn find_and_report_envs(reporter: &dyn Reporter) {
     // 1. Find using known global locators.
     let mut threads = find_using_global_finders();
 
-    // // Step 2: Search in some global locations for virtual envs.
+    // Step 2: Search in some global locations for virtual envs.
     threads.push(thread::spawn(find_in_global_virtual_env_dirs));
 
     // Step 3: Finally find in the current PATH variable

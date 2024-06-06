@@ -103,22 +103,24 @@ fn is_python_executable_name(exe: &Path) -> bool {
 // If the real file == exe, then it is not a symlink.
 pub fn resolve_symlink(exe: &Path) -> Option<PathBuf> {
     let name = exe.file_name()?.to_string_lossy();
-    // TODO: What is -config and -build?
+    // In bin directory of homebrew, we have files like python-build, python-config, python3-config
     if !name.starts_with("python") || name.ends_with("-config") || name.ends_with("-build") {
         return None;
     }
-
-    // If the file == symlink, then it is not a symlink.
-    // We already have the resolved file, no need to return that again.
-    if let Ok(real_file) = fs::read_link(exe) {
-        if real_file == exe {
-            None
-        } else {
-            Some(real_file)
+    if let Ok(metadata) = std::fs::symlink_metadata(&exe) {
+        if metadata.is_file() || !metadata.file_type().is_symlink() {
+            return Some(exe.to_path_buf());
         }
-    } else {
-        None
+        if let Ok(readlink) = std::fs::canonicalize(&exe) {
+            if readlink == exe {
+                return None;
+            } else {
+                return Some(readlink);
+            }
+        }
+        return Some(exe.to_path_buf());
     }
+    return Some(exe.to_path_buf());
 }
 
 // Given a list of executables, return the one with the shortest path.

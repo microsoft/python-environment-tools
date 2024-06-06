@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+use log::error;
 use pet_core::{
     arch::Architecture,
     python_environment::{PythonEnvironment, PythonEnvironmentCategory},
@@ -114,5 +115,19 @@ impl Environment {
             arch: env.arch.as_ref().map(architecture_to_string),
             symlinks: env.symlinks.clone(),
         }
+    }
+}
+
+pub fn get_environment_key(env: &PythonEnvironment) -> Option<&PathBuf> {
+    if let Some(exe) = &env.executable {
+        Some(exe)
+    } else if let Some(prefix) = &env.prefix {
+        Some(prefix)
+    } else {
+        error!(
+            "Failed to report environment due to lack of exe & prefix: {:?}",
+            env
+        );
+        None
     }
 }
