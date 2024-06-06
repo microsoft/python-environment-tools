@@ -148,7 +148,7 @@ jobs:
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           eval "$(pyenv virtualenv-init -)"
-          pyenv virtualenv 3.12 my-virtual-env-3.12
+          pyenv virtualenv 3.12 pyenv-virtualenv-env1
         shell: bash
 
       - name: Rust Tool Chain setup
