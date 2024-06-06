@@ -52,62 +52,72 @@ fn verify_validity_of_discovered_envs() {
     }
 }
 
-// #[cfg(unix)]
-// #[cfg(target_os = "linux")]
-// #[cfg_attr(feature = "ci", test)]
-// #[allow(dead_code)]
-// // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
-// fn check_if_virtualenvwrapper_exists() {
-//     use pet::locators;
-//     use pet_reporter::{stdio, test};
+#[cfg(unix)]
+#[cfg(target_os = "linux")]
+#[cfg_attr(feature = "ci", test)]
+#[allow(dead_code)]
+// On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
+fn check_if_virtualenvwrapper_exists() {
+    use pet::locators;
+    use pet_reporter::{stdio, test};
 
-//     stdio::initialize_logger(log::LevelFilter::Warn);
-//     let reporter = test::create_reporter();
-//     locators::find_and_report_envs(&reporter);
+    stdio::initialize_logger(log::LevelFilter::Warn);
+    let reporter = test::create_reporter();
+    locators::find_and_report_envs(&reporter);
 
-//     let environments = reporter
-//         .reported_environments
-//         .lock()
-//         .unwrap()
-//         .clone()
-//         .into_values()
-//         .collect::<Vec<_>>();
+    let environments = reporter
+        .reported_environments
+        .lock()
+        .unwrap()
+        .clone()
+        .into_values()
+        .collect::<Vec<_>>();
 
-//     assert!(environments.iter().any(|env| env.category
-//         == PythonEnvironmentCategory::VirtualEnvWrapper
-//         && env.executable.is_some()
-//         && env.prefix.is_some()
-//         && env.name.clone().unwrap_or_default() == "venv_wrapper_env1"));
-// }
+    assert!(
+        environments.iter().any(
+            |env| env.category == PythonEnvironmentCategory::VirtualEnvWrapper
+                && env.executable.is_some()
+                && env.prefix.is_some()
+                && env.name.clone().unwrap_or_default() == "venv_wrapper_env1"
+        ),
+        "Virtualenvwrapper environment not found, found: {:?}",
+        environments
+    );
+}
 
+#[cfg(unix)]
+#[cfg(target_os = "linux")]
+#[cfg_attr(feature = "ci", test)]
+#[allow(dead_code)]
+// On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
+fn check_if_pyenv_virtualenv_exists() {
+    use pet::locators;
+    use pet_reporter::{stdio, test};
 
-// #[cfg(unix)]
-// // #[cfg(target_os = "linux")]
-// #[cfg_attr(feature = "ci", test)]
-// #[allow(dead_code)]
-// // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
-// fn check_if_pyenv_virtualenv_exists() {
-//     use pet::locators;
-//     use pet_reporter::{stdio, test};
+    stdio::initialize_logger(log::LevelFilter::Warn);
+    let reporter = test::create_reporter();
+    locators::find_and_report_envs(&reporter);
 
-//     stdio::initialize_logger(log::LevelFilter::Warn);
-//     let reporter = test::create_reporter();
-//     locators::find_and_report_envs(&reporter);
+    let environments = reporter
+        .reported_environments
+        .lock()
+        .unwrap()
+        .clone()
+        .into_values()
+        .collect::<Vec<_>>();
 
-//     let environments = reporter
-//         .reported_environments
-//         .lock()
-//         .unwrap()
-//         .clone()
-//         .into_values()
-//         .collect::<Vec<_>>();
-
-//     assert!(environments.iter().any(|env| env.category
-//         == PythonEnvironmentCategory::PyenvVirtualEnv
-//         && env.executable.is_some()
-//         && env.prefix.is_some()
-//         && env.name.clone().unwrap_or_default() == "venv_wrapper_env1"));
-// }
+    assert!(
+        environments.iter().any(
+            |env| env.category == PythonEnvironmentCategory::PyenvVirtualEnv
+                && env.executable.is_some()
+                && env.prefix.is_some()
+                && env.manager.is_some()
+                && env.name.clone().unwrap_or_default() == "pyenv-virtualenv-env1"
+        ),
+        "pyenv-virtualenv environment not found, found: {:?}",
+        environments
+    );
+}
 
 fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     let run_command = get_python_run_command(&environment);
