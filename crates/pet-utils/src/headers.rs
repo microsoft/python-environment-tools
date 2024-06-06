@@ -6,7 +6,7 @@ use regex::Regex;
 use std::{fs, path::Path};
 
 lazy_static! {
-    static ref VERSION: Regex = Regex::new(r#"#define\s+PY_VERSION\s+"((\d+\.?)*.*)"#)
+    static ref VERSION: Regex = Regex::new(r#"#define\s+PY_VERSION\s+"((\d+\.?)*.*)\""#)
         .expect("error parsing Version regex for partchlevel.h");
 }
 

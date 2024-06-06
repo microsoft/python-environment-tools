@@ -74,4 +74,12 @@ fn version_from_header_files() {
     let path: PathBuf = resolve_test_path(&["unix", "headers", "python3.9.9", "bin"]).into();
     let version = SysPrefix::get_version(&path).unwrap();
     assert_eq!(version, "3.9.9");
+
+    let path: PathBuf = resolve_test_path(&["unix", "headers", "python3.10-dev", "bin"]).into();
+    let version = SysPrefix::get_version(&path).unwrap();
+    assert_eq!(version, "3.10.14+");
+
+    let path: PathBuf = resolve_test_path(&["unix", "headers", "python3.13", "bin"]).into();
+    let version = SysPrefix::get_version(&path).unwrap();
+    assert_eq!(version, "3.13.0a5");
 }
