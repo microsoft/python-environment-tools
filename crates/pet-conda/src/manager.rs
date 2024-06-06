@@ -74,12 +74,12 @@ impl CondaManager {
         }
     }
     pub fn from(path: &Path) -> Option<CondaManager> {
+        if !is_conda_env(path) {
+            return None;
+        }
         if let Some(manager) = get_conda_manager(path) {
             Some(manager)
         } else {
-            if !is_conda_env(path) {
-                return None;
-            }
             // Possible this is a conda environment in the `envs` folder
             let path = path.parent()?.parent()?;
             if let Some(manager) = get_conda_manager(path) {
