@@ -33,8 +33,10 @@ impl Locator for VirtualEnvWrapper {
             return None;
         }
         let mut name = None;
-        if let Some(filename) = &env.prefix {
-            name = filename.to_str().map(|f| f.to_string());
+        if let Some(prefix) = &env.prefix {
+            if let Some(filename) = prefix.file_name() {
+                name = filename.to_str().map(|f| f.to_string());
+            }
         }
         let version = match env.version {
             Some(ref v) => Some(v.clone()),

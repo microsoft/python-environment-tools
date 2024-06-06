@@ -52,6 +52,32 @@ fn verify_validity_of_discovered_envs() {
     }
 }
 
+#[cfg(unix)]
+// #[cfg(target_os = "linux")]
+#[cfg_attr(feature = "ci", test)]
+#[allow(dead_code)]
+// On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
+fn check_if_virtualenvwrapper_exists() {
+    use pet::locators;
+    use pet_reporter::{stdio, test};
+
+    stdio::initialize_logger(log::LevelFilter::Warn);
+    let reporter = test::create_reporter();
+    locators::find_and_report_envs(&reporter);
+
+    let environments = reporter
+        .reported_environments
+        .lock()
+        .unwrap()
+        .clone()
+        .into_values()
+        .collect::<Vec<_>>();
+
+    assert!(environments.iter().any(|env| env.category
+        == PythonEnvironmentCategory::VirtualEnvWrapper
+        && env.name.clone().unwrap_or_default() == "venv_wrapper_env1"));
+}
+
 fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     let run_command = get_python_run_command(&environment);
     let interpreter_info = get_python_interpreter_info(&run_command);
