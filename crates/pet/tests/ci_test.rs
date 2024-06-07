@@ -57,14 +57,8 @@ fn check_if_virtualenvwrapper_exists() {
 
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
-
-    let environments = reporter
-        .reported_environments
-        .lock()
-        .unwrap()
-        .clone()
-        .into_values()
-        .collect::<Vec<_>>();
+    let result = reporter.get_result();
+    let environments = result.environments;
 
     assert!(
         environments.iter().any(
@@ -89,14 +83,8 @@ fn check_if_pyenv_virtualenv_exists() {
 
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
-
-    let environments = reporter
-        .reported_environments
-        .lock()
-        .unwrap()
-        .clone()
-        .into_values()
-        .collect::<Vec<_>>();
+    let result = reporter.get_result();
+    let environments = result.environments;
 
     assert!(
         environments.iter().any(
