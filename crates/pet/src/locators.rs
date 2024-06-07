@@ -40,7 +40,7 @@ fn find_using_global_finders(reporter: &dyn Reporter) {
     // Step 1: These environments take precedence over all others.
     // As they are very specific and guaranteed to be specific type.
     #[cfg(windows)]
-    fn find(reporter: &Arc<&dyn Reporter>) {
+    fn find(reporter: &dyn Reporter) {
         thread::scope(|s| {
             use pet_windows_registry::WindowsRegistry;
             use pet_windows_store::WindowsStore;
