@@ -12,7 +12,7 @@ use pet_core::{
     manager::EnvManager,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
 };
-use pet_utils::{executable::find_executable, path::normalize};
+use pet_utils::{executable::find_executable, path::{normalize, resolve_symlink}};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -92,10 +92,6 @@ pub fn get_conda_environment_info(
         }
     }
     if let Some(python_binary) = find_executable(env_path) {
-        println!(
-            "Conda env {:?} and conda_dir {:?}",
-            env_path, conda_install_folder
-        );
         if let Some(package_info) = CondaPackageInfo::from(env_path, &Package::Python) {
             Some(CondaEnvironment {
                 prefix: env_path.into(),
@@ -176,6 +172,7 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
     let start_index = cmd_line.to_lowercase().find("# cmd:")? + "# cmd:".len();
     let end_index = cmd_line.to_lowercase().find(" create -")?;
     let cmd_line = PathBuf::from(cmd_line[start_index..end_index].trim().to_string());
+    println!("cmd_line resolved: {:?}", resolve_symlink(&cmd_line));
     if let Some(cmd_line) = cmd_line.parent() {
         if let Some(conda_dir) = cmd_line.file_name() {
             if conda_dir.to_ascii_lowercase() == "bin"
