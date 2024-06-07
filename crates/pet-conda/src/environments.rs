@@ -12,7 +12,10 @@ use pet_core::{
     manager::EnvManager,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
 };
-use pet_utils::{executable::find_executable, path::normalize};
+use pet_utils::{
+    executable::find_executable,
+    path::{normalize, resolve_symlink},
+};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -153,7 +156,9 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
             // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
             // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
             if let Some(conda_dir) = get_conda_dir_from_cmd(line.into()) {
-                return Some(conda_dir);
+                if is_conda_install(&conda_dir) {
+                    return Some(conda_dir);
+                }
             }
         }
     }
@@ -166,10 +171,14 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
     // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
     // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
     // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+    // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
     let start_index = cmd_line.to_lowercase().find("# cmd:")? + "# cmd:".len();
     let end_index = cmd_line.to_lowercase().find(" create -")?;
-    let cmd_line = PathBuf::from(cmd_line[start_index..end_index].trim().to_string());
-    if let Some(cmd_line) = cmd_line.parent() {
+    let conda_exe = PathBuf::from(cmd_line[start_index..end_index].trim().to_string());
+    // Sometimes the path can be as follows, where `/usr/bin/conda` could be a symlink.
+    // cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
+    let conda_exe = resolve_symlink(&conda_exe).unwrap_or(conda_exe);
+    if let Some(cmd_line) = conda_exe.parent() {
         if let Some(conda_dir) = cmd_line.file_name() {
             if conda_dir.to_ascii_lowercase() == "bin"
                 || conda_dir.to_ascii_lowercase() == "scripts"

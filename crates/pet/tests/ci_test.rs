@@ -7,6 +7,7 @@ use pet_core::{
     arch::Architecture,
     python_environment::{PythonEnvironment, PythonEnvironmentCategory},
 };
+use pet_utils::env;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -25,9 +26,8 @@ fn verify_validity_of_discovered_envs() {
     use std::thread;
 
     use pet::locators;
-    use pet_reporter::{stdio, test};
+    use pet_reporter::test;
 
-    stdio::initialize_logger(log::LevelFilter::Warn);
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
 
@@ -52,6 +52,71 @@ fn verify_validity_of_discovered_envs() {
     }
 }
 
+#[cfg(unix)]
+#[cfg(target_os = "linux")]
+#[cfg_attr(feature = "ci", test)]
+#[allow(dead_code)]
+// On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
+fn check_if_virtualenvwrapper_exists() {
+    use pet::locators;
+    use pet_reporter::test;
+
+    let reporter = test::create_reporter();
+    locators::find_and_report_envs(&reporter);
+
+    let environments = reporter
+        .reported_environments
+        .lock()
+        .unwrap()
+        .clone()
+        .into_values()
+        .collect::<Vec<_>>();
+
+    assert!(
+        environments.iter().any(
+            |env| env.category == PythonEnvironmentCategory::VirtualEnvWrapper
+                && env.executable.is_some()
+                && env.prefix.is_some()
+                && env.name.clone().unwrap_or_default() == "venv_wrapper_env1"
+        ),
+        "Virtualenvwrapper environment not found, found: {:?}",
+        environments
+    );
+}
+
+#[cfg(unix)]
+#[cfg(target_os = "linux")]
+#[cfg_attr(feature = "ci", test)]
+#[allow(dead_code)]
+// On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
+fn check_if_pyenv_virtualenv_exists() {
+    use pet::locators;
+    use pet_reporter::test;
+
+    let reporter = test::create_reporter();
+    locators::find_and_report_envs(&reporter);
+
+    let environments = reporter
+        .reported_environments
+        .lock()
+        .unwrap()
+        .clone()
+        .into_values()
+        .collect::<Vec<_>>();
+
+    assert!(
+        environments.iter().any(
+            |env| env.category == PythonEnvironmentCategory::PyenvVirtualEnv
+                && env.executable.is_some()
+                && env.prefix.is_some()
+                && env.manager.is_some()
+                && env.name.clone().unwrap_or_default() == "pyenv-virtualenv-env1"
+        ),
+        "pyenv-virtualenv environment not found, found: {:?}",
+        environments
+    );
+}
+
 fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     let run_command = get_python_run_command(&environment);
     let interpreter_info = get_python_interpreter_info(&run_command);
@@ -66,16 +131,25 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
             environment.clone()
         );
     }
+    // If this is a conda env, then the manager, prefix and a few things must exist.
+    if environment.category == PythonEnvironmentCategory::Conda {
+        assert!(environment.manager.is_some());
+        assert!(environment.prefix.is_some());
+        if environment.executable.is_some() {
+            // Version must exist in this case.
+            assert!(environment.version.is_some());
+        }
+    }
     if let Some(prefix) = environment.clone().prefix {
         assert_eq!(
             prefix.to_str().unwrap(),
-            interpreter_info.clone().sysPrefix,
+            interpreter_info.clone().sys_prefix,
             "Prefix mismatch for {:?}",
             environment.clone()
         );
     }
     if let Some(arch) = environment.clone().arch {
-        let expected_arch = if interpreter_info.clone().is64Bit {
+        let expected_arch = if interpreter_info.clone().is64_bit {
             Architecture::X64
         } else {
             Architecture::X86
@@ -88,7 +162,7 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
         );
     }
     if let Some(version) = environment.clone().version {
-        let expected_version = &interpreter_info.clone().sysVersion;
+        let expected_version = &interpreter_info.clone().sys_version;
         let version = get_version(&version);
         assert!(
             expected_version.starts_with(&version),
@@ -108,15 +182,11 @@ fn get_conda_exe() -> &'static str {
 
 #[derive(Deserialize, Clone)]
 struct InterpreterInfo {
-    #[allow(non_snake_case)]
-    sysPrefix: String,
+    sys_prefix: String,
     executable: String,
-    #[allow(non_snake_case)]
-    sysVersion: String,
-    #[allow(non_snake_case)]
-    is64Bit: bool,
-    // #[allow(non_snake_case)]
-    // versionInfo: (u16, u16, u16, String, u16),
+    sys_version: String,
+    is64_bit: bool,
+    // version_info: (u16, u16, u16, String, u16),
 }
 
 fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {

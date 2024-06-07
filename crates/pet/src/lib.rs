@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 use pet_reporter::{self, jsonrpc, stdio};
-
 pub mod locators;
 
 pub fn find_and_report_envs_jsonrpc() {

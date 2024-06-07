@@ -7,10 +7,7 @@ use environments::get_python_info;
 use pet_core::{
     os_environment::Environment, python_environment::PythonEnvironment, Locator, LocatorResult,
 };
-use pet_utils::{
-    env::PythonEnv,
-    executable::{find_executables, resolve_symlink},
-};
+use pet_utils::{env::PythonEnv, executable::find_executables, path::resolve_symlink};
 use std::{collections::HashSet, path::PathBuf};
 
 mod env_variables;

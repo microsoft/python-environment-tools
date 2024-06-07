@@ -40,6 +40,9 @@ impl Reporter for StdioReporter {
             }
         }
     }
+    fn report_completion(&self, duration: std::time::Duration) {
+        println!("Refresh completed in {}ms", duration.as_millis())
+    }
 }
 
 pub fn create_reporter() -> impl Reporter {

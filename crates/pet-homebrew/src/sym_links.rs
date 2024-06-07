@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use lazy_static::lazy_static;
-use pet_utils::executable::resolve_symlink;
+use pet_utils::path::resolve_symlink;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 

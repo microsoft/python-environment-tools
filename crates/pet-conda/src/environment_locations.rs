@@ -117,6 +117,10 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
                     .collect(),
             );
         }
+        // Then read the .condarc in the conda install folder as well.
+        if let Some(mut conda_rc) = Condarc::from_path(conda_dir) {
+            envs.append(&mut conda_rc.env_dirs);
+        }
     } else if is_conda_env(conda_dir) {
         envs.push(conda_dir.to_path_buf());
     } else if fs::metadata(conda_dir.join("envs")).is_ok() {
@@ -222,7 +226,6 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     let mut known_paths = vec![];
     let directories_to_look_in = [
         "/opt",
-        "/opt",
         "/usr/share",
         "/usr/local",
         "/usr",
@@ -254,51 +257,8 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(home.clone().join("miniforge3"));
         known_paths.push(home.join(".conda"));
     }
-    known_paths.append(get_known_conda_locations(env_vars).as_mut());
     known_paths.sort();
     known_paths.dedup();
 
-    known_paths
-}
-
-#[cfg(windows)]
-pub fn get_known_conda_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
-    let user_profile = env_vars.userprofile.clone().unwrap_or_default();
-    let program_data = env_vars.programdata.clone().unwrap_or_default();
-    let all_user_profile = env_vars.allusersprofile.clone().unwrap_or_default();
-    let home_drive = env_vars.homedrive.clone().unwrap_or_default();
-    let mut known_paths = vec![
-        Path::new(&user_profile).join("Anaconda3\\Scripts"),
-        Path::new(&program_data).join("Anaconda3\\Scripts"),
-        Path::new(&all_user_profile).join("Anaconda3\\Scripts"),
-        Path::new(&home_drive).join("Anaconda3\\Scripts"),
-        Path::new(&user_profile).join("Miniconda3\\Scripts"),
-        Path::new(&program_data).join("Miniconda3\\Scripts"),
-        Path::new(&all_user_profile).join("Miniconda3\\Scripts"),
-        Path::new(&home_drive).join("Miniconda3\\Scripts"),
-    ];
-    known_paths.append(&mut env_vars.known_global_search_locations.clone());
-    known_paths
-}
-
-#[cfg(unix)]
-pub fn get_known_conda_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
-    let mut known_paths = vec![
-        PathBuf::from("/opt/anaconda3/bin"),
-        PathBuf::from("/opt/miniconda3/bin"),
-        PathBuf::from("/usr/local/anaconda3/bin"),
-        PathBuf::from("/usr/local/miniconda3/bin"),
-        PathBuf::from("/usr/anaconda3/bin"),
-        PathBuf::from("/usr/miniconda3/bin"),
-        PathBuf::from("/home/anaconda3/bin"),
-        PathBuf::from("/home/miniconda3/bin"),
-        PathBuf::from("/anaconda3/bin"),
-        PathBuf::from("/miniconda3/bin"),
-    ];
-    if let Some(ref home) = env_vars.home {
-        known_paths.push(home.clone().join("anaconda3/bin"));
-        known_paths.push(home.join("miniconda3/bin"));
-    }
-    known_paths.append(&mut env_vars.known_global_search_locations.clone());
     known_paths
 }

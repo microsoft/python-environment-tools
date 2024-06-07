@@ -4,7 +4,10 @@
 use crate::env_variables::EnvVariables;
 use log::trace;
 use pet_utils::path::normalize;
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[derive(Debug)]
 pub struct Condarc {
@@ -14,6 +17,9 @@ pub struct Condarc {
 impl Condarc {
     pub fn from(env_vars: &EnvVariables) -> Option<Condarc> {
         get_conda_conda_rc(env_vars)
+    }
+    pub fn from_path(path: &Path) -> Option<Condarc> {
+        parse_conda_rc(&path.join(".condarc"))
     }
 }
 
@@ -141,10 +147,10 @@ fn get_conda_conda_rc(env_vars: &EnvVariables) -> Option<Condarc> {
     parse_conda_rc(&conda_rc)
 }
 
-fn parse_conda_rc(conda_rc: &PathBuf) -> Option<Condarc> {
+fn parse_conda_rc(conda_rc: &Path) -> Option<Condarc> {
     let mut start_consuming_values = false;
-    trace!("conda_rc: {:?}", conda_rc);
     let reader = fs::read_to_string(conda_rc).ok()?;
+    trace!("conda_rc: {:?}", conda_rc);
     let mut env_dirs = vec![];
     for line in reader.lines() {
         if line.starts_with("envs_dirs:") && !start_consuming_values {

@@ -91,10 +91,15 @@ jobs:
         run: pipenv --version
 
       - name: Install virtualenvwrapper
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        # Activation of the script doesn't work on mac for some reason (didn't check why yet)
+        # But linux is sufficient for the tests
+        if: startsWith( matrix.os, 'ubuntu')
         run: |
           pip install virtualenvwrapper
           echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+          mkdir -p $HOME/.virtualenvs
+          source virtualenvwrapper.sh
+          mkvirtualenv venv_wrapper_env1
         shell: bash
 
       - name: Install virtualenvwrapper-win
@@ -137,6 +142,13 @@ jobs:
         run: |
           pyenv install --list
           pyenv install 3.10.5 3.8.10
+        shell: bash
+
+      - name: Create pyenv-virtualenv envs
+        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        run: |
+          eval "$(pyenv virtualenv-init -)"
+          pyenv virtualenv 3.12 pyenv-virtualenv-env1
         shell: bash
 
       - name: Rust Tool Chain setup

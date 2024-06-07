@@ -22,8 +22,8 @@ fn get_global_virtualenv_dirs(
         for dir in [
             PathBuf::from("envs"),
             PathBuf::from(".direnv"),
-            PathBuf::from(".venvs"),
-            PathBuf::from(".virtualenvs"),
+            PathBuf::from(".venvs"), // Used by pipenv, https://pipenv.pypa.io/en/latest/virtualenv.html
+            PathBuf::from(".virtualenvs"), // Useb by virtualenvwrapper, https://virtualenvwrapper.readthedocs.io/en/latest/install.html#shell-startup-file
             PathBuf::from(".local").join("share").join("virtualenvs"),
         ] {
             let venv_dir = home.join(dir);
@@ -33,6 +33,10 @@ fn get_global_virtualenv_dirs(
         }
         if cfg!(target_os = "linux") {
             let envs = PathBuf::from("Envs");
+            if fs::metadata(&envs).is_ok() {
+                venv_dirs.push(envs);
+            }
+            let envs = PathBuf::from("envs");
             if fs::metadata(&envs).is_ok() {
                 venv_dirs.push(envs);
             }
@@ -58,6 +62,9 @@ pub fn list_global_virtual_envs_paths(
             )
         }
     }
+
+    python_envs.sort();
+    python_envs.dedup();
 
     python_envs
 }

@@ -42,6 +42,7 @@ pub fn get_work_on_home_path(environment: &EnvVariables) -> Option<PathBuf> {
     // The WORKON_HOME variable contains the path to the root directory of all virtualenvwrapper environments.
     // If the interpreter path belongs to one of them then it is a virtualenvwrapper type of environment.
     if let Some(work_on_home) = &environment.workon_home {
+        // TODO: Why do we need to canonicalize the path?
         if let Ok(work_on_home) = std::fs::canonicalize(work_on_home) {
             if fs::metadata(&work_on_home).is_ok() {
                 return Some(normalize(&work_on_home));

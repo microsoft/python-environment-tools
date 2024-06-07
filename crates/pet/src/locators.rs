@@ -43,14 +43,7 @@ pub fn find_and_report_envs(reporter: &dyn Reporter) {
         }
     }
 
-    match now.elapsed() {
-        Ok(elapsed) => {
-            info!("Refreshed Environments in {}ms.", elapsed.as_millis());
-        }
-        Err(e) => {
-            error!("Error getting elapsed time: {:?}", e);
-        }
-    }
+    reporter.report_completion(now.elapsed().unwrap_or_default());
 }
 
 fn find_using_global_finders(// dispatcher: &mut dyn MessageDispatcher,
