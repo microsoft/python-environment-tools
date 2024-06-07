@@ -223,60 +223,6 @@ impl Locator for Conda {
                 });
             }
         });
-        // let known_conda_envs =
-        //     get_conda_environments(&get_conda_environment_paths(&self.env_vars), &None);
-        // {
-        //     let mut managers = self.managers.lock().unwrap();
-        //     // 2. Go through all conda dirs and build the conda managers.
-        //     for env in &known_conda_envs {
-        //         if let Some(conda_dir) = &env.conda_dir {
-        //             if managers.contains_key(conda_dir) {
-        //                 continue;
-        //             }
-        //             if let Some(manager) = CondaManager::from(conda_dir) {
-        //                 reporter.report_manager(&manager.to_manager());
-        //                 managers.insert(conda_dir.clone(), manager);
-        //             }
-        //         }
-        //     }
-        // }
-
-        // let mut environments = self.environments.lock().unwrap();
-        // // 3. Go through each environment we know of and build the python environments.
-        // for known_env in &known_conda_envs {
-        //     if environments.contains_key(&known_env.prefix) {
-        //         continue;
-        //     }
-        //     if let Some(conda_dir) = &known_env.conda_dir {
-        //         if let Some(manager) = self.get_manager(conda_dir) {
-        //             let env = known_env.to_python_environment(
-        //                 Some(manager.conda_dir.clone()),
-        //                 Some(manager.to_manager()),
-        //             );
-        //             environments.insert(known_env.prefix.clone(), env.clone());
-        //             reporter.report_environment(&env);
-        //         } else {
-        //             // We will still return the conda env even though we do not have the manager.
-        //             // This might seem incorrect, however the tool is about discovering environments.
-        //             // The client can activate this env either using another conda manager or using the activation scripts
-        //             error!("Unable to find Conda Manager for Conda env (even though we have a conda_dir {:?}): Env Details = {:?}", conda_dir, known_env);
-        //             let env = known_env.to_python_environment(Some(conda_dir.clone()), None);
-        //             environments.insert(known_env.prefix.clone(), env.clone());
-        //             reporter.report_environment(&env);
-        //         }
-        //     } else {
-        //         // We will still return the conda env even though we do not have the manager.
-        //         // This might seem incorrect, however the tool is about discovering environments.
-        //         // The client can activate this env either using another conda manager or using the activation scripts
-        //         error!(
-        //             "Unable to find Conda Manager for the Conda env: {:?}",
-        //             known_env
-        //         );
-        //         let env = known_env.to_python_environment(None, None);
-        //         environments.insert(known_env.prefix.clone(), env.clone());
-        //         reporter.report_environment(&env);
-        //     }
-        // }
     }
 }
 
