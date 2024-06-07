@@ -1,13 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{fs, path::PathBuf};
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     reporter::Reporter,
     Locator,
 };
 use pet_utils::{env::PythonEnv, path::normalize};
+use std::{fs, path::PathBuf};
 
 fn get_pipenv_project(env: &PythonEnv) -> Option<PathBuf> {
     let project_file = env.prefix.clone()?.join(".project");
