@@ -7,6 +7,7 @@ use pet_core::{
     arch::Architecture,
     python_environment::{PythonEnvironment, PythonEnvironmentCategory},
 };
+use pet_utils::env;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -129,6 +130,15 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
             "Executable mismatch for {:?}",
             environment.clone()
         );
+    }
+    // If this is a conda env, then the manager, prefix and a few things must exist.
+    if environment.category == PythonEnvironmentCategory::Conda {
+        assert!(environment.manager.is_some());
+        assert!(environment.prefix.is_some());
+        if environment.executable.is_some() {
+            // Version must exist in this case.
+            assert!(environment.version.is_some());
+        }
     }
     if let Some(prefix) = environment.clone().prefix {
         assert_eq!(
