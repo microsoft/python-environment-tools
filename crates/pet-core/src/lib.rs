@@ -4,6 +4,7 @@
 use manager::EnvManager;
 use pet_utils::env::PythonEnv;
 use python_environment::PythonEnvironment;
+use reporter::Reporter;
 
 pub mod arch;
 pub mod manager;
@@ -39,5 +40,5 @@ pub trait Locator: Send + Sync {
     /**
      * Finds all environments specific to this locator.
      */
-    fn find(&self) -> Option<LocatorResult>;
+    fn find(&self, reporter: &dyn Reporter);
 }

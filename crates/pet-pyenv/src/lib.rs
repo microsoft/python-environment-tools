@@ -13,7 +13,8 @@ use pet_core::{
     manager::{EnvManager, EnvManagerType},
     os_environment::Environment,
     python_environment::PythonEnvironment,
-    Locator, LocatorResult,
+    reporter::Reporter,
+    Locator,
 };
 use pet_utils::env::PythonEnv;
 
@@ -66,34 +67,24 @@ impl Locator for PyEnv {
         None
     }
 
-    fn find(&self) -> Option<LocatorResult> {
+    fn find(&self, reporter: &dyn Reporter) {
         let pyenv_info = PyEnvInfo::from(&self.env_vars);
-        let mut managers: Vec<EnvManager> = vec![];
         let mut manager: Option<EnvManager> = None;
-        let mut environments: Vec<PythonEnvironment> = vec![];
         if let Some(ref exe) = pyenv_info.exe {
             let version = pyenv_info.version.clone();
-            manager = Some(EnvManager::new(exe.clone(), EnvManagerType::Pyenv, version));
-            managers.push(manager.clone().unwrap());
+            let mgr = EnvManager::new(exe.clone(), EnvManagerType::Pyenv, version);
+            reporter.report_manager(&mgr);
+            manager = Some(mgr);
         }
         if let Some(ref versions) = &pyenv_info.versions {
             if let Some(envs) = list_pyenv_environments(&manager, versions, &self.conda_locator) {
                 for env in envs.environments {
-                    environments.push(env);
+                    reporter.report_environment(&env);
                 }
                 for mgr in envs.managers {
-                    managers.push(mgr);
+                    reporter.report_manager(&mgr);
                 }
             }
-        }
-
-        if environments.is_empty() && managers.is_empty() {
-            None
-        } else {
-            Some(LocatorResult {
-                managers,
-                environments,
-            })
         }
     }
 }

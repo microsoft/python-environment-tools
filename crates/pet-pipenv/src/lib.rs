@@ -2,10 +2,10 @@
 // Licensed under the MIT License.
 
 use std::{fs, path::PathBuf};
-
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
-    Locator, LocatorResult,
+    reporter::Reporter,
+    Locator,
 };
 use pet_utils::{env::PythonEnv, path::normalize};
 
@@ -58,7 +58,7 @@ impl Locator for PipEnv {
         )
     }
 
-    fn find(&self) -> Option<LocatorResult> {
-        None
+    fn find(&self, _reporter: &dyn Reporter) {
+        //
     }
 }

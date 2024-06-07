@@ -5,7 +5,7 @@ use env_variables::EnvVariables;
 use environment_locations::get_homebrew_prefix_bin;
 use environments::get_python_info;
 use pet_core::{
-    os_environment::Environment, python_environment::PythonEnvironment, Locator, LocatorResult,
+    os_environment::Environment, python_environment::PythonEnvironment, reporter::Reporter, Locator,
 };
 use pet_utils::{env::PythonEnv, executable::find_executables, path::resolve_symlink};
 use std::{collections::HashSet, path::PathBuf};
@@ -80,9 +80,8 @@ impl Locator for Homebrew {
         resolve(env, &mut reported)
     }
 
-    fn find(&self) -> Option<LocatorResult> {
+    fn find(&self, reporter: &dyn Reporter) {
         let mut reported: HashSet<String> = HashSet::new();
-        let mut environments: Vec<PythonEnvironment> = vec![];
         for homebrew_prefix_bin in get_homebrew_prefix_bin(&self.environment) {
             for file in find_executables(&homebrew_prefix_bin).iter().filter(|f| {
                 let file_name = f
@@ -104,7 +103,7 @@ impl Locator for Homebrew {
                 // Hence call `resolve` to correctly identify homebrew python installs.
                 let env_to_resolve = PythonEnv::new(file.clone(), None, None);
                 if let Some(env) = resolve(&env_to_resolve, &mut reported) {
-                    environments.push(env);
+                    reporter.report_environment(&env);
                 }
             }
 
@@ -113,17 +112,8 @@ impl Locator for Homebrew {
             let file = homebrew_prefix_bin.join("python3");
             let env_to_resolve = PythonEnv::new(file, None, None);
             if let Some(env) = resolve(&env_to_resolve, &mut reported) {
-                environments.push(env);
+                reporter.report_environment(&env);
             }
-        }
-
-        if environments.is_empty() {
-            None
-        } else {
-            Some(LocatorResult {
-                managers: vec![],
-                environments,
-            })
         }
     }
 }

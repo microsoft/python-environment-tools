@@ -1,13 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::fs;
-
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
-    Locator, LocatorResult,
+    reporter::Reporter,
+    Locator,
 };
 use pet_utils::{env::PythonEnv, headers::Headers};
+use std::fs;
 
 pub fn is_virtualenv(env: &PythonEnv) -> bool {
     if env.prefix.is_none() {
@@ -91,9 +91,8 @@ impl Locator for VirtualEnv {
         }
     }
 
-    fn find(&self) -> Option<LocatorResult> {
+    fn find(&self, _reporter: &dyn Reporter) {
         // There are no common global locations for virtual environments.
         // We expect the user of this class to call `is_compatible`
-        None
     }
 }

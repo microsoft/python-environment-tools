@@ -4,7 +4,7 @@
 #[cfg(windows)]
 use environments::get_registry_pythons;
 use pet_conda::{utils::is_conda_env, CondaLocator};
-use pet_core::{python_environment::PythonEnvironment, Locator, LocatorResult};
+use pet_core::{python_environment::PythonEnvironment, reporter::Reporter, Locator};
 use pet_utils::env::PythonEnv;
 use std::sync::Arc;
 
@@ -40,13 +40,21 @@ impl Locator for WindowsRegistry {
         None
     }
 
-    fn find(&self) -> Option<LocatorResult> {
-        #[cfg(windows)]
+    #[cfg(windows)]
+    fn find(&self, reporter: &dyn Reporter) {
         if let Some(result) = get_registry_pythons(&self.conda_locator) {
-            if !result.environments.is_empty() || !result.managers.is_empty() {
-                return Some(result);
-            }
+            result
+                .managers
+                .iter()
+                .for_each(|m| reporter.report_manager(m));
+            result
+                .environments
+                .iter()
+                .for_each(|e| reporter.report_environment(e));
         }
-        None
+    }
+    #[cfg(unix)]
+    fn find(&self, _reporter: &dyn Reporter) {
+        //
     }
 }

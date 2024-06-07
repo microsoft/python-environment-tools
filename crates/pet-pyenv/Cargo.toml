@@ -12,3 +12,6 @@ pet-utils = { path = "../pet-utils" }
 pet-conda = { path = "../pet-conda" }
 log = "0.4.21"
 regex = "1.10.4"
+
+[dev-dependencies]
+pet-reporter = { path = "../pet-reporter" }

@@ -4,9 +4,8 @@
 use log::{error, info};
 use pet_conda::Conda;
 use pet_core::os_environment::{Environment, EnvironmentApi};
-use pet_core::python_environment::PythonEnvironment;
 use pet_core::reporter::Reporter;
-use pet_core::{Locator, LocatorResult};
+use pet_core::Locator;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_pipenv::PipEnv;
 use pet_pyenv::PyEnv;
@@ -17,118 +16,109 @@ use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
 use std::path::PathBuf;
-use std::thread::JoinHandle;
 use std::time::SystemTime;
 use std::{sync::Arc, thread};
 
 pub fn find_and_report_envs(reporter: &dyn Reporter) {
     info!("Started Refreshing Environments");
     let now = SystemTime::now();
+    // let reporter = Arc::new(reporter);
 
     // 1. Find using known global locators.
-    let mut threads = find_using_global_finders();
-
-    // Step 2: Search in some global locations for virtual envs.
-    threads.push(thread::spawn(find_in_global_virtual_env_dirs));
-
-    // Step 3: Finally find in the current PATH variable
-    // threads.push(thread::spawn(find_in_path_env_variable));
-
-    // NOTE: Ensure we process the results in the same order as they were started.
-    // This will ensure the priority order is maintained.
-    for handle in threads {
-        match handle.join() {
-            Ok(result) => report_result(result, reporter),
-            Err(err) => error!("One of the finders failed. {:?}", err),
-        }
-    }
+    thread::scope(|s| {
+        s.spawn(|| find_using_global_finders(reporter));
+        // Step 2: Search in some global locations for virtual envs.
+        s.spawn(|| find_in_global_virtual_env_dirs(reporter));
+        // Step 3: Finally find in the current PATH variable
+        // s.spawn(find_in_path_env_variable());
+    });
 
     reporter.report_completion(now.elapsed().unwrap_or_default());
 }
 
-fn find_using_global_finders(// dispatcher: &mut dyn MessageDispatcher,
-) -> Vec<JoinHandle<Option<LocatorResult>>> {
+fn find_using_global_finders(reporter: &dyn Reporter) {
     // Step 1: These environments take precedence over all others.
     // As they are very specific and guaranteed to be specific type.
     #[cfg(windows)]
-    fn find() -> Vec<JoinHandle<std::option::Option<LocatorResult>>> {
-        use pet_windows_registry::WindowsRegistry;
-        use pet_windows_store::WindowsStore;
-        // use pet_win
-        // The order matters,
-        // Windows store can sometimes get detected via registry locator (but we want to avoid that),
-        //  difficult to repro, but we have see this on Karthiks machine
-        // Windows registry can contain conda envs (e.g. installing Ananconda will result in registry entries).
-        // Conda is best done last, as Windows Registry and Pyenv can also contain conda envs,
-        // Thus lets leave the generic conda locator to last to find all remaining conda envs.
-        // pyenv can be treated as a virtualenvwrapper environment, hence virtualenvwrapper needs to be detected first
-        let environment = EnvironmentApi::new();
-        let conda_locator = Arc::new(Conda::from(&environment));
-        let conda_locator1 = conda_locator.clone();
-        let conda_locator2 = conda_locator.clone();
-        let conda_locator3 = conda_locator.clone();
-        vec![
+    fn find(reporter: &Arc<&dyn Reporter>) {
+        thread::scope(|s| {
+            use pet_windows_registry::WindowsRegistry;
+            use pet_windows_store::WindowsStore;
+            // use pet_win
+            // The order matters,
+            // Windows store can sometimes get detected via registry locator (but we want to avoid that),
+            //  difficult to repro, but we have see this on Karthiks machine
+            // Windows registry can contain conda envs (e.g. installing Ananconda will result in registry entries).
+            // Conda is best done last, as Windows Registry and Pyenv can also contain conda envs,
+            // Thus lets leave the generic conda locator to last to find all remaining conda envs.
+            // pyenv can be treated as a virtualenvwrapper environment, hence virtualenvwrapper needs to be detected first
+            let environment = EnvironmentApi::new();
+            let conda_locator = Arc::new(Conda::from(&environment));
+            let conda_locator1 = conda_locator.clone();
+            let conda_locator2 = conda_locator.clone();
+            let conda_locator3 = conda_locator.clone();
+
             // 1. windows store
             thread::spawn(|| {
                 let environment = EnvironmentApi::new();
-                WindowsStore::from(&environment).find()
-            }),
+                WindowsStore::from(&environment).find(reporter)
+            });
             // 2. windows registry
-            thread::spawn(|| WindowsRegistry::from(conda_locator1).find()),
+            thread::spawn(|| WindowsRegistry::from(conda_locator1).find(reporter));
             // 3. virtualenvwrapper
             thread::spawn(|| {
                 let environment = EnvironmentApi::new();
-                VirtualEnvWrapper::from(&environment).find()
-            }),
+                VirtualEnvWrapper::from(&environment).find(reporter)
+            });
             // 4. pyenv
             thread::spawn(|| {
                 let environment = EnvironmentApi::new();
-                PyEnv::from(&environment, conda_locator2).find()
-            }),
+                PyEnv::from(&environment, conda_locator2).find(reporter)
+            });
             // 5. conda
-            thread::spawn(move || conda_locator3.find()),
-        ]
+            thread::spawn(|| conda_locator3.find(reporter));
+        });
     }
 
     #[cfg(unix)]
-    fn find() -> Vec<JoinHandle<std::option::Option<LocatorResult>>> {
-        // The order matters,
-        // pyenv can be treated as a virtualenvwrapper environment, hence virtualenvwrapper needs to be detected first
-        // Homebrew can happen anytime
-        // Conda is best done last, as pyenv can also contain conda envs,
-        // Thus lets leave the generic conda locator to last to find all remaining conda envs.
+    fn find(reporter: &dyn Reporter) {
+        thread::scope(|s| {
+            // The order matters,
+            // pyenv can be treated as a virtualenvwrapper environment, hence virtualenvwrapper needs to be detected first
+            // Homebrew can happen anytime
+            // Conda is best done last, as pyenv can also contain conda envs,
+            // Thus lets leave the generic conda locator to last to find all remaining conda envs.
 
-        use pet_homebrew::Homebrew;
+            use pet_homebrew::Homebrew;
 
-        let environment = EnvironmentApi::new();
-        let conda_locator = Arc::new(Conda::from(&environment));
-        let conda_locator1 = conda_locator.clone();
-        let conda_locator2 = conda_locator.clone();
-        vec![
+            let environment = EnvironmentApi::new();
+            let conda_locator = Arc::new(Conda::from(&environment));
+            let conda_locator1 = conda_locator.clone();
+            let conda_locator2 = conda_locator.clone();
             // 1. virtualenvwrapper
-            thread::spawn(|| {
+            s.spawn(|| {
                 let environment = EnvironmentApi::new();
-                VirtualEnvWrapper::from(&environment).find()
-            }),
+                VirtualEnvWrapper::from(&environment).find(reporter)
+            });
             // 2. pyenv
-            thread::spawn(|| {
+            s.spawn(|| {
                 let environment = EnvironmentApi::new();
-                PyEnv::from(&environment, conda_locator1).find()
-            }),
+                PyEnv::from(&environment, conda_locator1).find(reporter)
+            });
             // 3. homebrew
-            thread::spawn(|| {
+            s.spawn(|| {
                 let environment = EnvironmentApi::new();
-                Homebrew::from(&environment).find()
-            }),
+                Homebrew::from(&environment).find(reporter)
+            });
             // 4. conda
-            thread::spawn(move || conda_locator2.find()),
-        ]
+            s.spawn(move || conda_locator2.find(reporter));
+        });
     }
 
-    find()
+    find(reporter)
 }
 
-fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
+fn find_in_global_virtual_env_dirs(reporter: &dyn Reporter) {
     #[cfg(unix)]
     use pet_homebrew::Homebrew;
 
@@ -162,7 +152,6 @@ fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
     ]
     .concat();
     // Step 2: Search in some global locations for virtual envs.
-    let mut environments = Vec::<PythonEnvironment>::new();
     for env_path in envs_from_global_locations {
         if let Some(executable) = find_executable(&env_path) {
             let mut env = PythonEnv::new(executable.clone(), Some(env_path.clone()), None);
@@ -173,7 +162,7 @@ fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
             // 1. First must be homebrew, as it is the most specific and supports symlinks
             #[cfg(unix)]
             if let Some(env) = homebrew_locator.from(&env) {
-                environments.push(env);
+                reporter.report_environment(&env);
                 continue;
             }
 
@@ -186,7 +175,7 @@ fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
             let mut found = false;
             for locator in &venv_type_locators {
                 if let Some(env) = locator.as_ref().from(&env) {
-                    environments.push(env);
+                    reporter.report_environment(&env);
                     found = true;
                     break;
                 }
@@ -197,28 +186,5 @@ fn find_in_global_virtual_env_dirs() -> Option<LocatorResult> {
                 error!("Unknown Global Virtual Environment: {:?}", env);
             }
         }
-    }
-    Some(LocatorResult {
-        environments,
-        managers: vec![],
-    })
-}
-
-// This is incomplete
-// fn find_in_path_env_variable() -> Option<LocatorResult> {
-//     let environment = EnvironmentApi::new();
-//     PythonOnPath::from(&environment).find()
-// }
-
-fn report_result(result: Option<LocatorResult>, reporter: &dyn Reporter) {
-    if let Some(result) = result {
-        result
-            .environments
-            .iter()
-            .for_each(|e| reporter.report_environment(e));
-        result
-            .managers
-            .iter()
-            .for_each(|m| reporter.report_manager(m));
     }
 }
