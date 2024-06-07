@@ -11,6 +11,7 @@ fn does_not_find_any_pyenv_envs() {
     use pet_core::{self, Locator};
     use pet_pyenv;
     use pet_pyenv::PyEnv;
+    use pet_reporter::test::create_reporter;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
     let environment = create_test_environment(
@@ -22,9 +23,12 @@ fn does_not_find_any_pyenv_envs() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let result = locator.find();
+    let reporter = create_reporter();
+    locator.find(&reporter);
+    let result = reporter.get_result();
 
-    assert_eq!(result.is_none(), true);
+    assert_eq!(result.managers.is_empty(), true);
+    assert_eq!(result.environments.is_empty(), true);
 }
 
 #[test]
@@ -40,6 +44,7 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
     };
     use pet_pyenv;
     use pet_pyenv::PyEnv;
+    use pet_reporter::test::create_reporter;
     use serde_json::json;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -62,7 +67,9 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let result = locator.find().unwrap();
+    let reporter = create_reporter();
+    locator.find(&reporter);
+    let result = reporter.get_result();
 
     let managers = result.clone().managers;
     assert_eq!(managers.len(), 1);
@@ -90,6 +97,7 @@ fn find_pyenv_envs() {
     };
     use pet_pyenv;
     use pet_pyenv::PyEnv;
+    use pet_reporter::test::create_reporter;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
     let home = resolve_test_path(&["unix", "pyenv", "user_home"]);
@@ -114,7 +122,9 @@ fn find_pyenv_envs() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let mut result = locator.find().unwrap();
+    let reporter = create_reporter();
+    locator.find(&reporter);
+    let mut result = reporter.get_result();
 
     assert_eq!(result.managers.len(), 2);
 

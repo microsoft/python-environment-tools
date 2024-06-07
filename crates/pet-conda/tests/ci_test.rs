@@ -17,12 +17,14 @@ fn detect_conda_root() {
         manager::EnvManagerType, os_environment::EnvironmentApi,
         python_environment::PythonEnvironmentCategory, Locator,
     };
-    use std::path::PathBuf;
+    use pet_reporter::test::create_reporter;
 
     let env = EnvironmentApi::new();
 
+    let reporter = create_reporter();
     let conda = Conda::from(&env);
-    let result = conda.find().unwrap();
+    conda.find(&reporter);
+    let result = reporter.get_result();
 
     assert_eq!(result.managers.len(), 1);
 
@@ -92,6 +94,7 @@ fn detect_new_conda_env() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentCategory, Locator,
     };
+    use pet_reporter::test::create_reporter;
     use std::path::PathBuf;
 
     let env_name = "env_with_python";
@@ -102,7 +105,9 @@ fn detect_new_conda_env() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let result = conda.find().unwrap();
+    let reporter = create_reporter();
+    conda.find(&reporter);
+    let result = reporter.get_result();
 
     assert_eq!(result.managers.len(), 1);
 
@@ -191,6 +196,7 @@ fn detect_new_conda_env_without_python() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentCategory, Locator,
     };
+    use pet_reporter::test::create_reporter;
     use std::path::PathBuf;
 
     let env_name = "env_without_python";
@@ -198,7 +204,9 @@ fn detect_new_conda_env_without_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let result = conda.find().unwrap();
+    let reporter = create_reporter();
+    conda.find(&reporter);
+    let result = reporter.get_result();
 
     assert_eq!(result.managers.len(), 1);
 
@@ -238,6 +246,7 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentCategory, Locator,
     };
+    use pet_reporter::test::create_reporter;
     use std::path::PathBuf;
 
     let env_name = "env_without_python3";
@@ -246,7 +255,9 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let result = conda.find().unwrap();
+    let reporter = create_reporter();
+    conda.find(&reporter);
+    let result = reporter.get_result();
 
     assert_eq!(result.managers.len(), 1);
 
@@ -286,6 +297,7 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentCategory, Locator,
     };
+    use pet_reporter::test::create_reporter;
     use std::path::PathBuf;
 
     let env_name = "env_with_python3";
@@ -298,7 +310,9 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let result = conda.find().unwrap();
+    let reporter = create_reporter();
+    conda.find(&reporter);
+    let result = reporter.get_result();
 
     assert_eq!(result.managers.len(), 1);
 

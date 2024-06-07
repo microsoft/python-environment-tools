@@ -7,7 +7,8 @@ use environments::{get_project, is_virtualenvwrapper, list_python_environments};
 use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
-    Locator, LocatorResult,
+    reporter::Reporter,
+    Locator,
 };
 use pet_utils::{env::PythonEnv, headers::Headers};
 
@@ -57,22 +58,15 @@ impl Locator for VirtualEnvWrapper {
         )
     }
 
-    fn find(&self) -> Option<LocatorResult> {
-        let work_on_home = get_work_on_home_path(&self.env_vars)?;
-        let envs = list_python_environments(&work_on_home)?;
-        let mut environments: Vec<PythonEnvironment> = vec![];
-        envs.iter().for_each(|env| {
-            if let Some(env) = self.from(env) {
-                environments.push(env);
+    fn find(&self, reporter: &dyn Reporter) {
+        if let Some(work_on_home) = get_work_on_home_path(&self.env_vars) {
+            if let Some(envs) = list_python_environments(&work_on_home) {
+                envs.iter().for_each(|env| {
+                    if let Some(env) = self.from(env) {
+                        reporter.report_environment(&env);
+                    }
+                });
             }
-        });
-        if environments.is_empty() {
-            None
-        } else {
-            Some(LocatorResult {
-                managers: vec![],
-                environments,
-            })
         }
     }
 }

@@ -9,7 +9,8 @@ use crate::env_variables::EnvVariables;
 #[cfg(windows)]
 use environments::list_store_pythons;
 use pet_core::python_environment::PythonEnvironment;
-use pet_core::{os_environment::Environment, Locator, LocatorResult};
+use pet_core::reporter::Reporter;
+use pet_core::{os_environment::Environment, Locator};
 use pet_utils::env::PythonEnv;
 use std::path::Path;
 
@@ -46,19 +47,15 @@ impl Locator for WindowsStore {
         None
     }
 
-    fn find(&self) -> Option<LocatorResult> {
-        #[cfg(windows)]
-        let environments = list_store_pythons(&self.env_vars)?;
-        #[cfg(unix)]
-        let environments = vec![];
-
-        if environments.is_empty() {
-            None
-        } else {
-            Some(LocatorResult {
-                managers: vec![],
-                environments,
-            })
+    #[cfg(windows)]
+    fn find(&self, reporter: &dyn Reporter) {
+        if let Some(items) = list_store_pythons(&self.env_vars) {
+            items.iter().for_each(|e| reporter.report_environment(e))
         }
+    }
+
+    #[cfg(unix)]
+    fn find(&self, _reporter: &dyn Reporter) {
+        //
     }
 }

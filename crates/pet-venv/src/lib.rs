@@ -3,7 +3,8 @@
 
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
-    Locator, LocatorResult,
+    reporter::Reporter,
+    Locator,
 };
 use pet_utils::{env::PythonEnv, headers::Headers, pyvenv_cfg::PyVenvCfg};
 
@@ -60,9 +61,8 @@ impl Locator for Venv {
         }
     }
 
-    fn find(&self) -> Option<LocatorResult> {
+    fn find(&self, _reporter: &dyn Reporter) {
         // There are no common global locations for virtual environments.
         // We expect the user of this class to call `is_compatible`
-        None
     }
 }

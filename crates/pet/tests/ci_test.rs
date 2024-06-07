@@ -7,7 +7,6 @@ use pet_core::{
     arch::Architecture,
     python_environment::{PythonEnvironment, PythonEnvironmentCategory},
 };
-use pet_utils::env;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -30,14 +29,9 @@ fn verify_validity_of_discovered_envs() {
 
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
+    let result = reporter.get_result();
 
-    let environments = reporter
-        .reported_environments
-        .lock()
-        .unwrap()
-        .clone()
-        .into_values()
-        .collect::<Vec<_>>();
+    let environments = result.environments;
     let mut threads = vec![];
     for environment in environments {
         if environment.executable.is_none() {
@@ -63,14 +57,8 @@ fn check_if_virtualenvwrapper_exists() {
 
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
-
-    let environments = reporter
-        .reported_environments
-        .lock()
-        .unwrap()
-        .clone()
-        .into_values()
-        .collect::<Vec<_>>();
+    let result = reporter.get_result();
+    let environments = result.environments;
 
     assert!(
         environments.iter().any(
@@ -95,14 +83,8 @@ fn check_if_pyenv_virtualenv_exists() {
 
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
-
-    let environments = reporter
-        .reported_environments
-        .lock()
-        .unwrap()
-        .clone()
-        .into_values()
-        .collect::<Vec<_>>();
+    let result = reporter.get_result();
+    let environments = result.environments;
 
     assert!(
         environments.iter().any(
