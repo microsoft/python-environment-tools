@@ -49,9 +49,9 @@ impl Locator for WindowsStore {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        list_store_pythons(&self.env_vars)?
-            .iter()
-            .for_each(|e| reporter.report_environment(e));
+        if let Some(items) = list_store_pythons(&self.env_vars) {
+            items.iter().for_each(|e| reporter.report_environment(e))
+        }
     }
 
     #[cfg(unix)]
