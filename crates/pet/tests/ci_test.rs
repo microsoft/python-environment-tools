@@ -27,7 +27,6 @@ fn verify_validity_of_discovered_envs() {
     use pet::locators;
     use pet_reporter::test;
 
-    // stdio::initialize_logger(log::LevelFilter::Warn);
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
 
@@ -61,7 +60,6 @@ fn check_if_virtualenvwrapper_exists() {
     use pet::locators;
     use pet_reporter::test;
 
-    // stdio::initialize_logger(log::LevelFilter::Warn);
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
 
@@ -94,7 +92,6 @@ fn check_if_pyenv_virtualenv_exists() {
     use pet::locators;
     use pet_reporter::test;
 
-    // stdio::initialize_logger(log::LevelFilter::Warn);
     let reporter = test::create_reporter();
     locators::find_and_report_envs(&reporter);
 
