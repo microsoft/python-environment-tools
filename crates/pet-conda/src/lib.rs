@@ -219,7 +219,7 @@ impl Locator for Conda {
                         environments.insert(prefix.clone(), env.clone());
                         reporter.report_environment(&env);
                     }
-                    return Option::<()>::Some(())
+                    Option::<()>::Some(())
                 });
             }
         });
