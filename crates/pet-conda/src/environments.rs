@@ -172,6 +172,7 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
     // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
     // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
     // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+    println!("cmd_line: {:?}", cmd_line);
     let start_index = cmd_line.to_lowercase().find("# cmd:")? + "# cmd:".len();
     let end_index = cmd_line.to_lowercase().find(" create -")?;
     let cmd_line = PathBuf::from(cmd_line[start_index..end_index].trim().to_string());
