@@ -59,24 +59,24 @@ fn find_using_global_finders(reporter: &dyn Reporter) {
             let conda_locator3 = conda_locator.clone();
 
             // 1. windows store
-            thread::spawn(|| {
+            s.spawn(|| {
                 let environment = EnvironmentApi::new();
                 WindowsStore::from(&environment).find(reporter)
             });
             // 2. windows registry
-            thread::spawn(|| WindowsRegistry::from(conda_locator1).find(reporter));
+            s.spawn(|| WindowsRegistry::from(conda_locator1).find(reporter));
             // 3. virtualenvwrapper
-            thread::spawn(|| {
+            s.spawn(|| {
                 let environment = EnvironmentApi::new();
                 VirtualEnvWrapper::from(&environment).find(reporter)
             });
             // 4. pyenv
-            thread::spawn(|| {
+            s.spawn(|| {
                 let environment = EnvironmentApi::new();
                 PyEnv::from(&environment, conda_locator2).find(reporter)
             });
             // 5. conda
-            thread::spawn(|| conda_locator3.find(reporter));
+            s.spawn(move || conda_locator3.find(reporter));
         });
     }
 
