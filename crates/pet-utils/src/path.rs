@@ -39,7 +39,11 @@ pub fn normalize<P: AsRef<Path>>(path: P) -> PathBuf {
 pub fn resolve_symlink(exe: &Path) -> Option<PathBuf> {
     let name = exe.file_name()?.to_string_lossy();
     // In bin directory of homebrew, we have files like python-build, python-config, python3-config
-    if !name.starts_with("python") || name.ends_with("-config") || name.ends_with("-build") {
+    if name.ends_with("-config") || name.ends_with("-build") {
+        return None;
+    }
+    // We support resolving conda symlinks.
+    if !name.starts_with("python") && !name.starts_with("conda") {
         return None;
     }
 

@@ -172,7 +172,9 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
     let start_index = cmd_line.to_lowercase().find("# cmd:")? + "# cmd:".len();
     let end_index = cmd_line.to_lowercase().find(" create -")?;
     let cmd_line = PathBuf::from(cmd_line[start_index..end_index].trim().to_string());
-    println!("cmd_line resolved: {:?}", resolve_symlink(&cmd_line));
+    // Sometimes the path can be as follows, where `/usr/bin/conda` could be a symlink.
+    // cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
+    println!("cmd_line resolved: {:?}, {:?}", cmd_line, resolve_symlink(&cmd_line));
     if let Some(cmd_line) = cmd_line.parent() {
         if let Some(conda_dir) = cmd_line.file_name() {
             if conda_dir.to_ascii_lowercase() == "bin"
