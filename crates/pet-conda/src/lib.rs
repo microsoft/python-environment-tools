@@ -178,13 +178,25 @@ impl Locator for Conda {
                     // 3. We have a conda environment with a conda_dir (above we handled the case when its not found)
                     // We will try to get the manager for this conda_dir
                     let prefix = env.clone().prefix.clone();
+
+                    {
+                        // 3.1 Check if we have already reported this environment.
+                        // Closure to quickly release lock
+                        let environments = self.environments.lock().unwrap();
+                        if environments.contains_key(&env.prefix) {
+                            return None;
+                        }
+                    }
+
+
+                    // 4 Get the manager for this env.
                     let conda_dir = &env.conda_dir.clone()?;
                     let managers = self.managers.lock().unwrap();
                     let mut manager = managers.get(conda_dir).cloned();
                     drop(managers);
 
                     if manager.is_none() {
-                        // 3.1 Build the manager from the conda dir if we do not have it.
+                        // 4.1 Build the manager from the conda dir if we do not have it.
                         if let Some(conda_manager) = CondaManager::from(conda_dir) {
                             reporter.report_manager(&conda_manager.to_manager());
                             let mut managers = self.managers.lock().unwrap();
@@ -193,14 +205,7 @@ impl Locator for Conda {
                         }
                     }
 
-                    {
-                        // Closure to quickly release lock
-                        let environments = self.environments.lock().unwrap();
-                        if environments.contains_key(&env.prefix) {
-                            return None;
-                        }
-                    }
-
+                    // 5. Report this env.
                     if let Some(manager) = manager {
                         let env = env.to_python_environment(
                             Some(manager.conda_dir.clone()),
