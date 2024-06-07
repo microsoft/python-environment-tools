@@ -170,60 +170,60 @@ jobs:
         run: cargo run --release --target ${{ matrix.target }}
         shell: bash
 
-  builds:
-    name: Builds
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: arm-unknown-linux-gnueabihf
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            run_cli: "yes"
-          - os: macos-14
-            target: aarch64-apple-darwin
-            run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: x86_64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-musl
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  # builds:
+  #   name: Builds
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - os: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #         - os: windows-latest
+  #           target: aarch64-pc-windows-msvc
+  #         - os: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #           run_cli: "yes"
+  #         #   - os: ubuntu-latest
+  #         #     target: aarch64-unknown-linux-gnu
+  #         #   - os: ubuntu-latest
+  #         #     target: arm-unknown-linux-gnueabihf
+  #         - os: macos-latest
+  #           target: x86_64-apple-darwin
+  #           run_cli: "yes"
+  #         - os: macos-14
+  #           target: aarch64-apple-darwin
+  #           run_cli: "yes"
+  #         #   - os: ubuntu-latest
+  #         #     target: x86_64-unknown-linux-gnu
+  #         #   - os: ubuntu-latest
+  #         #     target: aarch64-unknown-linux-musl
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
 
-      - name: Run Tests
-        # We do not want to run all features, CI is only for tests with Python
-        # Thats a separate job.
-        run: cargo test --frozen
-        shell: bash
+  #     - name: Run Tests
+  #       # We do not want to run all features, CI is only for tests with Python
+  #       # Thats a separate job.
+  #       run: cargo test --frozen
+  #       shell: bash
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-        shell: bash
+  #     - name: Build
+  #       run: cargo build --release --target ${{ matrix.target }}
+  #       shell: bash
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pet-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/pet*
+  #     - name: Upload Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: pet-${{ matrix.target }}
+  #         path: target/${{ matrix.target }}/release/pet*

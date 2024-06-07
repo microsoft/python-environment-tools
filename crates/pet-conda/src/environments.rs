@@ -157,7 +157,9 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
             // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
             // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
             if let Some(conda_dir) = get_conda_dir_from_cmd(line.into()) {
-                return Some(conda_dir);
+                if is_conda_install(&conda_dir) {
+                    return Some(conda_dir);
+                }
             }
         }
     }
