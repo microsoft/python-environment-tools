@@ -1,14 +1,33 @@
-# Project
+# Python environment tools for Visual Studio Code
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
+Performant Python environment tooling and support, such as locating all global Python installs and virtual environments.
 
-As the maintainer of this project, please make a few updates:
+## Environment Types Supported 
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+- python.org
+- Windows Store
+- PyEnv
+- PyEnv-Win
+- PyEnv-Virtualenv
+- Conda
+- Miniconda
+- Miniforge
+- PipEnv
+- Homebrew
+- VirtualEnvWrapper
+- VirtualEnvWrapper-Win
+- Venv
+- VirtualEnv
+- Python on your PATH
+
+## Features 
+
+- Discovery of all global Python installs
+- Discovery of all Python virtual environments
+
+## Key Methodology
+
+Our approach prioritizes performance and efficiency by leveraging Rust. We minimize I/O operations by collecting all necessary environment information at once, which reduces repeated I/O and the need to spawn additional processes, significantly enhancing overall performance.
 
 ## Contributing
 
