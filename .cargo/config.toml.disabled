@@ -1,0 +1,9 @@
+# -Cehcont_guard: Enable EH Continuation Metadata (https://learn.microsoft.com/en-us/cpp/build/reference/guard-enable-eh-continuation-metadata).
+# -Ccontrol-flow-guard: Enable Control Flow Guard, needed for OneBranch's post-build analysis (https://learn.microsoft.com/en-us/cpp/build/reference/guard-enable-control-flow-guard).
+# -Ctarget-feature=+crt-static: Statically link the CRT (required to link the spectre-mitigated CRT).
+[target.'cfg(target_os = "windows")']
+rustflags = ["-Cehcont_guard", "-Ccontrol-flow-guard", "-Ctarget-feature=+crt-static"]
+
+# -Clink-args=/DYNAMICBASE /CETCOMPAT: Enable "shadow stack" (https://learn.microsoft.com/en-us/cpp/build/reference/cetcompat)
+[target.'cfg(all(target_os = "windows", any(target_arch = "i686", target_arch = "x86_64")))']
+rustflags = ["-Clink-args=/DYNAMICBASE /CETCOMPAT"]
