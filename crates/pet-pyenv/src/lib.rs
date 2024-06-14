@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use env_variables::EnvVariables;
 use environments::{
-    get_pure_python_environment, get_virtual_env_environment, list_pyenv_environments,
+    get_generic_environment, get_pure_python_environment, get_virtual_env_environment,
+    list_pyenv_environments,
 };
 use manager::PyEnvInfo;
 use pet_conda::CondaLocator;
@@ -16,7 +17,7 @@ use pet_core::{
     reporter::Reporter,
     Locator,
 };
-use pet_utils::env::PythonEnv;
+use pet_python_utils::env::PythonEnv;
 
 pub mod env_variables;
 mod environment_locations;
@@ -46,7 +47,6 @@ impl Locator for PyEnv {
         // If exe is Scripts/python.exe or bin/python.exe
         // Then env path is parent of Scripts or bin
         // & in pyenv case thats a directory inside `versions` folder.
-        let env_path = env.prefix.clone()?;
         let pyenv_info = PyEnvInfo::from(&self.env_vars);
         let mut manager: Option<EnvManager> = None;
         if let Some(ref exe) = pyenv_info.exe {
@@ -56,10 +56,14 @@ impl Locator for PyEnv {
 
         let versions = &pyenv_info.versions?;
         if env.executable.starts_with(versions) {
+            let env_path = env.prefix.clone()?;
             if let Some(env) = get_pure_python_environment(&env.executable, &env_path, &manager) {
                 return Some(env);
             } else if let Some(env) =
                 get_virtual_env_environment(&env.executable, &env_path, &manager)
+            {
+                return Some(env);
+            } else if let Some(env) = get_generic_environment(&env.executable, &env_path, &manager)
             {
                 return Some(env);
             }

@@ -5,7 +5,7 @@
 use environments::get_registry_pythons;
 use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{python_environment::PythonEnvironment, reporter::Reporter, Locator};
-use pet_utils::env::PythonEnv;
+use pet_python_utils::env::PythonEnv;
 use std::sync::Arc;
 
 mod environments;

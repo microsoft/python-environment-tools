@@ -12,10 +12,8 @@ use pet_core::{
     manager::EnvManager,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
 };
-use pet_utils::{
-    executable::find_executable,
-    path::{normalize, resolve_symlink},
-};
+use pet_fs::path::{norm_case, resolve_symlink};
+use pet_python_utils::executable::{find_executable, find_executables};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -64,6 +62,7 @@ impl CondaEnvironment {
             .version(self.version.clone())
             .prefix(Some(self.prefix.clone()))
             .arch(self.arch.clone())
+            .symlinks(Some(find_executables(&self.prefix)))
             .name(name.clone())
             .manager(conda_manager);
 
@@ -189,7 +188,7 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
                     // The casing in history might not be same as that on disc
                     // We do not want to have duplicates in different cases.
                     // & we'd like to preserve the case of the original path as on disc.
-                    return Some(normalize(conda_dir).to_path_buf());
+                    return Some(norm_case(conda_dir).to_path_buf());
                 }
             }
             // Sometimes we can have paths like
@@ -221,7 +220,7 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
             // The casing in history might not be same as that on disc
             // We do not want to have duplicates in different cases.
             // & we'd like to preserve the case of the original path as on disc.
-            return Some(normalize(&cmd_line).to_path_buf());
+            return Some(norm_case(&cmd_line).to_path_buf());
         }
     }
     None
@@ -246,7 +245,7 @@ pub fn get_activation_command(
             conda_exe,
             "run".to_string(),
             "-p".to_string(),
-            env.prefix.to_str().unwrap().to_string(),
+            env.prefix.to_str().unwrap_or_default().to_string(),
             "python".to_string(),
         ])
     }

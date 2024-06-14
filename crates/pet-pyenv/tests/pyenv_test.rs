@@ -98,6 +98,7 @@ fn find_pyenv_envs() {
     use pet_pyenv;
     use pet_pyenv::PyEnv;
     use pet_reporter::test::create_reporter;
+    use serde_json::json;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
     let home = resolve_test_path(&["unix", "pyenv", "user_home"]);
@@ -163,12 +164,16 @@ fn find_pyenv_envs() {
         ])),
         manager: Some(expected_pyenv_manager.clone()),
         arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/3.9.9/bin/python",
+        ])]),
         ..Default::default()
     };
     let expected_virtual_env = PythonEnvironment {
         display_name: None,
         project: None,
-        name: Some("my-virtual-env".to_string()),
+        name: None,
         executable: Some(resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env/bin/python",
@@ -181,6 +186,10 @@ fn find_pyenv_envs() {
         ])),
         manager: Some(expected_pyenv_manager.clone()),
         arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/my-virtual-env/bin/python",
+        ])]),
         ..Default::default()
     };
     let expected_3_12_1 = PythonEnvironment {
@@ -199,6 +208,10 @@ fn find_pyenv_envs() {
         ])),
         manager: Some(expected_pyenv_manager.clone()),
         arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/3.12.1/bin/python",
+        ])]),
         ..Default::default()
     };
     let expected_3_13_dev = PythonEnvironment {
@@ -217,6 +230,10 @@ fn find_pyenv_envs() {
         ])),
         manager: Some(expected_pyenv_manager.clone()),
         arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/3.13-dev/bin/python",
+        ])]),
         ..Default::default()
     };
     let expected_3_12_1a3 = PythonEnvironment {
@@ -235,6 +252,54 @@ fn find_pyenv_envs() {
         ])),
         manager: Some(expected_pyenv_manager.clone()),
         arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/3.12.1a3/bin/python",
+        ])]),
+        ..Default::default()
+    };
+    let expected_no_gil = PythonEnvironment {
+        display_name: None,
+        project: None,
+        name: None,
+        executable: Some(resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/nogil-3.9.10-1/bin/python",
+        ])),
+        category: PythonEnvironmentCategory::PyenvOther,
+        version: Some("3.9.10".to_string()),
+        prefix: Some(resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/nogil-3.9.10-1",
+        ])),
+        manager: Some(expected_pyenv_manager.clone()),
+        arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/nogil-3.9.10-1/bin/python",
+        ])]),
+        ..Default::default()
+    };
+    let expected_pypy = PythonEnvironment {
+        display_name: None,
+        project: None,
+        name: None,
+        executable: Some(resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/pypy3.9-7.3.15/bin/python",
+        ])),
+        category: PythonEnvironmentCategory::PyenvOther,
+        version: Some("3.9.18".to_string()),
+        prefix: Some(resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/pypy3.9-7.3.15",
+        ])),
+        manager: Some(expected_pyenv_manager.clone()),
+        arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/pypy3.9-7.3.15/bin/python",
+        ])]),
         ..Default::default()
     };
 
@@ -248,6 +313,7 @@ fn find_pyenv_envs() {
         prefix: Some(conda_dir.clone()),
         manager: Some(expected_conda_manager.clone()),
         arch: Some(Architecture::X64),
+        symlinks: Some(vec![conda_dir.join("bin").join("python")]),
         ..Default::default()
     };
     let expected_conda_one = PythonEnvironment {
@@ -260,6 +326,7 @@ fn find_pyenv_envs() {
         prefix: Some(conda_dir.join("envs").join("one")),
         manager: Some(expected_conda_manager.clone()),
         arch: None,
+        symlinks: Some(vec![conda_dir.join("envs").join("one").join("python")]),
         ..Default::default()
     };
     let expected_conda_two = PythonEnvironment {
@@ -271,6 +338,7 @@ fn find_pyenv_envs() {
         version: Some("3.11.1".to_string()),
         prefix: Some(conda_dir.join("envs").join("two")),
         manager: Some(expected_conda_manager.clone()),
+        symlinks: Some(vec![conda_dir.join("envs").join("two").join("python")]),
         arch: None,
         ..Default::default()
     };
@@ -284,10 +352,12 @@ fn find_pyenv_envs() {
         expected_conda_root,
         expected_conda_one,
         expected_conda_two,
+        expected_no_gil,
+        expected_pypy,
     ];
     expected_envs.sort();
     result.environments.sort();
-    assert_eq!(expected_envs, result.environments);
+    assert_eq!(json!(expected_envs), json!(result.environments));
 }
 
 #[test]
@@ -304,7 +374,7 @@ fn resolve_pyenv_environment() {
     };
     use pet_pyenv;
     use pet_pyenv::PyEnv;
-    use pet_utils::env::PythonEnv;
+    use pet_python_utils::env::PythonEnv;
     use std::{collections::HashMap, sync::Arc};
 
     let home = resolve_test_path(&["unix", "pyenv", "user_home"]);
@@ -324,14 +394,13 @@ fn resolve_pyenv_environment() {
         tool: EnvManagerType::Pyenv,
     };
 
+    let executable =
+        resolve_test_path(&[home.to_str().unwrap(), ".pyenv/versions/3.9.9/bin/python"]);
     let expected_3_9_9 = PythonEnvironment {
         display_name: None,
         project: None,
         name: None,
-        executable: Some(resolve_test_path(&[
-            home.to_str().unwrap(),
-            ".pyenv/versions/3.9.9/bin/python",
-        ])),
+        executable: Some(executable.clone()),
         category: PythonEnvironmentCategory::Pyenv,
         version: Some("3.9.9".to_string()),
         prefix: Some(resolve_test_path(&[
@@ -340,12 +409,13 @@ fn resolve_pyenv_environment() {
         ])),
         manager: Some(expected_manager.clone()),
         arch: None,
+        symlinks: Some(vec![executable]),
         ..Default::default()
     };
     let expected_virtual_env = PythonEnvironment {
         display_name: None,
         project: None,
-        name: Some("my-virtual-env".to_string()),
+        name: None,
         executable: Some(resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env/bin/python",
@@ -358,51 +428,52 @@ fn resolve_pyenv_environment() {
         ])),
         manager: Some(expected_manager.clone()),
         arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/my-virtual-env/bin/python",
+        ])]),
         ..Default::default()
     };
 
     // Resolve regular Python installs in Pyenv
-    let result = locator.from(&PythonEnv {
-        executable: resolve_test_path(&[
-            home.to_str().unwrap(),
-            ".pyenv/versions/3.9.9/bin/python",
-        ]),
-        prefix: Some(resolve_test_path(&[
+    let result = locator.from(&PythonEnv::new(
+        resolve_test_path(&[home.to_str().unwrap(), ".pyenv/versions/3.9.9/bin/python"]),
+        Some(resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/3.9.9",
         ])),
-        version: None,
-    });
+        None,
+    ));
 
     assert_eq!(result.unwrap(), expected_3_9_9);
 
     // Resolve regular virtual-envs in Pyenv
-    let result = locator.from(&PythonEnv {
-        executable: resolve_test_path(&[
+    let result = locator.from(&PythonEnv::new(
+        resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env/bin/python",
         ]),
-        prefix: Some(resolve_test_path(&[
+        Some(resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env",
         ])),
-        version: None,
-    });
+        None,
+    ));
 
     assert_eq!(result.unwrap(), expected_virtual_env);
 
-    // Should not resolve conda envs in pyenv
-    let result = locator.from(&PythonEnv {
-        executable: resolve_test_path(&[
+    // Should resolve conda envs in pyenv
+    let result = locator.from(&PythonEnv::new(
+        resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/anaconda-4.0.0/bin/python",
         ]),
-        prefix: Some(resolve_test_path(&[
+        Some(resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/anaconda-4.0.0",
         ])),
-        version: None,
-    });
+        None,
+    ));
 
-    assert_eq!(result.is_none(), true);
+    assert_eq!(result.is_some(), true);
 }

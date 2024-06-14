@@ -59,7 +59,7 @@ fn detect_conda_root_from_path() {
         manager::EnvManagerType, os_environment::EnvironmentApi,
         python_environment::PythonEnvironmentCategory, Locator,
     };
-    use pet_utils::env::PythonEnv;
+    use pet_python_utils::env::PythonEnv;
     use std::path::PathBuf;
 
     let env = EnvironmentApi::new();
@@ -151,7 +151,7 @@ fn detect_conda_env_from_path() {
         manager::EnvManagerType, os_environment::EnvironmentApi,
         python_environment::PythonEnvironmentCategory, Locator,
     };
-    use pet_utils::env::PythonEnv;
+    use pet_python_utils::env::PythonEnv;
     use std::path::PathBuf;
 
     let env = EnvironmentApi::new();

@@ -65,7 +65,13 @@ fn check_if_virtualenvwrapper_exists() {
             |env| env.category == PythonEnvironmentCategory::VirtualEnvWrapper
                 && env.executable.is_some()
                 && env.prefix.is_some()
-                && env.name.clone().unwrap_or_default() == "venv_wrapper_env1"
+                && env
+                    .executable
+                    .clone()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default()
+                    .contains("venv_wrapper_env1")
         ),
         "Virtualenvwrapper environment not found, found: {:?}",
         environments
@@ -92,7 +98,13 @@ fn check_if_pyenv_virtualenv_exists() {
                 && env.executable.is_some()
                 && env.prefix.is_some()
                 && env.manager.is_some()
-                && env.name.clone().unwrap_or_default() == "pyenv-virtualenv-env1"
+                && env
+                    .executable
+                    .clone()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default()
+                    .contains("pyenv-virtualenv-env1")
         ),
         "pyenv-virtualenv environment not found, found: {:?}",
         environments

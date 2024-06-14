@@ -41,7 +41,11 @@ impl Reporter for TestReporter {
     fn report_environment(&self, env: &PythonEnvironment) {
         if let Some(key) = get_environment_key(env) {
             let mut reported_environments = self.environments.lock().unwrap();
-            if !reported_environments.contains_key(key) {
+            if !reported_environments.contains_key(&key) {
+                // TODO: Sometimes its possible the exe here is actually some symlink that we have no idea about.
+                // Hence we'll need to go through the list of reported envs and see if we can find a match.
+                // If we do find a match, then ensure we update the symlinks
+                // & if necessary update the other information.
                 reported_environments.insert(key.clone(), env.clone());
             }
         }

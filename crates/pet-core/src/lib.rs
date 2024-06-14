@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use manager::EnvManager;
-use pet_utils::env::PythonEnv;
+use pet_python_utils::env::PythonEnv;
 use python_environment::PythonEnvironment;
 use reporter::Reporter;
 

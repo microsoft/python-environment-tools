@@ -9,6 +9,7 @@ pub enum Architecture {
     X64,
     X86,
 }
+
 impl Ord for Architecture {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         format!("{:?}", self).cmp(&format!("{:?}", other))

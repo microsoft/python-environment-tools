@@ -10,7 +10,7 @@ use pet_core::{
     os_environment::Environment, python_environment::PythonEnvironment, reporter::Reporter,
     Locator, LocatorResult,
 };
-use pet_utils::env::PythonEnv;
+use pet_python_utils::env::PythonEnv;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -30,7 +30,6 @@ pub mod utils;
 pub trait CondaLocator: Send + Sync {
     fn find_in(&self, path: &Path) -> Option<LocatorResult>;
 }
-
 pub struct Conda {
     pub environments: Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
     pub managers: Arc<Mutex<HashMap<PathBuf, CondaManager>>>,
@@ -38,7 +37,7 @@ pub struct Conda {
 }
 
 impl Conda {
-    pub fn from(env: &dyn Environment) -> impl CondaLocator + Locator {
+    pub fn from(env: &dyn Environment) -> Conda {
         Conda {
             environments: Arc::new(Mutex::new(HashMap::new())),
             managers: Arc::new(Mutex::new(HashMap::new())),

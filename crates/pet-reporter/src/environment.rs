@@ -16,10 +16,13 @@ use crate::manager::Manager;
 fn python_category_to_string(category: &PythonEnvironmentCategory) -> &'static str {
     match category {
         PythonEnvironmentCategory::System => "system",
+        PythonEnvironmentCategory::MacCommandLineTools => "mac-command-line-tools",
+        PythonEnvironmentCategory::MacPythonOrg => "mac-python-org",
         PythonEnvironmentCategory::Homebrew => "homebrew",
         PythonEnvironmentCategory::Conda => "conda",
         PythonEnvironmentCategory::Pyenv => "pyenv",
         PythonEnvironmentCategory::PyenvVirtualEnv => "pyenv-virtualenv",
+        PythonEnvironmentCategory::PyenvOther => "pyenv-other",
         PythonEnvironmentCategory::WindowsStore => "windows-store",
         PythonEnvironmentCategory::WindowsRegistry => "windows-registry",
         PythonEnvironmentCategory::Pipenv => "pipenv",
@@ -94,6 +97,25 @@ impl std::fmt::Display for Environment {
             )
             .unwrap_or_default();
         }
+        if let Some(symlinks) = &self.symlinks {
+            let mut symlinks = symlinks.clone();
+            symlinks.sort_by(|a, b| {
+                a.to_str()
+                    .unwrap_or_default()
+                    .len()
+                    .cmp(&b.to_str().unwrap_or_default().len())
+            });
+
+            if !symlinks.is_empty() {
+                for (i, symlink) in symlinks.iter().enumerate() {
+                    if i == 0 {
+                        writeln!(f, "   Symlinks    : {:?}", symlink).unwrap_or_default();
+                    } else {
+                        writeln!(f, "               : {:?}", symlink).unwrap_or_default();
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -118,11 +140,20 @@ impl Environment {
     }
 }
 
-pub fn get_environment_key(env: &PythonEnvironment) -> Option<&PathBuf> {
+pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
     if let Some(exe) = &env.executable {
-        Some(exe)
+        Some(exe.clone())
     } else if let Some(prefix) = &env.prefix {
-        Some(prefix)
+        // If this is a conda env without Python, then the exe will be prefix/bin/python
+        if env.category == PythonEnvironmentCategory::Conda {
+            Some(prefix.join("bin").join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            }))
+        } else {
+            Some(prefix.clone())
+        }
     } else {
         error!(
             "Failed to report environment due to lack of exe & prefix: {:?}",

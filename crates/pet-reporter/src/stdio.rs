@@ -33,7 +33,7 @@ impl Reporter for StdioReporter {
     fn report_environment(&self, env: &PythonEnvironment) {
         if let Some(key) = get_environment_key(env) {
             let mut reported_environments = self.reported_environments.lock().unwrap();
-            if !reported_environments.contains(key) {
+            if !reported_environments.contains(&key) {
                 reported_environments.insert(key.clone());
                 let prefix = format!("{}.", reported_environments.len());
                 println!("{:<3}{}", prefix, Environment::from(env))
