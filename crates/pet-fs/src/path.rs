@@ -38,8 +38,8 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
 
 // Resolves symlinks to the real file.
 // If the real file == exe, then it is not a symlink.
-pub fn resolve_symlink(exe: &Path) -> Option<PathBuf> {
-    let name = exe.file_name()?.to_string_lossy();
+pub fn resolve_symlink<T: AsRef<Path>>(exe: &T) -> Option<PathBuf> {
+    let name = exe.as_ref().file_name()?.to_string_lossy();
     // In bin directory of homebrew, we have files like python-build, python-config, python3-config
     if name.ends_with("-config") || name.ends_with("-build") {
         return None;
@@ -56,7 +56,7 @@ pub fn resolve_symlink(exe: &Path) -> Option<PathBuf> {
         return None;
     }
     if let Ok(readlink) = std::fs::canonicalize(exe) {
-        if readlink == exe {
+        if readlink == exe.as_ref().to_path_buf() {
             None
         } else {
             Some(readlink)

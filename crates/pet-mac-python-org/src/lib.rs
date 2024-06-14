@@ -39,42 +39,39 @@ impl Locator for MacPythonOrg {
             return None;
         }
 
+        let mut version_is_current = false;
         let mut symlinks = vec![executable.clone(), env.executable.clone()];
         if executable.starts_with("/Library/Frameworks/Python.framework/Versions/Current") {
             // This is a symlink to the python executable, lets resolve it
-            if let Some(exe) = resolve_symlink(&env.executable) {
+            let exe_to_resolve =
+                "/Library/Frameworks/Python.framework/Versions/Current/bin/python3";
+            if let Some(exe) = resolve_symlink(&exe_to_resolve) {
                 if exe.starts_with("/Library/Frameworks/Python.framework/Versions")
                     && !exe.starts_with("/Library/Frameworks/Python.framework/Versions/Current")
                 {
+                    // Given that the exe we were given is the `Current/bin/python`, we know this is current.
+                    version_is_current = true;
                     symlinks.push(exe.clone());
+                    symlinks.push(PathBuf::from(exe_to_resolve));
                     executable = exe;
+                }
+            }
+        } else {
+            // Check if this is the current version.
+            let exe_to_resolve =
+                "/Library/Frameworks/Python.framework/Versions/Current/bin/python3";
+            if let Some(exe) = resolve_symlink(&exe_to_resolve) {
+                if exe == executable {
+                    // Yes, this is the current version
+                    version_is_current = true;
+                    symlinks.push(exe.clone());
+                    symlinks.push(PathBuf::from(exe_to_resolve));
                 }
             }
         }
 
         let prefix = executable.parent()?.parent()?;
         let version = version::from_header_files(prefix)?;
-
-        // We know files in /usr/local/bin & /Library/Frameworks/Python.framework/Versions/Current/bin end up being symlinks to this python exe as well
-        // Documented here https://docs.python.org/3/using/mac.html
-        // Hence look for those symlinks as well.
-        println!("MACOS Checking symlink for 1. {:?}", env.executable);
-        println!("MACOS Checking symlink for 2. {:?}", executable);
-
-        for bin in [
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/Library/Frameworks/Python.framework/Versions/Current/bin"),
-        ] {
-            for file in find_executables(&bin) {
-                println!("MACOS Checking symlink {:?}", file);
-                if let Some(symlink) = resolve_symlink(&file) {
-                    println!("MACOS Correct symlink found {:?}", file);
-                    if symlinks.contains(&symlink) {
-                        symlinks.push(file);
-                    }
-                }
-            }
-        }
 
         // Also look for other python* files in the same directory as the above executable
         for exe in find_executables(executable.parent()?) {
@@ -84,6 +81,32 @@ impl Locator for MacPythonOrg {
             if let Some(symlink) = resolve_symlink(&exe) {
                 if symlinks.contains(&symlink) {
                     symlinks.push(exe);
+                }
+            }
+        }
+
+        // We know files in /usr/local/bin & /Library/Frameworks/Python.framework/Versions/Current/bin end up being symlinks to this python exe as well
+        // Documented here https://docs.python.org/3/using/mac.html
+        // Hence look for those symlinks as well.
+        for bin in [
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/Library/Frameworks/Python.framework/Versions/Current/bin"),
+        ] {
+            for file in find_executables(&bin) {
+                // If we're looking in the `Current/bin`, then no need to resolve symlinks
+                // As we already know this is the current version.
+                // Note: We can resolve the symlink for /Library/Frameworks/Python.framework/Versions/Current/bin/python3
+                // However in rust for some reason we cannot resolve the symlink for /Library/Frameworks/Python.framework/Versions/Current/bin/python3.10
+                if version_is_current
+                    && file.starts_with("/Library/Frameworks/Python.framework/Versions/Current/bin")
+                {
+                    symlinks.push(file);
+                    continue;
+                }
+                if let Some(symlink) = resolve_symlink(&file) {
+                    if symlinks.contains(&symlink) {
+                        symlinks.push(file);
+                    }
                 }
             }
         }

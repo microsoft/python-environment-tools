@@ -56,7 +56,7 @@ fn get_python_exe_used_to_create_venv<T: AsRef<Path>>(executable: T) -> Option<P
         return None;
     }
 
-    let symlink = resolve_symlink(executable.as_ref())?;
+    let symlink = resolve_symlink(&executable)?;
     if symlink.is_file() {
         Some(symlink)
     } else {
