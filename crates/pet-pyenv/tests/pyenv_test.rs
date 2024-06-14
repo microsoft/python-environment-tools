@@ -428,6 +428,10 @@ fn resolve_pyenv_environment() {
         ])),
         manager: Some(expected_manager.clone()),
         arch: None,
+        symlinks: Some(vec![resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/my-virtual-env/bin/python",
+        ])]),
         ..Default::default()
     };
 
