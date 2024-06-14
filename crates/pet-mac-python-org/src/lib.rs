@@ -94,14 +94,14 @@ impl Locator for MacPythonOrg {
         symlinks.sort();
         symlinks.dedup();
 
-        Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacPythonOrg)
-                .executable(Some(user_friendly_exe))
-                .version(Some(version))
-                .prefix(Some(prefix.to_path_buf()))
-                .symlinks(Some(symlinks))
-                .build(),
-        )
+        let env = PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacPythonOrg)
+            .executable(Some(user_friendly_exe))
+            .version(Some(version))
+            .prefix(Some(prefix.to_path_buf()))
+            .symlinks(Some(symlinks))
+            .build();
+        println!("MAC FROM Python {:?}", env);
+        Some(env)
     }
 
     fn find(&self, reporter: &dyn Reporter) {
