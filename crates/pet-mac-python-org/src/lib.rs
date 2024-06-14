@@ -31,16 +31,29 @@ impl Locator for MacPythonOrg {
             return None;
         }
 
-        let executable = resolve_symlink(&env.executable).unwrap_or(env.executable.clone());
+        let mut executable = resolve_symlink(&env.executable).unwrap_or(env.executable.clone());
         if !executable
             .to_string_lossy()
             .starts_with("/Library/Frameworks/Python.framework/Versions/")
         {
             return None;
         }
+
+        let mut symlinks = vec![executable.clone(), env.executable.clone()];
+        if executable.starts_with("/Library/Frameworks/Python.framework/Versions/Current") {
+            // This is a symlink to the python executable, lets resolve it
+            if let Some(exe) = resolve_symlink(&env.executable) {
+                if exe.starts_with("/Library/Frameworks/Python.framework/Versions")
+                    && !exe.starts_with("/Library/Frameworks/Python.framework/Versions/Current")
+                {
+                    symlinks.push(exe.clone());
+                    executable = exe;
+                }
+            }
+        }
+
         let prefix = executable.parent()?.parent()?;
         let version = version::from_header_files(prefix)?;
-        let mut symlinks = vec![executable.clone(), env.executable.clone()];
 
         // We know files in /usr/local/bin & /Library/Frameworks/Python.framework/Versions/Current/bin end up being symlinks to this python exe as well
         // Documented here https://docs.python.org/3/using/mac.html
@@ -94,6 +107,15 @@ impl Locator for MacPythonOrg {
         if let Ok(reader) = fs::read_dir("/Library/Frameworks/Python.framework/Versions/") {
             for file in reader.filter_map(Result::ok) {
                 let prefix = file.path();
+                // Ignore the `/Library/Frameworks/Python.framework/Versions/Current` folder, as this only contains symlinks to the actual python installations
+                // We will account for the symlinks in these folder later
+                if prefix
+                    .to_string_lossy()
+                    .starts_with("/Library/Frameworks/Python.framework/Versions/Current")
+                {
+                    continue;
+                }
+
                 let executable = prefix.join("bin").join("python3");
                 let version = version::from_header_files(&prefix);
 
