@@ -95,6 +95,7 @@ impl Locator for MacPythonOrg {
                 let version = version::from_header_files(&prefix);
 
                 if let Some(env) = self.from(&PythonEnv::new(executable, Some(prefix), version)) {
+                    println!("MAC Python {:?}", env);
                     reporter.report_environment(&env);
                 }
             }
