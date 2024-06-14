@@ -8,6 +8,7 @@ winreg = "0.52.0"
 
 [dependencies]
 pet-core = { path = "../pet-core" }
+pet-fs = { path = "../pet-fs" }
 pet-python-utils = { path = "../pet-python-utils" }
 log = "0.4.21"
 lazy_static = "1.4.0"

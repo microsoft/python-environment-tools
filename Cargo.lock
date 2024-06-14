@@ -454,6 +454,7 @@ dependencies = [
  "lazy_static",
  "log",
  "pet-core",
+ "pet-fs",
  "pet-python-utils",
  "regex",
  "winreg",
