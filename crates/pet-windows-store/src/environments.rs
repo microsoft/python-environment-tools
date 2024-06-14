@@ -8,7 +8,7 @@ use lazy_static::lazy_static;
 #[cfg(windows)]
 use log::warn;
 #[cfg(windows)]
-use pet_core::path::norm_case;
+use pet_fs::path::norm_case;
 #[cfg(windows)]
 use pet_core::python_environment::PythonEnvironment;
 #[cfg(windows)]
@@ -49,7 +49,7 @@ impl PotentialPython {
         let exe = self.exe.clone().unwrap_or_default();
         let parent = path.parent()?.to_path_buf(); // This dir definitely exists.
         if let Some(result) = get_package_display_name_and_location(&name, hkcu) {
-            let env_path = normalize(&PathBuf::from(result.env_path));
+            let env_path = norm_case(&PathBuf::from(result.env_path));
 
             Some(
                 PythonEnvironmentBuilder::new(

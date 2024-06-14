@@ -12,6 +12,7 @@ lazy_static! {
 
 #[derive(Debug)]
 pub struct Headers {
+    #[allow(dead_code)]
     pub version: String,
 }
 
