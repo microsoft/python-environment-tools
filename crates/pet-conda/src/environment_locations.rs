@@ -161,7 +161,7 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
 
 #[cfg(windows)]
 pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
-    use pet_core::path::norm_case;
+    use pet_fs::path::norm_case;
 
     let user_profile = env_vars.userprofile.clone().unwrap_or_default();
     let program_data = env_vars.programdata.clone().unwrap_or_default();

@@ -4,14 +4,14 @@
 #[cfg(windows)]
 use pet_conda::CondaLocator;
 #[cfg(windows)]
-use pet_core::path::norm_case;
-#[cfg(windows)]
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
     python_environment::{PythonEnvironmentBuilder, PythonEnvironmentCategory},
     LocatorResult,
 };
+#[cfg(windows)]
+use pet_fs::path::norm_case;
 #[cfg(windows)]
 use pet_windows_store::is_windows_app_folder_in_program_files;
 #[cfg(windows)]
