@@ -97,8 +97,6 @@ fn find_using_global_finders(conda_locator: Arc<Conda>, reporter: &dyn Reporter)
         });
         // 5. conda
         s.spawn(move || conda_locator3.find(reporter));
-        // 6. Global Mac Python Org Installs
-        s.spawn(move || GlobalPython::new().find(reporter));
     });
 }
 

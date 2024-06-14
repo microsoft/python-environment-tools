@@ -11,8 +11,6 @@ use pet_core::{
     LocatorResult,
 };
 #[cfg(windows)]
-use pet_fs::path::norm_case;
-#[cfg(windows)]
 use pet_windows_store::is_windows_app_folder_in_program_files;
 #[cfg(windows)]
 use std::{path::PathBuf, sync::Arc};
