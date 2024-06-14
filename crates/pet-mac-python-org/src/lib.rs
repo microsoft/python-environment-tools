@@ -42,15 +42,18 @@ impl Locator for MacPythonOrg {
         let version = version::from_header_files(prefix)?;
         let mut symlinks = vec![executable.clone(), env.executable.clone()];
 
-        // We know files in /usr/local/bin end up being symlinks to this python exe as well
+        // We know files in /usr/local/bin & /Library/Frameworks/Python.framework/Versions/Current/bin end up being symlinks to this python exe as well
         // Documented here https://docs.python.org/3/using/mac.html
         // Hence look for those symlinks as well.
-        let local_bin = PathBuf::from("/usr/local/bin");
-        for file in fs::read_dir(local_bin).ok()?.filter_map(Result::ok) {
-            let file = file.path();
-            if let Some(symlink) = resolve_symlink(&file) {
-                if symlinks.contains(&symlink) {
-                    symlinks.push(file);
+        for bin in [
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/Library/Frameworks/Python.framework/Versions/Current/bin"),
+        ] {
+            for file in find_executables(&bin) {
+                if let Some(symlink) = resolve_symlink(&file) {
+                    if symlinks.contains(&symlink) {
+                        symlinks.push(file);
+                    }
                 }
             }
         }
