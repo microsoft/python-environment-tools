@@ -85,6 +85,7 @@ fn get_registry_pythons_from_key_for_company(
     conda_locator: &Arc<dyn CondaLocator>,
 ) -> Option<LocatorResult> {
     use log::{trace, warn};
+    use pet_fs::path::norm_case;
 
     let mut managers: Vec<EnvManager> = vec![];
     let mut environments = vec![];
@@ -96,7 +97,7 @@ fn get_registry_pythons_from_key_for_company(
                     Ok(install_path_key) => {
                         let env_path: String =
                             install_path_key.get_value("").ok().unwrap_or_default();
-                        let env_path = normalize(&PathBuf::from(env_path));
+                        let env_path = norm_case(&PathBuf::from(env_path));
                         if is_windows_app_folder_in_program_files(&env_path) {
                             trace!(
                                 "Found Python ({}) in {}\\Software\\Python\\{}\\{}, but skipping as this is a Windows Store Python",
@@ -154,7 +155,7 @@ fn get_registry_pythons_from_key_for_company(
                             );
                             continue;
                         }
-                        let executable = normalize(&PathBuf::from(executable));
+                        let executable = norm_case(&PathBuf::from(executable));
                         if !executable.exists() {
                             warn!(
                                 "Python executable ({}) file not found for {}\\Software\\Python\\{}\\{}",
