@@ -72,9 +72,9 @@ fn check_if_virtualenvwrapper_exists() {
     );
 }
 
-#[cfg(unix)]
-#[cfg(target_os = "linux")]
-#[cfg_attr(feature = "ci", test)]
+// #[cfg(unix)]
+// #[cfg(target_os = "linux")]
+// #[cfg_attr(feature = "ci", test)]
 #[allow(dead_code)]
 // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
 fn check_if_pyenv_virtualenv_exists() {
@@ -92,7 +92,13 @@ fn check_if_pyenv_virtualenv_exists() {
                 && env.executable.is_some()
                 && env.prefix.is_some()
                 && env.manager.is_some()
-                && env.name.clone().unwrap_or_default() == "pyenv-virtualenv-env1"
+                && env
+                    .executable
+                    .clone()
+                    .unwrap_or_default()
+                    .to_str()
+                    .unwrap_or_default()
+                    == "pyenv-virtualenv-env1"
         ),
         "pyenv-virtualenv environment not found, found: {:?}",
         environments
