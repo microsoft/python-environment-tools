@@ -32,6 +32,7 @@ fn verify_validity_of_discovered_envs() {
     let result = reporter.get_result();
 
     let environments = result.environments;
+    println!("ALL Environments {:?}", environments);
     let mut threads = vec![];
     for environment in environments {
         if environment.executable.is_none() {
