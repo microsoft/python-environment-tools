@@ -18,11 +18,7 @@ fn is_venv_internal(env: &PythonEnv) -> Option<bool> {
     )
 }
 pub fn is_venv(env: &PythonEnv) -> bool {
-    if let Some(result) = is_venv_internal(env) {
-        result
-    } else {
-        false
-    }
+    is_venv_internal(env).unwrap_or_default()
 }
 pub struct Venv {}
 
