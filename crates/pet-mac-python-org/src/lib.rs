@@ -58,12 +58,17 @@ impl Locator for MacPythonOrg {
         // We know files in /usr/local/bin & /Library/Frameworks/Python.framework/Versions/Current/bin end up being symlinks to this python exe as well
         // Documented here https://docs.python.org/3/using/mac.html
         // Hence look for those symlinks as well.
+        println!("MACOS Checking symlink for 1. {:?}", env.executable);
+        println!("MACOS Checking symlink for 2. {:?}", executable);
+
         for bin in [
             PathBuf::from("/usr/local/bin"),
             PathBuf::from("/Library/Frameworks/Python.framework/Versions/Current/bin"),
         ] {
             for file in find_executables(&bin) {
+                println!("MACOS Checking symlink {:?}", file);
                 if let Some(symlink) = resolve_symlink(&file) {
+                    println!("MACOS Correct symlink found {:?}", file);
                     if symlinks.contains(&symlink) {
                         symlinks.push(file);
                     }
@@ -84,7 +89,7 @@ impl Locator for MacPythonOrg {
         }
 
         let user_friendly_exe =
-            get_shortest_executable(&Some(symlinks.clone())).unwrap_or(env.executable.clone());
+            get_shortest_executable(&Some(symlinks.clone())).unwrap_or(executable.clone());
 
         symlinks.sort();
         symlinks.dedup();
