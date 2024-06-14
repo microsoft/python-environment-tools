@@ -8,11 +8,11 @@ use lazy_static::lazy_static;
 #[cfg(windows)]
 use log::warn;
 #[cfg(windows)]
-use pet_fs::path::norm_case;
-#[cfg(windows)]
 use pet_core::python_environment::PythonEnvironment;
 #[cfg(windows)]
 use pet_core::{arch::Architecture, python_environment::PythonEnvironmentBuilder};
+#[cfg(windows)]
+use pet_fs::path::norm_case;
 #[cfg(windows)]
 use regex::Regex;
 use std::path::PathBuf;
