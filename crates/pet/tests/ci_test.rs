@@ -32,7 +32,6 @@ fn verify_validity_of_discovered_envs() {
     let result = reporter.get_result();
 
     let environments = result.environments;
-    println!("ALL Environments {:?}", environments);
     let mut threads = vec![];
     for environment in environments {
         if environment.executable.is_none() {
@@ -47,9 +46,9 @@ fn verify_validity_of_discovered_envs() {
     }
 }
 
-// #[cfg(unix)]
-// #[cfg(target_os = "linux")]
-// #[cfg_attr(feature = "ci", test)]
+#[cfg(unix)]
+#[cfg(target_os = "linux")]
+#[cfg_attr(feature = "ci", test)]
 #[allow(dead_code)]
 // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
 fn check_if_virtualenvwrapper_exists() {
