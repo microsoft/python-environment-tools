@@ -3,7 +3,7 @@
 
 use std::{env, path::PathBuf};
 
-use pet_utils::path::normalize;
+use pet_fs::path::norm_case;
 
 pub trait Environment {
     fn get_user_home(&self) -> Option<PathBuf>;
@@ -107,7 +107,7 @@ impl Environment for EnvironmentApi {
 fn get_user_home() -> Option<PathBuf> {
     let home = env::var("HOME").or_else(|_| env::var("USERPROFILE"));
     match home {
-        Ok(home) => Some(normalize(PathBuf::from(home))),
+        Ok(home) => Some(norm_case(PathBuf::from(home))),
         Err(_) => None,
     }
 }

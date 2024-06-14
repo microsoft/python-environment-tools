@@ -2,9 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::{env_variables::EnvVariables, environment_locations::get_work_on_home_path};
-use pet_utils::{
-    env::PythonEnv, executable::find_executable, path::normalize, pyvenv_cfg::PyVenvCfg,
-};
+use pet_fs::path::norm_case;
+use pet_python_utils::env::PythonEnv;
 use pet_virtualenv::is_virtualenv;
 use std::{fs, path::PathBuf};
 
@@ -28,32 +27,32 @@ pub fn is_virtualenvwrapper(env: &PythonEnv, environment: &EnvVariables) -> bool
 pub fn get_project(env: &PythonEnv) -> Option<PathBuf> {
     let project_file = env.prefix.clone()?.join(".project");
     let contents = fs::read_to_string(project_file).ok()?;
-    let project_folder = normalize(PathBuf::from(contents.trim().to_string()));
+    let project_folder = norm_case(PathBuf::from(contents.trim().to_string()));
     if fs::metadata(&project_folder).is_ok() {
-        Some(normalize(&project_folder))
+        Some(norm_case(&project_folder))
     } else {
         None
     }
 }
 
-pub fn list_python_environments(path: &PathBuf) -> Option<Vec<PythonEnv>> {
-    let mut python_envs: Vec<PythonEnv> = vec![];
-    for venv_dir in fs::read_dir(path)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-    {
-        if fs::metadata(&venv_dir).is_err() {
-            continue;
-        }
-        if let Some(executable) = find_executable(&venv_dir) {
-            python_envs.push(PythonEnv::new(
-                executable.clone(),
-                Some(venv_dir.clone()),
-                PyVenvCfg::find(&venv_dir).map(|cfg| cfg.version),
-            ));
-        }
-    }
+// pub fn list_python_environments(path: &PathBuf) -> Option<Vec<PythonEnv>> {
+//     let mut python_envs: Vec<PythonEnv> = vec![];
+//     for venv_dir in fs::read_dir(path)
+//         .ok()?
+//         .filter_map(Result::ok)
+//         .map(|e| e.path())
+//     {
+//         if fs::metadata(&venv_dir).is_err() {
+//             continue;
+//         }
+//         if let Some(executable) = find_executable(&venv_dir) {
+//             python_envs.push(PythonEnv::new(
+//                 executable.clone(),
+//                 Some(venv_dir.clone()),
+//                 version::from_pyvenv_cfg(&venv_dir),
+//             ));
+//         }
+//     }
 
-    Some(python_envs)
-}
+//     Some(python_envs)
+// }

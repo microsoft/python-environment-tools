@@ -11,14 +11,17 @@ pet-windows-registry = { path = "../pet-windows-registry" }
 pet-homebrew = { path = "../pet-homebrew" }
 
 [dependencies]
-pet-utils = { path = "../pet-utils" }
 pet-core = { path = "../pet-core" }
 pet-conda = { path = "../pet-conda" }
+pet-global = { path = "../pet-global" }
 pet-jsonrpc = { path = "../pet-jsonrpc" }
 pet-pyenv = { path = "../pet-pyenv" }
 pet-reporter = { path = "../pet-reporter" }
 pet-virtualenvwrapper = { path = "../pet-virtualenvwrapper" }
+pet-python-utils = { path = "../pet-python-utils" }
 pet-env-var-path = { path = "../pet-env-var-path" }
+pet-mac-commandlinetools = { path = "../pet-mac-commandlinetools" }
+pet-mac-python-org = { path = "../pet-mac-python-org" }
 pet-venv = { path = "../pet-venv" }
 pet-virtualenv = { path = "../pet-virtualenv" }
 pet-pipenv = { path = "../pet-pipenv" }

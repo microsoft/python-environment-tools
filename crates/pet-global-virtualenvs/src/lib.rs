@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_conda::utils::is_conda_env;
-use pet_utils::path::normalize;
+use pet_fs::path::norm_case;
 use std::{fs, path::PathBuf};
 
 fn get_global_virtualenv_dirs(
@@ -12,7 +12,7 @@ fn get_global_virtualenv_dirs(
     let mut venv_dirs: Vec<PathBuf> = vec![];
 
     if let Some(work_on_home) = work_on_home_env_var {
-        let work_on_home = normalize(PathBuf::from(work_on_home));
+        let work_on_home = norm_case(PathBuf::from(work_on_home));
         if fs::metadata(&work_on_home).is_ok() {
             venv_dirs.push(work_on_home);
         }
@@ -23,7 +23,7 @@ fn get_global_virtualenv_dirs(
             PathBuf::from("envs"),
             PathBuf::from(".direnv"),
             PathBuf::from(".venvs"), // Used by pipenv, https://pipenv.pypa.io/en/latest/virtualenv.html
-            PathBuf::from(".virtualenvs"), // Useb by virtualenvwrapper, https://virtualenvwrapper.readthedocs.io/en/latest/install.html#shell-startup-file
+            PathBuf::from(".virtualenvs"), // Default location for virtualenvwrapper, https://virtualenvwrapper.readthedocs.io/en/latest/install.html#location-of-environments
             PathBuf::from(".local").join("share").join("virtualenvs"),
         ] {
             let venv_dir = home.join(dir);
@@ -32,6 +32,8 @@ fn get_global_virtualenv_dirs(
             }
         }
         if cfg!(target_os = "linux") {
+            // https://virtualenvwrapper.readthedocs.io/en/latest/index.html
+            // Default recommended location for virtualenvwrapper
             let envs = PathBuf::from("Envs");
             if fs::metadata(&envs).is_ok() {
                 venv_dirs.push(envs);

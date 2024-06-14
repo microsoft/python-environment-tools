@@ -11,7 +11,7 @@ use environments::list_store_pythons;
 use pet_core::python_environment::PythonEnvironment;
 use pet_core::reporter::Reporter;
 use pet_core::{os_environment::Environment, Locator};
-use pet_utils::env::PythonEnv;
+use pet_python_utils::env::PythonEnv;
 use std::path::Path;
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {

@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 pet-core = { path = "../pet-core" }
-pet-utils = { path = "../pet-utils" }
 pet-jsonrpc = { path = "../pet-jsonrpc" }
 log = "0.4.21"
 env_logger = "0.10.2"

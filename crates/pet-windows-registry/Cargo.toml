@@ -8,8 +8,8 @@ winreg = "0.52.0"
 
 [dependencies]
 pet-windows-store = { path = "../pet-windows-store" }
+pet-python-utils = { path = "../pet-python-utils" }
 pet-core = { path = "../pet-core" }
-pet-utils = { path = "../pet-utils" }
 pet-conda = { path = "../pet-conda" }
 log = "0.4.21"
 lazy_static = "1.4.0"

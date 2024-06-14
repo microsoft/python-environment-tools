@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+pet-fs = { path = "../pet-fs" }
 pet-core = { path = "../pet-core" }
-pet-utils = { path = "../pet-utils" }
 pet-virtualenv = { path = "../pet-virtualenv" }
+pet-python-utils = { path = "../pet-python-utils" }
 log = "0.4.21"

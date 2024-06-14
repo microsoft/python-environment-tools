@@ -11,7 +11,7 @@ fn find_conda_env_without_manager() {
     use pet_core::{
         self, arch::Architecture, python_environment::PythonEnvironmentCategory, Locator,
     };
-    use pet_utils::env::PythonEnv;
+    use pet_python_utils::env::PythonEnv;
     use std::collections::HashMap;
 
     let environment = create_test_environment(HashMap::new(), None, vec![], None);
@@ -19,11 +19,11 @@ fn find_conda_env_without_manager() {
     let path = resolve_test_path(&["unix", "conda_env_without_manager", "env_python_3"]);
 
     let env = locator
-        .from(&PythonEnv {
-            executable: path.join("bin").join("python").into(),
-            prefix: path.clone().into(),
-            version: None,
-        })
+        .from(&PythonEnv::new(
+            path.join("bin").join("python").into(),
+            Some(path.clone().into()),
+            None,
+        ))
         .unwrap();
 
     assert_eq!(env.prefix, path.clone().into());
@@ -43,7 +43,7 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
     use pet_core::{
         self, arch::Architecture, python_environment::PythonEnvironmentCategory, Locator,
     };
-    use pet_utils::env::PythonEnv;
+    use pet_python_utils::env::PythonEnv;
     use std::{
         collections::HashMap,
         fs::{self},
@@ -70,11 +70,11 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
     fs::write(history_file, history_contents).unwrap();
 
     let env = locator
-        .from(&PythonEnv {
-            executable: path.join("bin").join("python").into(),
-            prefix: path.clone().into(),
-            version: None,
-        })
+        .from(&PythonEnv::new(
+            path.join("bin").join("python").into(),
+            Some(path.clone().into()),
+            None,
+        ))
         .unwrap();
 
     assert_eq!(env.prefix, path.clone().into());

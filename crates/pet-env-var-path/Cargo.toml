@@ -5,8 +5,9 @@ edition = "2021"
 
 [dependencies]
 pet-core = { path = "../pet-core" }
-pet-utils = { path = "../pet-utils" }
+pet-fs = { path = "../pet-fs" }
 pet-virtualenv = { path = "../pet-virtualenv" }
+pet-python-utils = { path = "../pet-python-utils" }
 pet-conda = { path = "../pet-conda" }
 log = "0.4.21"
 lazy_static = "1.4.0"

@@ -1,10 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
-
-use pet_utils::path::normalize;
+use pet_fs::path::norm_case;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 use crate::{arch::Architecture, manager::EnvManager};
 
@@ -14,10 +13,13 @@ use crate::{arch::Architecture, manager::EnvManager};
 pub enum PythonEnvironmentCategory {
     Conda,
     Homebrew,
-    Pyenv,
-    PyenvVirtualEnv,
+    Pyenv,           // Relates to Python installations in pyenv that are from Python org.
+    PyenvVirtualEnv, // Pyenv virtualenvs.
+    PyenvOther,      // Such as pyston, stackless, nogil, etc.
     Pipenv,
     System,
+    MacPythonOrg,
+    MacCommandLineTools,
     Unknown,
     Venv,
     VirtualEnv,
@@ -171,10 +173,11 @@ impl PythonEnvironmentBuilder {
         if let Some(exe) = executable {
             if let Some(parent) = exe.parent() {
                 if let Some(file_name) = exe.file_name() {
-                    self.executable = Some(normalize(parent).join(file_name))
+                    self.executable = Some(norm_case(parent).join(file_name))
                 }
             }
         }
+        self.update_symlinks(self.symlinks.clone());
         self
     }
 
@@ -186,7 +189,7 @@ impl PythonEnvironmentBuilder {
     pub fn prefix(mut self, prefix: Option<PathBuf>) -> Self {
         self.prefix.clone_from(&prefix);
         if let Some(resolved) = prefix {
-            self.prefix = Some(normalize(resolved))
+            self.prefix = Some(norm_case(resolved))
         }
         self
     }
@@ -199,7 +202,7 @@ impl PythonEnvironmentBuilder {
     pub fn project(mut self, project: Option<PathBuf>) -> Self {
         self.project.clone_from(&project);
         if let Some(resolved) = project {
-            self.project = Some(normalize(resolved))
+            self.project = Some(norm_case(resolved))
         }
         self
     }
@@ -210,8 +213,22 @@ impl PythonEnvironmentBuilder {
     }
 
     pub fn symlinks(mut self, symlinks: Option<Vec<PathBuf>>) -> Self {
-        self.symlinks = symlinks;
+        self.update_symlinks(symlinks);
         self
+    }
+
+    fn update_symlinks(&mut self, symlinks: Option<Vec<PathBuf>>) {
+        let mut all = vec![];
+        if let Some(ref exe) = self.executable {
+            all.push(exe.clone());
+        }
+        if let Some(symlinks) = symlinks {
+            all.extend(symlinks);
+        }
+        all.sort();
+        all.dedup();
+
+        self.symlinks = if all.is_empty() { None } else { Some(all) };
     }
 
     pub fn build(self) -> PythonEnvironment {

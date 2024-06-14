@@ -11,3 +11,4 @@ target/
 
 # Directory with generated environments (generally created on CI)
 tmp
+.DS_Store

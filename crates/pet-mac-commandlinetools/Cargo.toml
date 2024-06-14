@@ -1,0 +1,10 @@
+[package]
+name = "pet-mac-commandlinetools"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pet-core = { path = "../pet-core" }
+pet-python-utils = { path = "../pet-python-utils" }
+pet-fs = { path = "../pet-fs" }
+log = "0.4.21"
