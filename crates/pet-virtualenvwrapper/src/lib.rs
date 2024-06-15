@@ -36,7 +36,7 @@ impl Locator for VirtualEnvWrapper {
         let version = match env.version {
             Some(ref v) => Some(v.clone()),
             None => match &env.prefix {
-                Some(prefix) => version::from_header_files(prefix),
+                Some(prefix) => version::from_creator_for_virtual_env(prefix),
                 None => None,
             },
         };
