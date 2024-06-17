@@ -11,6 +11,7 @@ pub mod manager;
 pub mod os_environment;
 pub mod python_environment;
 pub mod reporter;
+// pub mod telemetry;
 
 #[derive(Debug, Clone)]
 pub struct LocatorResult {

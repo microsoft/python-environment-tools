@@ -28,7 +28,7 @@ impl Homebrew {
     }
 }
 
-fn resolve(env: &PythonEnv) -> Option<PythonEnvironment> {
+fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
     // Note: Sometimes if Python 3.10 was installed by other means (e.g. from python.org or other)
     // & then you install Python 3.10 via Homebrew, then some files will get installed via homebrew,
     // However everything (symlinks, Python executable `sys.executable`, `sys.prefix`) eventually point back to the existing installation.
@@ -83,7 +83,7 @@ fn resolve(env: &PythonEnv) -> Option<PythonEnvironment> {
 
 impl Locator for Homebrew {
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
-        resolve(env)
+        from(env)
     }
 
     fn find(&self, reporter: &dyn Reporter) {
@@ -112,7 +112,7 @@ impl Locator for Homebrew {
                         // However this is a very generic location, and we might end up with other python installs here.
                         // Hence call `resolve` to correctly identify homebrew python installs.
                         let env_to_resolve = PythonEnv::new(file.clone(), None, None);
-                        if let Some(env) = resolve(&env_to_resolve) {
+                        if let Some(env) = from(&env_to_resolve) {
                             reporter.report_environment(&env);
                         }
                     });

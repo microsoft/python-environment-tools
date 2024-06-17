@@ -20,26 +20,33 @@ use pet_python_utils::version;
 use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
+use std::fs;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::time::SystemTime;
-use std::{env, fs};
 use std::{sync::Arc, thread};
 
-pub fn find_and_report_envs(reporter: &dyn Reporter) {
-    info!("Started Refreshing Environments");
-    let now = SystemTime::now();
-    // let reporter = Arc::new(reporter);
+#[derive(Debug, Default, Clone)]
+pub struct Configuration {
+    pub search_paths: Option<Vec<PathBuf>>,
+    pub conda_executable: Option<PathBuf>,
+}
 
-    let environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&environment));
+pub fn find_and_report_envs(
+    reporter: &dyn Reporter,
+    conda_locator: Arc<Conda>,
+    configuration: Configuration,
+) {
+    info!("Started Refreshing Environments");
+
     let conda_locator1 = conda_locator.clone();
     let conda_locator2 = conda_locator.clone();
     let conda_locator3 = conda_locator.clone();
-
+    let search_paths = configuration.search_paths.unwrap_or_default();
     // 1. Find using known global locators.
     thread::scope(|s| {
-        s.spawn(|| find_using_global_finders(conda_locator1, reporter));
+        s.spawn(|| {
+            find_using_global_finders(conda_locator1, reporter);
+        });
         // Step 2: Search in some global locations for virtual envs.
         s.spawn(|| find_in_global_virtual_env_dirs(reporter));
         // Step 3: Finally find in the current PATH variable
@@ -53,10 +60,23 @@ pub fn find_and_report_envs(reporter: &dyn Reporter) {
             )
         });
         // Step 4: Find in workspace folders
-        s.spawn(|| find_python_environments_in_workspace_folders(conda_locator3, reporter));
+        s.spawn(|| {
+            if search_paths.is_empty() {
+                return;
+            }
+            trace!(
+                "Searching for environments in custom folders: {:?}",
+                search_paths
+            );
+            find_python_environments_in_workspace_folders_recursive(
+                conda_locator3,
+                search_paths,
+                reporter,
+                0,
+                1,
+            );
+        });
     });
-
-    reporter.report_completion(now.elapsed().unwrap_or_default());
 }
 
 #[cfg(windows)]
@@ -216,32 +236,6 @@ fn find_in_global_virtual_env_dirs(reporter: &dyn Reporter) {
     }
 }
 
-fn find_python_environments_in_workspace_folders(
-    conda_locator: Arc<Conda>,
-    reporter: &dyn Reporter,
-) {
-    // Exclude files from this folder, as they would have been discovered elsewhere (widows_store)
-    // Also the exe is merely a pointer to another file.
-    if let Ok(cwd) = env::current_dir() {
-        // Find in nested directories, at least 3 levels deep.
-        // PIPENV_MAX_DEPTH is set to 3
-        let environment = EnvironmentApi::new();
-        let max_depth = environment
-            .get_env_var("PIPENV_MAX_DEPTH".into())
-            .map(|v| v.parse::<u32>().unwrap_or(3))
-            .unwrap_or(3)
-            .max(1); // We want to look at least in 3 levels to support workspace folders.
-
-        find_python_environments_in_workspace_folders_recursive(
-            conda_locator.clone(),
-            vec![cwd.clone()],
-            reporter,
-            0,
-            max_depth,
-        );
-    }
-}
-
 fn find_python_environments_in_workspace_folders_recursive(
     conda_locator: Arc<Conda>,
     paths: Vec<PathBuf>,
@@ -314,6 +308,9 @@ fn find_python_environments(
     reporter: &dyn Reporter,
     is_workspace_folder: bool,
 ) {
+    if paths.is_empty() {
+        return;
+    }
     thread::scope(|s| {
         // Step 1: These environments take precedence over all others.
         // As they are very specific and guaranteed to be specific type.
