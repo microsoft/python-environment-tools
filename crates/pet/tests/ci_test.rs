@@ -22,13 +22,18 @@ mod common;
 #[allow(dead_code)]
 // We should detect the conda install along with the base env
 fn verify_validity_of_discovered_envs() {
-    use std::thread;
+    use std::{sync::Arc, thread};
 
     use pet::locators;
+    use pet_conda::Conda;
+    use pet_core::os_environment::EnvironmentApi;
     use pet_reporter::test;
 
     let reporter = test::create_reporter();
-    locators::find_and_report_envs(&reporter);
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
+
+    locators::find_and_report_envs(&reporter, conda_locator, Default::default());
     let result = reporter.get_result();
 
     let environments = result.environments;

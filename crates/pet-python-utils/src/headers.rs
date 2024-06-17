@@ -41,22 +41,24 @@ pub fn get_version(path: &Path) -> Option<String> {
         let mut contents = "".to_string();
         if let Ok(result) = fs::read_to_string(patchlevel_h) {
             contents = result;
-        } else if fs::metadata(&headers_path).is_err() {
+        } else if fs::metadata(&headers_path).is_err() { // TODO: Remove this check, unnecessary, as we try to read the dir below.
             // Such a path does not exist, get out.
             continue;
         } else {
             // Try the other path
             // Sometimes we have it in a sub directory such as `python3.10` or `pypy3.9`
             if let Ok(readdir) = fs::read_dir(&headers_path) {
-                for path in readdir.filter_map(Result::ok).map(|e| e.path()) {
-                    if let Ok(metadata) = fs::metadata(&path) {
-                        if metadata.is_dir() {
-                            let patchlevel_h = path.join("patchlevel.h");
-                            if let Ok(result) = fs::read_to_string(patchlevel_h) {
-                                contents = result;
-                                break;
-                            }
+                for path in readdir.filter_map(Result::ok) {
+                    if let Ok(t) = path.file_type() {
+                        if !t.is_dir() {
+                            continue;
                         }
+                    }
+                    let path = path.path();
+                    let patchlevel_h = path.join("patchlevel.h");
+                    if let Ok(result) = fs::read_to_string(patchlevel_h) {
+                        contents = result;
+                        break;
                     }
                 }
             }

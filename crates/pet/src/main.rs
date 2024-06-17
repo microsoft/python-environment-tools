@@ -2,7 +2,10 @@
 // Licensed under the MIT License.
 
 use clap::{Parser, Subcommand};
-use pet::{find_and_report_envs_jsonrpc, find_and_report_envs_stdio};
+use jsonrpc::start_jsonrpc_server;
+use pet::find_and_report_envs_stdio;
+
+mod jsonrpc;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -23,7 +26,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Server) => find_and_report_envs_jsonrpc(),
+        Some(Commands::Server) => start_jsonrpc_server(),
         _ => find_and_report_envs_stdio(),
     }
 }
