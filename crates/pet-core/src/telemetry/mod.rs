@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use inaccurate_python_info::InAccuratePythonEnvironmentInfo;
+use inaccurate_python_info::InaccuratePythonEnvironmentInfo;
 
 pub mod inaccurate_python_info;
 
