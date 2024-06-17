@@ -61,7 +61,10 @@ fn check_if_virtualenvwrapper_exists() {
     use pet_reporter::test;
 
     let reporter = test::create_reporter();
-    locators::find_and_report_envs(&reporter);
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
+
+    locators::find_and_report_envs(&reporter, conda_locator, Default::default());
     let result = reporter.get_result();
     let environments = result.environments;
 
@@ -93,7 +96,10 @@ fn check_if_pyenv_virtualenv_exists() {
     use pet_reporter::test;
 
     let reporter = test::create_reporter();
-    locators::find_and_report_envs(&reporter);
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
+
+    locators::find_and_report_envs(&reporter, conda_locator, Default::default());
     let result = reporter.get_result();
     let environments = result.environments;
 
