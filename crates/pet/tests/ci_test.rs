@@ -61,6 +61,7 @@ fn check_if_virtualenvwrapper_exists() {
     use pet_conda::Conda;
     use pet_core::os_environment::EnvironmentApi;
     use pet_reporter::test;
+    use std::sync::Arc;
 
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
@@ -98,6 +99,7 @@ fn check_if_pyenv_virtualenv_exists() {
     use pet_conda::Conda;
     use pet_core::os_environment::EnvironmentApi;
     use pet_reporter::test;
+    use std::sync::Arc;
 
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
