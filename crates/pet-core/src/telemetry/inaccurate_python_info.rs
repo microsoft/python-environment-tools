@@ -6,7 +6,7 @@ use crate::python_environment::PythonEnvironmentCategory;
 /// Information about an environment that was discovered to be inaccurate.
 /// If the discovered information is None, then it means that the information was not found.
 /// And we will not report that as an inaccuracy.
-pub struct InAccuratePythonEnvironmentInfo {
+pub struct InaccuratePythonEnvironmentInfo {
     /// Python Env category
     pub category: PythonEnvironmentCategory,
     /// Whether the actual exe is not what we expected.
