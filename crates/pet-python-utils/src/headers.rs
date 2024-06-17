@@ -41,7 +41,8 @@ pub fn get_version(path: &Path) -> Option<String> {
         let mut contents = "".to_string();
         if let Ok(result) = fs::read_to_string(patchlevel_h) {
             contents = result;
-        } else if fs::metadata(&headers_path).is_err() { // TODO: Remove this check, unnecessary, as we try to read the dir below.
+        } else if fs::metadata(&headers_path).is_err() {
+            // TODO: Remove this check, unnecessary, as we try to read the dir below.
             // Such a path does not exist, get out.
             continue;
         } else {
