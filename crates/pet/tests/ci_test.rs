@@ -58,6 +58,8 @@ fn verify_validity_of_discovered_envs() {
 // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
 fn check_if_virtualenvwrapper_exists() {
     use pet::locators;
+    use pet_conda::Conda;
+    use pet_core::os_environment::EnvironmentApi;
     use pet_reporter::test;
 
     let reporter = test::create_reporter();
@@ -93,6 +95,8 @@ fn check_if_virtualenvwrapper_exists() {
 // On linux we create a virtualenvwrapper environment named `venv_wrapper_env1`
 fn check_if_pyenv_virtualenv_exists() {
     use pet::locators;
+    use pet_conda::Conda;
+    use pet_core::os_environment::EnvironmentApi;
     use pet_reporter::test;
 
     let reporter = test::create_reporter();
