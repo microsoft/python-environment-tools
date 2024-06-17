@@ -7,7 +7,7 @@ use lazy_static::lazy_static;
 use log::warn;
 use pet_core::{
     python_environment::PythonEnvironment, reporter::Reporter,
-    telemetry::inaccurate_python_info::InAccuratePythonEnvironmentInfo,
+    telemetry::inaccurate_python_info::InaccuratePythonEnvironmentInfo,
 };
 use pet_fs::path::norm_case;
 use regex::Regex;
