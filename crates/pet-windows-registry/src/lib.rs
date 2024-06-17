@@ -6,7 +6,7 @@ use environments::get_registry_pythons;
 use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{python_environment::PythonEnvironment, reporter::Reporter, Locator};
 use pet_python_utils::env::PythonEnv;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 mod environments;
 
@@ -14,25 +14,27 @@ pub struct WindowsRegistry {
     #[allow(dead_code)]
     conda_locator: Arc<dyn CondaLocator>,
     #[allow(dead_code)]
-    environments: Arc<Mutex<Option<Vec<PythonEnvironment>>>>,
+    environments: Arc<RwLock<Option<Vec<PythonEnvironment>>>>,
 }
 
 impl WindowsRegistry {
     pub fn from(conda_locator: Arc<dyn CondaLocator>) -> WindowsRegistry {
         WindowsRegistry {
             conda_locator,
-            environments: Arc::new(Mutex::new(None)),
+            environments: Arc::new(RwLock::new(None)),
         }
     }
     #[cfg(windows)]
     fn find_with_cache(&self) -> Option<LocatorResult> {
-        let mut envs = self.environments.lock().unwrap();
+        let mut envs = self.environments.read().unwrap();
         if let Some(environments) = envs.as_ref() {
             Some(LocatorResult {
                 managers: vec![],
                 environments: environments.clone(),
             })
         } else {
+            drop(envs);
+            let mut envs = self.environments.write().unwrap();
             let result = get_registry_pythons();
             envs.replace(result.environments.clone());
 
@@ -65,8 +67,10 @@ impl Locator for WindowsRegistry {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        let mut envs = self.environments.lock().unwrap();
-        envs.clear();
+        let mut envs = self.environments.write().unwrap();
+        if envs.is_some() {
+            envs.take();
+        }
         let result = self.find_with_cache(&self.conda_locator);
         result
             .managers

@@ -13,7 +13,7 @@ use pet_core::reporter::Reporter;
 use pet_core::{os_environment::Environment, Locator};
 use pet_python_utils::env::PythonEnv;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
     path.to_str().unwrap_or_default().to_string().to_lowercase()[1..]
@@ -23,25 +23,33 @@ pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
 pub struct WindowsStore {
     pub env_vars: EnvVariables,
     #[allow(dead_code)]
-    environments: Arc<Mutex<Option<Vec<PythonEnvironment>>>>,
+    environments: Arc<RwLock<Option<Vec<PythonEnvironment>>>>,
 }
 
 impl WindowsStore {
     pub fn from(environment: &dyn Environment) -> WindowsStore {
         WindowsStore {
             env_vars: EnvVariables::from(environment),
-            environments: Arc::new(Mutex::new(None)),
+            environments: Arc::new(RwLock::new(None)),
         }
     }
     #[cfg(windows)]
     fn find_with_cache(&self) -> Option<Vec<PythonEnvironment>> {
-        let mut envs = self.environments.lock().unwrap();
+        let envs = self
+            .environments
+            .read()
+            .expect("Failed to read environments in windows store");
         if let Some(environments) = envs.as_ref() {
             return Some(environments.clone());
         } else {
+            drop(envs);
+            let mut envs = self
+                .environments
+                .write()
+                .expect("Failed to read environments in windows store");
             let environments = list_store_pythons(&self.env_vars)?;
             envs.replace(environments.clone());
-            environments
+            Some(environments)
         }
     }
 }
@@ -68,8 +76,11 @@ impl Locator for WindowsStore {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        let mut envs = self.environments.lock().unwrap();
-        envs.clear();
+        let mut envs = self.environments.write().unwrap();
+        if envs.is_some() {
+            envs.take();
+        }
+        drop(envs);
         if let Some(environments) = self.find_with_cache() {
             environments
                 .iter()
