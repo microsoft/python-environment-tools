@@ -7,7 +7,6 @@ use pet_core::python_environment::{
     PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory,
 };
 use pet_fs::path::resolve_symlink;
-use pet_python_utils::executable::get_shortest_executable;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 
@@ -20,14 +19,14 @@ pub fn get_python_info(
     python_exe_from_bin_dir: &Path,
     resolved_exe: &Path,
 ) -> Option<PythonEnvironment> {
-    let user_friendly_exe = python_exe_from_bin_dir;
+    // let user_friendly_exe = python_exe_from_bin_dir;
     let python_version = resolved_exe.to_string_lossy().to_string();
     let version = match PYTHON_VERSION.captures(&python_version) {
         Some(captures) => captures.get(1).map(|version| version.as_str().to_string()),
         None => None,
     };
 
-    let mut symlinks = vec![user_friendly_exe.to_path_buf()];
+    let mut symlinks = vec![python_exe_from_bin_dir.to_path_buf()];
     if let Some(version) = &version {
         symlinks.append(&mut get_known_symlinks(resolved_exe, version));
     }
@@ -45,11 +44,9 @@ pub fn get_python_info(
 
     symlinks.sort();
     symlinks.dedup();
-    let user_friendly_exe =
-        get_shortest_executable(&Some(symlinks.clone())).unwrap_or(user_friendly_exe.to_path_buf());
 
     let env = PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Homebrew)
-        .executable(Some(user_friendly_exe.to_path_buf()))
+        .executable(Some(python_exe_from_bin_dir.to_path_buf()))
         .version(version)
         .prefix(get_prefix(resolved_exe))
         .symlinks(Some(symlinks))

@@ -104,9 +104,6 @@ impl Conda {
 }
 
 impl Locator for Conda {
-    fn resolve(&self, _env: &PythonEnvironment) -> Option<PythonEnvironment> {
-        todo!()
-    }
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if let Some(ref path) = env.prefix {
             let mut environments = self.environments.lock().unwrap();
@@ -148,6 +145,11 @@ impl Locator for Conda {
     }
 
     fn find(&self, reporter: &dyn Reporter) {
+        // if we're calling this again, then clear what ever cache we have.
+        let mut environments = self.environments.lock().unwrap();
+        environments.clear();
+        drop(environments);
+
         let env_vars = self.env_vars.clone();
         thread::scope(|s| {
             // 1. Get a list of all know conda environments file paths

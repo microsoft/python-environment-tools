@@ -13,6 +13,7 @@ use pet_core::reporter::Reporter;
 use pet_core::{os_environment::Environment, Locator};
 use pet_python_utils::env::PythonEnv;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
     path.to_str().unwrap_or_default().to_string().to_lowercase()[1..]
@@ -21,36 +22,69 @@ pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
 
 pub struct WindowsStore {
     pub env_vars: EnvVariables,
+    #[allow(dead_code)]
+    environments: Arc<RwLock<Option<Vec<PythonEnvironment>>>>,
 }
 
 impl WindowsStore {
     pub fn from(environment: &dyn Environment) -> WindowsStore {
         WindowsStore {
             env_vars: EnvVariables::from(environment),
+            environments: Arc::new(RwLock::new(None)),
+        }
+    }
+    #[cfg(windows)]
+    fn find_with_cache(&self) -> Option<Vec<PythonEnvironment>> {
+        let envs = self
+            .environments
+            .read()
+            .expect("Failed to read environments in windows store");
+        if let Some(environments) = envs.as_ref() {
+            return Some(environments.clone());
+        } else {
+            drop(envs);
+            let mut envs = self
+                .environments
+                .write()
+                .expect("Failed to read environments in windows store");
+            let environments = list_store_pythons(&self.env_vars)?;
+            envs.replace(environments.clone());
+            Some(environments)
         }
     }
 }
 
 impl Locator for WindowsStore {
-    #[allow(unused_variables)]
+    #[cfg(windows)]
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
-        #[cfg(windows)]
-        let environments = list_store_pythons(&self.env_vars)?;
-        #[cfg(windows)]
-        for found_env in environments {
-            if let Some(ref python_executable_path) = found_env.executable {
-                if python_executable_path == &env.executable {
-                    return Some(found_env);
+        if let Some(environments) = self.find_with_cache() {
+            for found_env in environments {
+                if let Some(ref python_executable_path) = found_env.executable {
+                    if python_executable_path == &env.executable {
+                        return Some(found_env);
+                    }
                 }
             }
         }
         None
     }
 
+    #[cfg(unix)]
+    fn from(&self, _env: &PythonEnv) -> Option<PythonEnvironment> {
+        None
+    }
+
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        if let Some(items) = list_store_pythons(&self.env_vars) {
-            items.iter().for_each(|e| reporter.report_environment(e))
+        let mut envs = self.environments.write().unwrap();
+        if envs.is_some() {
+            envs.take();
+        }
+        drop(envs);
+        if let Some(environments) = self.find_with_cache() {
+            environments
+                .iter()
+                .for_each(|e| reporter.report_environment(e))
         }
     }
 

@@ -6,6 +6,8 @@ use pet_fs::path::norm_case;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+use crate::pyvenv_cfg::PyVenvCfg;
+
 #[derive(Debug)]
 pub struct PythonEnv {
     /// Executable of the Python environment.
@@ -32,6 +34,19 @@ impl PythonEnv {
         let mut prefix = prefix.clone();
         if let Some(value) = prefix {
             prefix = norm_case(value).into();
+        }
+        // if the prefix is not defined, try to get this.
+        // For instance, if the file is bin/python or Scripts/python
+        // And we have a pyvenv.cfg file in the parent directory, then we can get the prefix.
+        if prefix.is_none() {
+            let mut exe = executable.clone();
+            exe.pop();
+            if exe.ends_with("Scripts") || exe.ends_with("bin") {
+                exe.pop();
+                if PyVenvCfg::find(&exe).is_some() {
+                    prefix = Some(exe);
+                }
+            }
         }
         Self {
             executable: norm_case(executable),

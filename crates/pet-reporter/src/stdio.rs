@@ -1,10 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::{
-    environment::{get_environment_key, Environment},
-    manager::Manager,
-};
+use crate::environment::get_environment_key;
 use env_logger::Builder;
 use log::LevelFilter;
 use pet_core::{manager::EnvManager, python_environment::PythonEnvironment, reporter::Reporter};
@@ -26,7 +23,7 @@ impl Reporter for StdioReporter {
         if !reported_managers.contains(&manager.executable) {
             reported_managers.insert(manager.executable.clone());
             let prefix = format!("{}.", reported_managers.len());
-            println!("{:<3}{}", prefix, Manager::from(manager))
+            println!("{:<3}{}", prefix, manager)
         }
     }
 
@@ -36,7 +33,7 @@ impl Reporter for StdioReporter {
             if !reported_environments.contains(&key) {
                 reported_environments.insert(key.clone());
                 let prefix = format!("{}.", reported_environments.len());
-                println!("{:<3}{}", prefix, Environment::from(env))
+                println!("{:<3}{}", prefix, env)
             }
         }
     }

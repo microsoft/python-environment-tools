@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::core::send_error;
+use crate::send_error;
 use serde_json::{self, Value};
 use std::{
     collections::HashMap,

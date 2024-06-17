@@ -60,3 +60,19 @@ impl EnvManager {
         }
     }
 }
+
+impl std::fmt::Display for EnvManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "Manager ({:?})", self.tool).unwrap_or_default();
+        writeln!(
+            f,
+            "   Executable  : {}",
+            self.executable.to_str().unwrap_or_default()
+        )
+        .unwrap_or_default();
+        if let Some(version) = &self.version {
+            writeln!(f, "   Version     : {}", version).unwrap_or_default();
+        }
+        Ok(())
+    }
+}

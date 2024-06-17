@@ -8,7 +8,7 @@ use pet_core::{
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::env::PythonEnv;
-use pet_python_utils::executable::{find_executables, get_shortest_executable};
+use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
 use std::fs;
 use std::path::PathBuf;
@@ -111,15 +111,12 @@ impl Locator for MacPythonOrg {
             }
         }
 
-        let user_friendly_exe =
-            get_shortest_executable(&Some(symlinks.clone())).unwrap_or(executable.clone());
-
         symlinks.sort();
         symlinks.dedup();
 
         Some(
             PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacPythonOrg)
-                .executable(Some(user_friendly_exe))
+                .executable(Some(executable.clone()))
                 .version(Some(version))
                 .prefix(Some(prefix.to_path_buf()))
                 .symlinks(Some(symlinks))
