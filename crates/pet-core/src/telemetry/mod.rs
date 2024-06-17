@@ -21,5 +21,5 @@ pub enum TelemetryEvent {
     /// This is the max of all of the other `SearchCompleted` durations.
     SearchCompleted(std::time::Duration),
     /// Sent when an the information for an environment discovered is not accurate.
-    InaccuratePythonEnvironmentInfo(InAccuratePythonEnvironmentInfo),
+    InaccuratePythonEnvironmentInfo(InaccuratePythonEnvironmentInfo),
 }
