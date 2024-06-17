@@ -4,6 +4,8 @@
 #[cfg(windows)]
 use environments::get_registry_pythons;
 use pet_conda::{utils::is_conda_env, CondaLocator};
+#[cfg(windows)]
+use pet_core::LocatorResult;
 use pet_core::{python_environment::PythonEnvironment, reporter::Reporter, Locator};
 use pet_python_utils::env::PythonEnv;
 use std::sync::{Arc, RwLock};
@@ -35,7 +37,7 @@ impl WindowsRegistry {
         } else {
             drop(envs);
             let mut envs = self.environments.write().unwrap();
-            let result = get_registry_pythons();
+            let result = get_registry_pythons(&self.conda_locator)?;
             envs.replace(result.environments.clone());
 
             result
