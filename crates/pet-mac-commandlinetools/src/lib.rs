@@ -7,7 +7,6 @@ use pet_core::{
     Locator,
 };
 use pet_fs::path::resolve_symlink;
-use pet_python_utils::executable::get_shortest_executable;
 use pet_python_utils::version;
 use pet_python_utils::{
     env::{PythonEnv, ResolvedPythonEnv},
@@ -116,12 +115,10 @@ impl Locator for MacCmdLineTools {
                 prefix = Some(resolved_env.prefix);
             }
         }
-        let user_friendly_exe =
-            get_shortest_executable(&Some(symlinks.clone())).unwrap_or(env.executable.clone());
 
         Some(
             PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacCommandLineTools)
-                .executable(Some(user_friendly_exe))
+                .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(prefix)
                 .symlinks(Some(symlinks))

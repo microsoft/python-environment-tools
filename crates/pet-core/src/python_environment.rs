@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_fs::path::norm_case;
+use pet_python_utils::executable::get_shortest_executable;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -67,6 +68,7 @@ pub struct PythonEnvironment {
     // E.g. in the case of Homebrew there are a number of symlinks that are created.
     pub symlinks: Option<Vec<PathBuf>>,
 }
+
 impl Ord for PythonEnvironment {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         format!(
@@ -126,6 +128,68 @@ impl PythonEnvironment {
     }
 }
 
+impl std::fmt::Display for PythonEnvironment {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        writeln!(f, "Environment ({:?})", self.category).unwrap_or_default();
+        if let Some(name) = &self.display_name {
+            writeln!(f, "   Display-Name: {}", name).unwrap_or_default();
+        }
+        if let Some(name) = &self.name {
+            writeln!(f, "   Name        : {}", name).unwrap_or_default();
+        }
+        if let Some(exe) = &self.executable {
+            writeln!(f, "   Executable  : {}", exe.to_str().unwrap_or_default())
+                .unwrap_or_default();
+        }
+        if let Some(version) = &self.version {
+            writeln!(f, "   Version     : {}", version).unwrap_or_default();
+        }
+        if let Some(prefix) = &self.prefix {
+            writeln!(
+                f,
+                "   Prefix      : {}",
+                prefix.to_str().unwrap_or_default()
+            )
+            .unwrap_or_default();
+        }
+        if let Some(project) = &self.project {
+            writeln!(f, "   Project     : {}", project.to_str().unwrap()).unwrap_or_default();
+        }
+        if let Some(arch) = &self.arch {
+            writeln!(f, "   Architecture: {}", arch).unwrap_or_default();
+        }
+        if let Some(manager) = &self.manager {
+            writeln!(
+                f,
+                "   Manager     : {:?}, {}",
+                manager.tool,
+                manager.executable.to_str().unwrap_or_default()
+            )
+            .unwrap_or_default();
+        }
+        if let Some(symlinks) = &self.symlinks {
+            let mut symlinks = symlinks.clone();
+            symlinks.sort_by(|a, b| {
+                a.to_str()
+                    .unwrap_or_default()
+                    .len()
+                    .cmp(&b.to_str().unwrap_or_default().len())
+            });
+
+            if !symlinks.is_empty() {
+                for (i, symlink) in symlinks.iter().enumerate() {
+                    if i == 0 {
+                        writeln!(f, "   Symlinks    : {:?}", symlink).unwrap_or_default();
+                    } else {
+                        writeln!(f, "               : {:?}", symlink).unwrap_or_default();
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[derive(Debug)]
@@ -177,7 +241,7 @@ impl PythonEnvironmentBuilder {
                 }
             }
         }
-        self.update_symlinks(self.symlinks.clone());
+        self.update_symlinks_and_exe(self.symlinks.clone());
         self
     }
 
@@ -213,11 +277,11 @@ impl PythonEnvironmentBuilder {
     }
 
     pub fn symlinks(mut self, symlinks: Option<Vec<PathBuf>>) -> Self {
-        self.update_symlinks(symlinks);
+        self.update_symlinks_and_exe(symlinks);
         self
     }
 
-    fn update_symlinks(&mut self, symlinks: Option<Vec<PathBuf>>) {
+    fn update_symlinks_and_exe(&mut self, symlinks: Option<Vec<PathBuf>>) {
         let mut all = vec![];
         if let Some(ref exe) = self.executable {
             all.push(exe.clone());
@@ -228,7 +292,15 @@ impl PythonEnvironmentBuilder {
         all.sort();
         all.dedup();
 
-        self.symlinks = if all.is_empty() { None } else { Some(all) };
+        self.symlinks = if all.is_empty() {
+            None
+        } else {
+            Some(all.clone())
+        };
+        if let Some(executable) = &self.executable {
+            self.executable =
+                Some(get_shortest_executable(&Some(all.clone())).unwrap_or(executable.clone()));
+        }
     }
 
     pub fn build(self) -> PythonEnvironment {

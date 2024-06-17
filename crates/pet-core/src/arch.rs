@@ -20,3 +20,19 @@ impl PartialOrd for Architecture {
         Some(self.cmp(other))
     }
 }
+
+impl std::fmt::Display for Architecture {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            if *self == Architecture::X64 {
+                "x64"
+            } else {
+                "x86"
+            }
+        )
+        .unwrap_or_default();
+        Ok(())
+    }
+}

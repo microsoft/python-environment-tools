@@ -18,7 +18,7 @@ fn tool_to_string(tool: &EnvManagerType) -> &'static str {
 pub struct Manager {
     pub executable: PathBuf,
     pub version: Option<String>,
-    pub tool: &'static str,
+    pub tool: String,
 }
 
 impl Manager {
@@ -26,23 +26,7 @@ impl Manager {
         Manager {
             executable: env.executable.clone(),
             version: env.version.clone(),
-            tool: tool_to_string(&env.tool),
+            tool: tool_to_string(&env.tool).to_string(),
         }
-    }
-}
-
-impl std::fmt::Display for Manager {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "Manager ({})", self.tool).unwrap_or_default();
-        writeln!(
-            f,
-            "   Executable  : {}",
-            self.executable.to_str().unwrap_or_default()
-        )
-        .unwrap_or_default();
-        if let Some(version) = &self.version {
-            writeln!(f, "   Version     : {}", version).unwrap_or_default();
-        }
-        Ok(())
     }
 }

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use lazy_static::lazy_static;
+use log::trace;
 use regex::Regex;
 use std::{
     fs,
@@ -67,8 +68,7 @@ pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
         "python3"
     };
 
-    // Unfortunately we must enumerate
-    // E.g. on linux /home/linuxbrew/.linuxbrew/bin does not contain a `python` file
+    // On linux /home/linuxbrew/.linuxbrew/bin does not contain a `python` file
     // If you install python@3.10, then only a python3.10 exe is created in that bin directory.
     // As a compromise, we only enumerate if this is a bin directory and there are no python exes
     // Else enumerating entire directories is very expensive.
@@ -196,4 +196,40 @@ mod tests {
             PathBuf::from("pythonw3.exe").as_path()
         ));
     }
+}
+
+pub fn should_search_for_environments_in_path<P: AsRef<Path>>(path: &P) -> bool {
+    // Never search in the .git folder
+    // Never search in the node_modules folder
+    // Mostly copied from https://github.com/github/gitignore/blob/main/Python.gitignore
+    let folders_to_ignore = [
+        "node_modules",
+        ".git",
+        ".tox",
+        ".nox",
+        ".hypothesis",
+        ".ipynb_checkpoints",
+        ".eggs",
+        ".coverage",
+        ".cache",
+        ".pyre",
+        ".ptype",
+        ".pytest_cache",
+        "__pycache__",
+        "__pypackages__",
+        ".mypy_cache",
+        "cython_debug",
+        "env.bak",
+        "venv.bak",
+        "Scripts", // If the folder ends bin/scripts, then ignore it, as the parent is most likely an env.
+        "bin", // If the folder ends bin/scripts, then ignore it, as the parent is most likely an env.
+    ];
+    for folder in folders_to_ignore.iter() {
+        if path.as_ref().ends_with(folder) {
+            trace!("Ignoring folder: {:?}", path.as_ref());
+            return false;
+        }
+    }
+
+    true
 }

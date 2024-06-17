@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+use crate::manager::Manager;
 use log::error;
 use pet_core::{
     arch::Architecture,
@@ -8,8 +9,6 @@ use pet_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-
-use crate::manager::Manager;
 
 // We want to maintain full control over serialization instead of relying on the enums or the like.
 // Else its too easy to break the API by changing the enum variants.
@@ -49,75 +48,13 @@ pub struct Environment {
     pub display_name: Option<String>,
     pub name: Option<String>,
     pub executable: Option<PathBuf>,
-    pub category: &'static str,
+    pub category: String,
     pub version: Option<String>,
     pub prefix: Option<PathBuf>,
     pub manager: Option<Manager>,
     pub project: Option<PathBuf>,
-    pub arch: Option<&'static str>,
+    pub arch: Option<String>,
     pub symlinks: Option<Vec<PathBuf>>,
-}
-
-impl std::fmt::Display for Environment {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "Environment ({})", self.category).unwrap_or_default();
-        if let Some(name) = &self.display_name {
-            writeln!(f, "   Display-Name: {}", name).unwrap_or_default();
-        }
-        if let Some(name) = &self.name {
-            writeln!(f, "   Name        : {}", name).unwrap_or_default();
-        }
-        if let Some(exe) = &self.executable {
-            writeln!(f, "   Executable  : {}", exe.to_str().unwrap_or_default())
-                .unwrap_or_default();
-        }
-        if let Some(version) = &self.version {
-            writeln!(f, "   Version     : {}", version).unwrap_or_default();
-        }
-        if let Some(prefix) = &self.prefix {
-            writeln!(
-                f,
-                "   Prefix      : {}",
-                prefix.to_str().unwrap_or_default()
-            )
-            .unwrap_or_default();
-        }
-        if let Some(project) = &self.project {
-            writeln!(f, "   Project     : {}", project.to_str().unwrap()).unwrap_or_default();
-        }
-        if let Some(arch) = &self.arch {
-            writeln!(f, "   Architecture: {}", arch).unwrap_or_default();
-        }
-        if let Some(manager) = &self.manager {
-            writeln!(
-                f,
-                "   Manager     : {}, {}",
-                manager.tool,
-                manager.executable.to_str().unwrap_or_default()
-            )
-            .unwrap_or_default();
-        }
-        if let Some(symlinks) = &self.symlinks {
-            let mut symlinks = symlinks.clone();
-            symlinks.sort_by(|a, b| {
-                a.to_str()
-                    .unwrap_or_default()
-                    .len()
-                    .cmp(&b.to_str().unwrap_or_default().len())
-            });
-
-            if !symlinks.is_empty() {
-                for (i, symlink) in symlinks.iter().enumerate() {
-                    if i == 0 {
-                        writeln!(f, "   Symlinks    : {:?}", symlink).unwrap_or_default();
-                    } else {
-                        writeln!(f, "               : {:?}", symlink).unwrap_or_default();
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Environment {
@@ -126,7 +63,7 @@ impl Environment {
             display_name: env.display_name.clone(),
             name: env.name.clone(),
             executable: env.executable.clone(),
-            category: python_category_to_string(&env.category),
+            category: python_category_to_string(&env.category).to_string(),
             version: env.version.clone(),
             prefix: env.prefix.clone(),
             manager: match &env.manager {
@@ -134,7 +71,11 @@ impl Environment {
                 None => None,
             },
             project: env.project.clone(),
-            arch: env.arch.as_ref().map(architecture_to_string),
+            arch: env
+                .arch
+                .as_ref()
+                .map(architecture_to_string)
+                .map(|s| s.to_string()),
             symlinks: env.symlinks.clone(),
         }
     }

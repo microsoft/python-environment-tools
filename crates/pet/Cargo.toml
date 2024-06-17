@@ -25,6 +25,7 @@ pet-mac-python-org = { path = "../pet-mac-python-org" }
 pet-venv = { path = "../pet-venv" }
 pet-virtualenv = { path = "../pet-virtualenv" }
 pet-pipenv = { path = "../pet-pipenv" }
+pet-telemetry = { path = "../pet-telemetry" }
 pet-global-virtualenvs = { path = "../pet-global-virtualenvs" }
 log = "0.4.21"
 clap = { version = "4.5.4", features = ["derive"] }

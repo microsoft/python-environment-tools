@@ -10,6 +10,7 @@ use pet_core::{
 };
 use pet_fs::path::norm_case;
 use pet_python_utils::env::PythonEnv;
+use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
 use std::path::Path;
 use std::{fs, path::PathBuf};
@@ -87,10 +88,12 @@ impl Locator for PipEnv {
                 }
             }
         }
+        let bin = env.executable.parent()?;
+        let symlinks = find_executables(bin);
         let mut version = env.version.clone();
         if version.is_none() && prefix.is_some() {
             if let Some(prefix) = &prefix {
-                version = version::from_prefix(prefix);
+                version = version::from_creator_for_virtual_env(prefix);
             }
         }
         Some(
@@ -99,6 +102,7 @@ impl Locator for PipEnv {
                 .version(version)
                 .prefix(prefix)
                 .project(Some(project_path))
+                .symlinks(Some(symlinks))
                 .build(),
         )
     }

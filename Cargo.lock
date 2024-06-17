@@ -210,6 +210,7 @@ dependencies = [
  "pet-pyenv",
  "pet-python-utils",
  "pet-reporter",
+ "pet-telemetry",
  "pet-venv",
  "pet-virtualenv",
  "pet-virtualenvwrapper",
@@ -223,6 +224,14 @@ dependencies = [
 [[package]]
 name = "pet-cache"
 version = "0.1.0"
+dependencies = [
+ "log",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pet-conda"
@@ -269,6 +278,9 @@ dependencies = [
 [[package]]
 name = "pet-fs"
 version = "0.1.0"
+dependencies = [
+ "log",
+]
 
 [[package]]
 name = "pet-global"
@@ -287,10 +299,6 @@ dependencies = [
  "pet-fs",
  "pet-virtualenv",
 ]
-
-[[package]]
-name = "pet-hatch"
-version = "0.1.0"
 
 [[package]]
 name = "pet-homebrew"
@@ -400,6 +408,19 @@ dependencies = [
  "pet-jsonrpc",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pet-telemetry"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "lazy_static",
+ "log",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "regex",
 ]
 
 [[package]]

@@ -5,7 +5,9 @@ use clap::{Parser, Subcommand};
 use jsonrpc::start_jsonrpc_server;
 use pet::find_and_report_envs_stdio;
 
+mod find;
 mod jsonrpc;
+mod locators;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
