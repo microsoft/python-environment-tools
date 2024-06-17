@@ -40,7 +40,7 @@ impl WindowsRegistry {
             let result = get_registry_pythons(&self.conda_locator)?;
             envs.replace(result.environments.clone());
 
-            result
+            Some(result)
         }
     }
 }
@@ -56,7 +56,7 @@ impl Locator for WindowsRegistry {
             }
         }
         #[cfg(windows)]
-        if let Some(result) = self.find_with_cache(&self.conda_locator) {
+        if let Some(result) = self.find_with_cache() {
             // Find the same env here
             for found_env in result.environments {
                 if env.executable.to_str() == env.executable.to_str() {
@@ -73,15 +73,16 @@ impl Locator for WindowsRegistry {
         if envs.is_some() {
             envs.take();
         }
-        let result = self.find_with_cache(&self.conda_locator);
-        result
-            .managers
-            .iter()
-            .for_each(|m| reporter.report_manager(m));
-        result
-            .environments
-            .iter()
-            .for_each(|e| reporter.report_environment(e));
+        if let Some(result) = self.find_with_cache() {
+            result
+                .managers
+                .iter()
+                .for_each(|m| reporter.report_manager(m));
+            result
+                .environments
+                .iter()
+                .for_each(|e| reporter.report_environment(e));
+        }
     }
     #[cfg(unix)]
     fn find(&self, _reporter: &dyn Reporter) {
