@@ -21,7 +21,7 @@ pub struct InaccuratePythonEnvironmentInfo {
     pub invalid_arch: Option<bool>,
 }
 
-impl std::fmt::Display for InAccuratePythonEnvironmentInfo {
+impl std::fmt::Display for InaccuratePythonEnvironmentInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "Environment {:?} incorrectly identified", self.category).unwrap_or_default();
         if self.invalid_executable.unwrap_or_default() {
