@@ -13,7 +13,7 @@ pub mod locators;
 pub mod resolve;
 
 pub fn find_and_report_envs_stdio() {
-    stdio::initialize_logger(log::LevelFilter::Trace);
+    stdio::initialize_logger(log::LevelFilter::Info);
     let now = SystemTime::now();
 
     let reporter = stdio::create_reporter();

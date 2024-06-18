@@ -12,7 +12,13 @@ use std::fs;
 
 pub fn is_virtualenv(env: &PythonEnv) -> bool {
     if env.prefix.is_none() {
-        return false;
+        let mut bin = env.executable.clone();
+        bin.pop();
+        // Check if the executable is in a bin or Scripts directory.
+        // Possible for some reason we do not have the prefix.
+        if !bin.ends_with("bin") && !bin.ends_with("Scripts") {
+            return false;
+        }
     }
     if let Some(bin) = env.executable.parent() {
         // Check if there are any activate.* files in the same directory as the interpreter.

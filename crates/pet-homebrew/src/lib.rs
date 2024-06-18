@@ -9,6 +9,7 @@ use pet_core::{
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::{env::PythonEnv, executable::find_executables};
+use pet_virtualenv::is_virtualenv;
 use std::{path::PathBuf, thread};
 
 mod env_variables;
@@ -29,6 +30,13 @@ impl Homebrew {
 }
 
 fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
+    // Assume we create a virtual env from a homebrew python install,
+    // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
+    // Hence the first part of the condition will be true, but the second part will be false.
+    if is_virtualenv(env) {
+        return None;
+    }
+
     // Note: Sometimes if Python 3.10 was installed by other means (e.g. from python.org or other)
     // & then you install Python 3.10 via Homebrew, then some files will get installed via homebrew,
     // However everything (symlinks, Python executable `sys.executable`, `sys.prefix`) eventually point back to the existing installation.
