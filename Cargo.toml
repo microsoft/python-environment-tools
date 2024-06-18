@@ -6,3 +6,7 @@ resolver = "2"
 strip = true
 lto = true
 codegen-units = 1
+# Enable full debug info for optimized builds.
+debug = "full"
+# Split debuginfo into its own file to reduce binary size.
+split-debuginfo = "packed"

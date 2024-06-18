@@ -28,7 +28,7 @@ impl WindowsRegistry {
     }
     #[cfg(windows)]
     fn find_with_cache(&self) -> Option<LocatorResult> {
-        let mut envs = self.environments.read().unwrap();
+        let envs = self.environments.read().unwrap();
         if let Some(environments) = envs.as_ref() {
             Some(LocatorResult {
                 managers: vec![],

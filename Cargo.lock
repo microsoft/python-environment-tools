@@ -61,6 +61,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cc"
+version = "1.0.99"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96c51067fd44124faa7f870b4b1c969379ad32b2ba805aa959430ceaa384f695"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -186,9 +192,18 @@ checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 
 [[package]]
 name = "memchr"
-version = "2.7.2"
+version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
+checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
+
+[[package]]
+name = "msvc_spectre_libs"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6431d928428b689805ff8b2a0687760c3d1aa9845d165535a619e1c028bfbbb1"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "pet"
@@ -197,6 +212,7 @@ dependencies = [
  "clap",
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-conda",
  "pet-core",
  "pet-env-var-path",
@@ -226,6 +242,7 @@ name = "pet-cache"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -239,6 +256,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -254,6 +272,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-fs",
  "pet-python-utils",
  "regex",
@@ -267,6 +286,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-conda",
  "pet-core",
  "pet-fs",
@@ -280,6 +300,7 @@ name = "pet-fs"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
 ]
 
 [[package]]
@@ -287,6 +308,7 @@ name = "pet-global"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
 ]
 
 [[package]]
@@ -294,6 +316,7 @@ name = "pet-global-virtualenvs"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-conda",
  "pet-core",
  "pet-fs",
@@ -306,6 +329,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -321,6 +345,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "serde",
  "serde_json",
@@ -331,6 +356,7 @@ name = "pet-linux-global-python"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -341,6 +367,7 @@ name = "pet-mac-commandlinetools"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -351,6 +378,7 @@ name = "pet-mac-python-org"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -361,6 +389,7 @@ name = "pet-pipenv"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -370,6 +399,9 @@ dependencies = [
 [[package]]
 name = "pet-poetry"
 version = "0.1.0"
+dependencies = [
+ "msvc_spectre_libs",
+]
 
 [[package]]
 name = "pet-pyenv"
@@ -377,6 +409,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-conda",
  "pet-core",
  "pet-fs",
@@ -393,6 +426,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-fs",
  "regex",
  "serde",
@@ -405,6 +439,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-jsonrpc",
  "serde",
@@ -429,6 +464,7 @@ name = "pet-venv"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-python-utils",
  "pet-virtualenv",
@@ -439,6 +475,7 @@ name = "pet-virtualenv"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -449,6 +486,7 @@ name = "pet-virtualenvwrapper"
 version = "0.1.0"
 dependencies = [
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
@@ -461,6 +499,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-conda",
  "pet-core",
  "pet-fs",
@@ -476,6 +515,7 @@ version = "0.1.0"
 dependencies = [
  "lazy_static",
  "log",
+ "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",

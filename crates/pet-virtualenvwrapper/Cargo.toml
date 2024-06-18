@@ -3,6 +3,9 @@ name = "pet-virtualenvwrapper"
 version = "0.1.0"
 edition = "2021"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+
 [dependencies]
 pet-fs = { path = "../pet-fs" }
 pet-core = { path = "../pet-core" }
