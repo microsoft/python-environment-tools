@@ -7,6 +7,9 @@ edition = "2021"
 pet-windows-store = { path = "../pet-windows-store" }
 pet-windows-registry = { path = "../pet-windows-registry" }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+
 [target.'cfg(unix)'.dependencies]
 pet-homebrew = { path = "../pet-homebrew" }
 
