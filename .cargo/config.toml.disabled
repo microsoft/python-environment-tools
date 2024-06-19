@@ -1,8 +1,8 @@
-[source.crates-io]
-replace-with = 'ms-crates-io'
+# [source.crates-io]
+# replace-with = 'ms-crates-io'
 
-[registries.ms-crates-io]
-index = "sparse+https://pkgs.dev.azure.com/vscode/_packaging/crates/Cargo/index/"
+# [registries.ms-crates-io]
+# index = "sparse+https://pkgs.dev.azure.com/vscode/_packaging/crates/Cargo/index/"
 
 # -Cehcont_guard: Enable EH Continuation Metadata (https://learn.microsoft.com/en-us/cpp/build/reference/guard-enable-eh-continuation-metadata).
 # -Ccontrol-flow-guard: Enable Control Flow Guard, needed for OneBranch's post-build analysis (https://learn.microsoft.com/en-us/cpp/build/reference/guard-enable-control-flow-guard).
