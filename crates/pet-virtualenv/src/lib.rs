@@ -71,6 +71,10 @@ impl Default for VirtualEnv {
 }
 
 impl Locator for VirtualEnv {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::VirtualEnv]
+    }
+
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if is_virtualenv(env) {
             let version = match env.version {

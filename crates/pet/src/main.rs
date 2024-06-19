@@ -19,16 +19,19 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Finds the environments and reports them to the standard output.
-    Find,
-    /// Starts the JSON RPC Server (note: today server shuts down immediately, that's a bug).
+    Find {
+        #[arg(short, long)]
+        list: Option<bool>,
+    },
+    /// Starts the JSON RPC Server.
     Server,
 }
 
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Some(Commands::Server) => start_jsonrpc_server(),
-        _ => find_and_report_envs_stdio(),
+    match cli.command.unwrap_or(Commands::Find { list: Some(true) }) {
+        Commands::Find { list } => find_and_report_envs_stdio(list.unwrap_or(true), true),
+        Commands::Server => start_jsonrpc_server(),
     }
 }

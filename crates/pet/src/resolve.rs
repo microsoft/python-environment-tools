@@ -20,7 +20,7 @@ pub fn resolve_environment(
 ) -> Option<ResolvedEnvironment> {
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);
-    if let Some(env) = identify_python_environment_using_locators(&env, locators) {
+    if let Some(env) = identify_python_environment_using_locators(&env, locators, None) {
         // Ok we got the environment.
         // Now try to resolve this fully, by spawning python.
         if let Some(ref executable) = env.executable {

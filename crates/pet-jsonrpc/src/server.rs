@@ -131,7 +131,7 @@ pub fn start_server<C>(handlers: &HandlersKeyedByMethodName<C>) -> ! {
                     Err(err) => eprint!("Failed to get content length from {}, {:?}", input, err),
                 };
             }
-            Err(error) => println!("Error in reading a line from stdin: {error}"),
+            Err(error) => eprint!("Error in reading a line from stdin: {error}"),
         }
     }
 }

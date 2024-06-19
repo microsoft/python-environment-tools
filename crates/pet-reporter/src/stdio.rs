@@ -1,48 +1,65 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::environment::get_environment_key;
 use env_logger::Builder;
 use log::LevelFilter;
-use pet_core::{manager::EnvManager, python_environment::PythonEnvironment, reporter::Reporter};
+use pet_core::{
+    manager::{EnvManager, EnvManagerType},
+    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    reporter::Reporter,
+};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
-    path::PathBuf,
+    collections::HashMap,
     sync::{Arc, Mutex},
 };
 
 pub struct StdioReporter {
-    reported_managers: Arc<Mutex<HashSet<PathBuf>>>,
-    reported_environments: Arc<Mutex<HashSet<PathBuf>>>,
+    print_list: bool,
+    managers: Arc<Mutex<HashMap<EnvManagerType, u16>>>,
+    environments: Arc<Mutex<HashMap<PythonEnvironmentCategory, u16>>>,
 }
 
+pub struct Summary {
+    pub managers: HashMap<EnvManagerType, u16>,
+    pub environments: HashMap<PythonEnvironmentCategory, u16>,
+}
+
+impl StdioReporter {
+    pub fn get_summary(&self) -> Summary {
+        let managers = self.managers.lock().unwrap();
+        let environments = self.environments.lock().unwrap();
+        Summary {
+            managers: managers.clone(),
+            environments: environments.clone(),
+        }
+    }
+}
 impl Reporter for StdioReporter {
     fn report_manager(&self, manager: &EnvManager) {
-        let mut reported_managers = self.reported_managers.lock().unwrap();
-        if !reported_managers.contains(&manager.executable) {
-            reported_managers.insert(manager.executable.clone());
-            let prefix = format!("{}.", reported_managers.len());
-            println!("{:<3}{}", prefix, manager)
+        let mut managers = self.managers.lock().unwrap();
+        let count = managers.get(&manager.tool).unwrap_or(&0) + 1;
+        managers.insert(manager.tool, count);
+        if self.print_list {
+            println!("{}", manager)
         }
     }
 
     fn report_environment(&self, env: &PythonEnvironment) {
-        if let Some(key) = get_environment_key(env) {
-            let mut reported_environments = self.reported_environments.lock().unwrap();
-            if !reported_environments.contains(&key) {
-                reported_environments.insert(key.clone());
-                let prefix = format!("{}.", reported_environments.len());
-                println!("{:<3}{}", prefix, env)
-            }
+        let mut environments = self.environments.lock().unwrap();
+        let count = environments.get(&env.category).unwrap_or(&0) + 1;
+        environments.insert(env.category, count);
+        if self.print_list {
+            println!("{}", env)
         }
     }
 }
 
-pub fn create_reporter() -> impl Reporter {
+pub fn create_reporter(print_list: bool) -> StdioReporter {
     StdioReporter {
-        reported_managers: Arc::new(Mutex::new(HashSet::new())),
-        reported_environments: Arc::new(Mutex::new(HashSet::new())),
+        print_list,
+        managers: Arc::new(Mutex::new(HashMap::new())),
+        environments: Arc::new(Mutex::new(HashMap::new())),
     }
 }
 

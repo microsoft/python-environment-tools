@@ -12,6 +12,7 @@ msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
 [dependencies]
 pet-windows-store = { path = "../pet-windows-store" }
 pet-python-utils = { path = "../pet-python-utils" }
+pet-virtualenv = { path = "../pet-virtualenv" }
 pet-core = { path = "../pet-core" }
 pet-fs = { path = "../pet-fs" }
 pet-conda = { path = "../pet-conda" }

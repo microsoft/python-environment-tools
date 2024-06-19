@@ -61,7 +61,7 @@ pub fn report_inaccuracies_identified_after_resolving(
         || invalid_version.unwrap_or_default()
     {
         let event = InaccuratePythonEnvironmentInfo {
-            category: env.category.clone(),
+            category: env.category,
             invalid_executable: Some(invalid_executable),
             executable_not_in_symlinks: Some(executable_not_in_symlinks),
             invalid_prefix: Some(invalid_prefix),

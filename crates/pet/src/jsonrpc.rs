@@ -6,7 +6,7 @@ use pet::resolve::resolve_environment;
 use pet_conda::Conda;
 use pet_core::{
     os_environment::EnvironmentApi, python_environment::PythonEnvironment, reporter::Reporter,
-    Locator,
+    Configuration, Locator,
 };
 use pet_jsonrpc::{
     send_error, send_reply,
@@ -23,15 +23,13 @@ use std::{
     time::{Duration, SystemTime, SystemTimeError},
 };
 
-use crate::{
-    find::find_and_report_envs,
-    locators::{create_locators, Configuration},
-};
+use crate::{find::find_and_report_envs, locators::create_locators};
 
 pub struct Context {
     reporter: Arc<dyn Reporter>,
     configuration: RwLock<Configuration>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
+    conda_locator: Arc<Conda>,
 }
 
 pub fn start_jsonrpc_server() {
@@ -40,11 +38,12 @@ pub fn start_jsonrpc_server() {
     // These are globals for the the lifetime of the server.
     // Hence passed around as Arcs via the context.
     let environment = EnvironmentApi::new();
-    let jsonrpc_reporter = jsonrpc::create_reporter();
+    let jsonrpc_reporter = Arc::new(jsonrpc::create_reporter());
     let conda_locator = Arc::new(Conda::from(&environment));
     let context = Context {
-        reporter: Arc::new(jsonrpc_reporter),
+        reporter: jsonrpc_reporter,
         locators: create_locators(conda_locator.clone()),
+        conda_locator,
         configuration: RwLock::new(Configuration::default()),
     };
 
@@ -56,8 +55,14 @@ pub fn start_jsonrpc_server() {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RequestOptions {
+    /// These are paths like workspace folders, where we can look for environments.
     pub search_paths: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
+    pub poetry_executable: Option<PathBuf>,
+    /// Custom locations where environments can be found.
+    /// These are different from search_paths, as these are specific directories where environments are expected.
+    /// search_paths on the other hand can be any directory such as a workspace folder, where envs might never exist.
+    pub environment_paths: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -81,9 +86,16 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
             cfg.conda_executable = request_options.conda_executable;
             drop(cfg);
             let config = context.configuration.read().unwrap().clone();
-
+            for locator in context.locators.iter() {
+                locator.configure(&config);
+            }
             let now = SystemTime::now();
-            find_and_report_envs(context.reporter.as_ref(), config, &context.locators);
+            find_and_report_envs(
+                context.reporter.as_ref(),
+                config,
+                &context.locators,
+                context.conda_locator.clone(),
+            );
             send_reply(id, Some(RefreshResult::new(now.elapsed())));
         }
         Err(e) => {

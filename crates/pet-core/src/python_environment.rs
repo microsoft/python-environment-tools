@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use log::error;
 use pet_fs::path::norm_case;
 use pet_python_utils::executable::get_shortest_executable;
 use serde::{Deserialize, Serialize};
@@ -8,19 +9,22 @@ use std::path::PathBuf;
 
 use crate::{arch::Architecture, manager::EnvManager};
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub enum PythonEnvironmentCategory {
     Conda,
     Homebrew,
     Pyenv,           // Relates to Python installations in pyenv that are from Python org.
+    GlobalPaths,     // Python found in global locations like PATH, /usr/bin etc.
     PyenvVirtualEnv, // Pyenv virtualenvs.
     PyenvOther,      // Such as pyston, stackless, nogil, etc.
     Pipenv,
     System,
     MacPythonOrg,
     MacCommandLineTools,
+    LinuxGlobal,
+    MacXCode,
     Unknown,
     Venv,
     VirtualEnv,
@@ -304,17 +308,59 @@ impl PythonEnvironmentBuilder {
     }
 
     pub fn build(self) -> PythonEnvironment {
+        let mut all = vec![];
+        if let Some(ref exe) = self.executable {
+            all.push(exe.clone());
+        }
+        if let Some(symlinks) = self.symlinks {
+            all.extend(symlinks);
+        }
+        all.sort();
+        all.dedup();
+
+        let symlinks = if all.is_empty() {
+            None
+        } else {
+            Some(all.clone())
+        };
+        let executable = self
+            .executable
+            .map(|executable| get_shortest_executable(&Some(all.clone())).unwrap_or(executable));
+
         PythonEnvironment {
             display_name: self.display_name,
             name: self.name,
-            executable: self.executable,
+            executable,
             category: self.category,
             version: self.version,
             prefix: self.prefix,
             manager: self.manager,
             project: self.project,
             arch: self.arch,
-            symlinks: self.symlinks,
+            symlinks,
         }
+    }
+}
+
+pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
+    if let Some(exe) = &env.executable {
+        Some(exe.clone())
+    } else if let Some(prefix) = &env.prefix {
+        // If this is a conda env without Python, then the exe will be prefix/bin/python
+        if env.category == PythonEnvironmentCategory::Conda {
+            Some(prefix.join("bin").join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            }))
+        } else {
+            Some(prefix.clone())
+        }
+    } else {
+        error!(
+            "Failed to report environment due to lack of exe & prefix: {:?}",
+            env
+        );
+        None
     }
 }

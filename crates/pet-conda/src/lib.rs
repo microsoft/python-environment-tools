@@ -1,16 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use conda_info::CondaInfo;
 use env_variables::EnvVariables;
 use environment_locations::{get_conda_environment_paths, get_environments};
 use environments::{get_conda_environment_info, CondaEnvironment};
-use log::error;
+use log::{error, warn};
 use manager::CondaManager;
 use pet_core::{
-    os_environment::Environment, python_environment::PythonEnvironment, reporter::Reporter,
+    os_environment::Environment,
+    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    reporter::Reporter,
     Locator, LocatorResult,
 };
 use pet_python_utils::env::PythonEnv;
+use pet_virtualenv::is_virtualenv;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -19,6 +23,7 @@ use std::{
 };
 use utils::is_conda_install;
 
+mod conda_info;
 pub mod conda_rc;
 pub mod env_variables;
 pub mod environment_locations;
@@ -29,8 +34,11 @@ pub mod utils;
 
 pub trait CondaLocator: Send + Sync {
     fn find_in(&self, path: &Path) -> Option<LocatorResult>;
+    fn find_with_conda_executable(&self, conda_executable: Option<PathBuf>) -> Option<()>;
 }
 pub struct Conda {
+    /// Directories where conda environments are found (env_dirs returned from `conda info --json`)
+    pub env_dirs: Arc<Mutex<Vec<PathBuf>>>,
     pub environments: Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
     pub managers: Arc<Mutex<HashMap<PathBuf, CondaManager>>>,
     pub env_vars: EnvVariables,
@@ -39,6 +47,7 @@ pub struct Conda {
 impl Conda {
     pub fn from(env: &dyn Environment) -> Conda {
         Conda {
+            env_dirs: Arc::new(Mutex::new(vec![])),
             environments: Arc::new(Mutex::new(HashMap::new())),
             managers: Arc::new(Mutex::new(HashMap::new())),
             env_vars: EnvVariables::from(env),
@@ -47,6 +56,40 @@ impl Conda {
 }
 
 impl CondaLocator for Conda {
+    fn find_with_conda_executable(&self, conda_executable: Option<PathBuf>) -> Option<()> {
+        let info = CondaInfo::from(conda_executable)?;
+        // Have we seen these envs, if yes, then nothing to do
+        let environments = self.environments.lock().unwrap().clone();
+        let mut new_envs = info
+            .envs
+            .clone()
+            .into_iter()
+            .filter(|p| !environments.contains_key(p))
+            .collect::<Vec<PathBuf>>();
+        if new_envs.is_empty() {
+            return None;
+        }
+
+        // Oh oh, we have new envs, lets find them.
+        let manager = CondaManager::from_info(&info.executable, &info)?;
+        for path in new_envs.iter() {
+            let mgr = manager.clone();
+            if let Some(env) = get_conda_environment_info(path, &Some(mgr.clone())) {
+                warn!(
+                    "Found a conda env {:?} using the conda exe {:?}",
+                    env.prefix, info.executable
+                );
+            }
+        }
+
+        // Also keep track of these directories for next time
+        let mut env_dirs = self.env_dirs.lock().unwrap();
+        env_dirs.append(&mut new_envs);
+
+        // Send telemetry
+
+        Some(())
+    }
     fn find_in(&self, conda_dir: &Path) -> Option<LocatorResult> {
         if !is_conda_install(conda_dir) {
             return None;
@@ -104,7 +147,18 @@ impl Conda {
 }
 
 impl Locator for Conda {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::Conda]
+    }
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+        // Assume we create a virtual env from a conda python install,
+        // Doing this is a big no no, but people do this.
+        // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
+        // Hence the first part of the condition will be true, but the second part will be false.
+        if is_virtualenv(env) {
+            return None;
+        }
+
         if let Some(ref path) = env.prefix {
             let mut environments = self.environments.lock().unwrap();
 
@@ -151,9 +205,10 @@ impl Locator for Conda {
         drop(environments);
 
         let env_vars = self.env_vars.clone();
+        let additional_paths = self.env_dirs.lock().unwrap().clone();
         thread::scope(|s| {
             // 1. Get a list of all know conda environments file paths
-            let possible_conda_envs = get_conda_environment_paths(&env_vars);
+            let possible_conda_envs = get_conda_environment_paths(&env_vars, &additional_paths);
             for path in possible_conda_envs {
                 s.spawn(move || {
                     // 2. Get the details of the conda environment

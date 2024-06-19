@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub enum EnvManagerType {
     Conda,
     Pyenv,

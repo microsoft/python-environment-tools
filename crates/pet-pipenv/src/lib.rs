@@ -71,6 +71,10 @@ impl PipEnv {
     }
 }
 impl Locator for PipEnv {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::Pipenv]
+    }
+
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if !is_pipenv(env, &self.env_vars) {
             return None;

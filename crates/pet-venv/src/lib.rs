@@ -33,6 +33,10 @@ impl Default for Venv {
     }
 }
 impl Locator for Venv {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::Venv]
+    }
+
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if is_venv(env) {
             let mut prefix = env.prefix.clone();

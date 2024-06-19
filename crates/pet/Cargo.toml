@@ -18,12 +18,16 @@ pet-core = { path = "../pet-core" }
 pet-conda = { path = "../pet-conda" }
 pet-global = { path = "../pet-global" }
 pet-jsonrpc = { path = "../pet-jsonrpc" }
+pet-fs = { path = "../pet-fs" }
 pet-pyenv = { path = "../pet-pyenv" }
+pet-poetry = { path = "../pet-poetry" }
 pet-reporter = { path = "../pet-reporter" }
 pet-virtualenvwrapper = { path = "../pet-virtualenvwrapper" }
 pet-python-utils = { path = "../pet-python-utils" }
 pet-env-var-path = { path = "../pet-env-var-path" }
 pet-mac-commandlinetools = { path = "../pet-mac-commandlinetools" }
+pet-linux-global-python = { path = "../pet-linux-global-python" }
+pet-mac-xcode = { path = "../pet-mac-xcode" }
 pet-mac-python-org = { path = "../pet-mac-python-org" }
 pet-venv = { path = "../pet-venv" }
 pet-virtualenv = { path = "../pet-virtualenv" }
@@ -31,7 +35,7 @@ pet-pipenv = { path = "../pet-pipenv" }
 pet-telemetry = { path = "../pet-telemetry" }
 pet-global-virtualenvs = { path = "../pet-global-virtualenvs" }
 log = "0.4.21"
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.5.4", features = ["derive", "cargo"] }
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.93"
 

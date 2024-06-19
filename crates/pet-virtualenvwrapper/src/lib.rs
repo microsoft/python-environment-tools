@@ -29,6 +29,10 @@ impl VirtualEnvWrapper {
 }
 
 impl Locator for VirtualEnvWrapper {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::VirtualEnvWrapper]
+    }
+
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if !is_virtualenvwrapper(env, &self.env_vars) {
             return None;
