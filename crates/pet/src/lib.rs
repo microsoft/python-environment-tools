@@ -1,9 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use pet_core::Configuration;
+use find::find_and_report_envs;
+use locators::create_locators;
+use pet_conda::Conda;
+use pet_core::{os_environment::EnvironmentApi, Configuration};
 use pet_reporter::{self, stdio};
-use std::{collections::BTreeMap, env, time::SystemTime};
+use std::{collections::BTreeMap, env, sync::Arc, time::SystemTime};
 
 pub mod find;
 pub mod locators;
@@ -14,11 +17,21 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool) {
     let now = SystemTime::now();
 
     let reporter = stdio::create_reporter(print_list);
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
 
     let mut config = Configuration::default();
     if let Ok(cwd) = env::current_dir() {
         config.search_paths = Some(vec![cwd]);
     }
+
+    find_and_report_envs(
+        &reporter,
+        config,
+        &create_locators(conda_locator.clone()),
+        conda_locator,
+    );
+
     if print_summary {
         let summary = reporter.get_summary();
         if !summary.managers.is_empty() {
