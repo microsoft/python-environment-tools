@@ -9,23 +9,17 @@ use pet_core::python_environment::{
     PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory,
 };
 use pet_core::Locator;
+use pet_linux_global_python::LinuxGlobalPython;
 use pet_mac_commandlinetools::MacCmdLineTools;
 use pet_mac_python_org::MacPythonOrg;
+use pet_mac_xcode::MacXCode;
 use pet_pipenv::PipEnv;
 use pet_pyenv::PyEnv;
 use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
 use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
-use std::path::PathBuf;
 use std::sync::Arc;
-
-#[derive(Debug, Default, Clone)]
-pub struct Configuration {
-    pub search_paths: Option<Vec<PathBuf>>,
-    pub conda_executable: Option<PathBuf>,
-    pub custom_virtual_env_dirs: Option<Vec<PathBuf>>,
-}
 
 pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> {
     // NOTE: The order of the items matter.
@@ -68,10 +62,17 @@ pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> 
     locators.push(Arc::new(VirtualEnv::new()));
 
     // 7. Global Mac Python
-    // 8. CommandLineTools Python (xcode)
+    // 8. CommandLineTools Python & xcode
     if std::env::consts::OS == "macos" {
+        locators.push(Arc::new(MacXCode::new()));
         locators.push(Arc::new(MacCmdLineTools::new()));
         locators.push(Arc::new(MacPythonOrg::new()));
+    }
+    // 9. Global Linux Python
+    // All other Linux (not mac, & not windows)
+    // THIS MUST BE LAST
+    if std::env::consts::OS != "macos" && std::env::consts::OS != "windows" {
+        locators.push(Arc::new(LinuxGlobalPython::new()))
     }
     Arc::new(locators)
 }
@@ -79,6 +80,7 @@ pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> 
 pub fn identify_python_environment_using_locators(
     env: &PythonEnv,
     locators: &[Arc<dyn Locator>],
+    fallback_category: Option<PythonEnvironmentCategory>,
 ) -> Option<PythonEnvironment> {
     let executable = env.executable.clone();
     if let Some(env) = locators
@@ -113,16 +115,18 @@ pub fn identify_python_environment_using_locators(
                 "Unknown Env ({:?}) in Path resolved as {:?} and reported as Unknown",
                 executable, resolved_env
             );
-            let env = PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Unknown)
-                .executable(Some(resolved_env.executable))
-                .prefix(Some(resolved_env.prefix))
-                .arch(Some(if resolved_env.is64_bit {
-                    Architecture::X64
-                } else {
-                    Architecture::X86
-                }))
-                .version(Some(resolved_env.version))
-                .build();
+            let env = PythonEnvironmentBuilder::new(
+                fallback_category.unwrap_or(PythonEnvironmentCategory::Unknown),
+            )
+            .executable(Some(resolved_env.executable))
+            .prefix(Some(resolved_env.prefix))
+            .arch(Some(if resolved_env.is64_bit {
+                Architecture::X64
+            } else {
+                Architecture::X86
+            }))
+            .version(Some(resolved_env.version))
+            .build();
             return Some(env);
         }
     }

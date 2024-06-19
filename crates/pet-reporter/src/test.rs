@@ -33,21 +33,17 @@ impl TestReporter {
 impl Reporter for TestReporter {
     fn report_manager(&self, manager: &EnvManager) {
         let mut reported_managers = self.managers.lock().unwrap();
-        if !reported_managers.contains_key(&manager.executable) {
-            reported_managers.insert(manager.executable.clone(), manager.clone());
-        }
+        reported_managers.insert(manager.executable.clone(), manager.clone());
     }
 
     fn report_environment(&self, env: &PythonEnvironment) {
         if let Some(key) = get_environment_key(env) {
             let mut reported_environments = self.environments.lock().unwrap();
-            if !reported_environments.contains_key(&key) {
-                // TODO: Sometimes its possible the exe here is actually some symlink that we have no idea about.
-                // Hence we'll need to go through the list of reported envs and see if we can find a match.
-                // If we do find a match, then ensure we update the symlinks
-                // & if necessary update the other information.
-                reported_environments.insert(key.clone(), env.clone());
-            }
+            // TODO: Sometimes its possible the exe here is actually some symlink that we have no idea about.
+            // Hence we'll need to go through the list of reported envs and see if we can find a match.
+            // If we do find a match, then ensure we update the symlinks
+            // & if necessary update the other information.
+            reported_environments.insert(key.clone(), env.clone());
         }
     }
 }

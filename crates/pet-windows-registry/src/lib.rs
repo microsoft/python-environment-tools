@@ -6,9 +6,14 @@ use environments::get_registry_pythons;
 use pet_conda::{utils::is_conda_env, CondaLocator};
 #[cfg(windows)]
 use pet_core::LocatorResult;
-use pet_core::{python_environment::PythonEnvironment, reporter::Reporter, Locator};
+use pet_core::{
+    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    reporter::Reporter,
+    Locator,
+};
 use pet_python_utils::env::PythonEnv;
-use std::sync::{Arc, RwLock};
+use pet_virtualenv::is_virtualenv;
+use std::sync::{atomic::AtomicBool, Arc, RwLock};
 
 mod environments;
 
@@ -16,37 +21,58 @@ pub struct WindowsRegistry {
     #[allow(dead_code)]
     conda_locator: Arc<dyn CondaLocator>,
     #[allow(dead_code)]
-    environments: Arc<RwLock<Option<Vec<PythonEnvironment>>>>,
+    searched: AtomicBool,
+    #[allow(dead_code)]
+    environments: Arc<RwLock<Vec<PythonEnvironment>>>,
 }
 
 impl WindowsRegistry {
     pub fn from(conda_locator: Arc<dyn CondaLocator>) -> WindowsRegistry {
         WindowsRegistry {
             conda_locator,
-            environments: Arc::new(RwLock::new(None)),
+            searched: AtomicBool::new(false),
+            environments: Arc::new(RwLock::new(vec![])),
         }
     }
     #[cfg(windows)]
     fn find_with_cache(&self) -> Option<LocatorResult> {
-        let envs = self.environments.read().unwrap();
-        if let Some(environments) = envs.as_ref() {
-            Some(LocatorResult {
-                managers: vec![],
-                environments: environments.clone(),
-            })
-        } else {
-            drop(envs);
-            let mut envs = self.environments.write().unwrap();
-            let result = get_registry_pythons(&self.conda_locator)?;
-            envs.replace(result.environments.clone());
+        use std::sync::atomic::Ordering;
 
-            Some(result)
+        if self.searched.load(Ordering::Relaxed) {
+            if let Ok(envs) = self.environments.read() {
+                return Some(LocatorResult {
+                    environments: envs.clone(),
+                    managers: vec![],
+                });
+            }
         }
+        self.searched.store(false, Ordering::Relaxed);
+        if let Ok(mut envs) = self.environments.write() {
+            envs.clear();
+        }
+        let result = get_registry_pythons(&self.conda_locator)?;
+        if let Ok(mut envs) = self.environments.write() {
+            envs.clear();
+            envs.extend(result.environments.clone());
+            self.searched.store(true, Ordering::Relaxed);
+        }
+
+        Some(result)
     }
 }
 
 impl Locator for WindowsRegistry {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::WindowsRegistry]
+    }
+
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+        // Assume we create a virtual env from a python install,
+        // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
+        // Hence the first part of the condition will be true, but the second part will be false.
+        if is_virtualenv(env) {
+            return None;
+        }
         // We need to check this here, as its possible to install
         // a Python environment via an Installer that ends up in Windows Registry
         // However that environment is a conda environment.
@@ -69,10 +95,8 @@ impl Locator for WindowsRegistry {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        let mut envs = self.environments.write().unwrap();
-        if envs.is_some() {
-            envs.take();
-        }
+        self.searched
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(result) = self.find_with_cache() {
             result
                 .managers

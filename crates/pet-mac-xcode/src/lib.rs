@@ -7,27 +7,24 @@ use pet_core::{
     Locator,
 };
 use pet_fs::path::resolve_symlink;
+use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
 use pet_python_utils::version;
-use pet_python_utils::{
-    env::{PythonEnv, ResolvedPythonEnv},
-    executable::find_executables,
-};
 use pet_virtualenv::is_virtualenv;
 use std::path::PathBuf;
 
-pub struct MacCmdLineTools {}
+pub struct MacXCode {}
 
-impl MacCmdLineTools {
-    pub fn new() -> MacCmdLineTools {
-        MacCmdLineTools {}
+impl MacXCode {
+    pub fn new() -> MacXCode {
+        MacXCode {}
     }
 }
-impl Default for MacCmdLineTools {
+impl Default for MacXCode {
     fn default() -> Self {
         Self::new()
     }
 }
-impl Locator for MacCmdLineTools {
+impl Locator for MacXCode {
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::MacCommandLineTools]
     }
@@ -43,10 +40,11 @@ impl Locator for MacCmdLineTools {
             return None;
         }
 
-        if !env
-            .executable
-            .to_string_lossy()
-            .starts_with("/Library/Developer/CommandLineTools/usr/bin/python")
+        let exe_str = env.executable.to_string_lossy();
+
+        // Support for /Applications/Xcode.app/Contents/Developer/usr/bin/python3
+        // /Applications/Xcode_15.0.1.app/Contents/Developer/usr/bin/python3 (such paths are on CI, see here https://github.com/microsoft/python-environment-tools/issues/38)
+        if !exe_str.starts_with("/Applications") && !exe_str.contains("Contents/Developer/usr/bin")
         {
             return None;
         }
@@ -60,8 +58,8 @@ impl Locator for MacCmdLineTools {
             symlinks.append(&mut existing_symlinks.clone());
         }
 
-        // We know that /Library/Developer/CommandLineTools/usr/bin/python3 is actually a symlink to
-        // /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
+        // We know that /Applications/Xcode.app/Contents/Developer/usr/bin/python3 is actually a symlink to
+        // /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
         // Verify this and add that to the list of symlinks as well.
         if let Some(symlink) = resolve_symlink(&env.executable) {
             symlinks.push(symlink);
@@ -83,12 +81,12 @@ impl Locator for MacCmdLineTools {
                 }
             }
         }
-        // Similarly the final exe can be /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
+        // Similarly the final exe can be /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
         // & we might have another file `python3` in that bin directory which would point to the same exe.
         // Lets get those as well.
         if let Some(real_exe) = symlinks.iter().find(|s| {
             s.to_string_lossy()
-                .contains("/Library/Developer/CommandLineTools/Library/Frameworks")
+                .contains("Contents/Developer/Library/Frameworks")
         }) {
             let python3 = real_exe.with_file_name("python3");
             if !symlinks.contains(&python3) {
@@ -103,17 +101,17 @@ impl Locator for MacCmdLineTools {
         symlinks.sort();
         symlinks.dedup();
 
-        if prefix.is_none() {
-            // We would have identified the symlinks by now.
-            // Look for the one with the path `/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9`
-            if let Some(symlink) = symlinks.iter().find(|s| {
-                s.to_string_lossy().starts_with("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions")
-            }) {
-                // Prefix is of the form `/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9`
-                // The symlink would be the same, all we need is to remove the last 2 components (exe and bin directory).
-                prefix = symlink.parent()?.parent().map(|p| p.to_path_buf());
-            }
-        }
+        // if prefix.is_none() {
+        //     // We would have identified the symlinks by now.
+        //     // Look for the one with the path `/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9`
+        //     if let Some(symlink) = symlinks.iter().find(|s| {
+        //         s.to_string_lossy().starts_with("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions")
+        //     }) {
+        //         // Prefix is of the form `/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9`
+        //         // The symlink would be the same, all we need is to remove the last 2 components (exe and bin directory).
+        //         prefix = symlink.parent()?.parent().map(|p| p.to_path_buf());
+        //     }
+        // }
 
         if version.is_none() {
             if let Some(prefix) = &prefix {
@@ -128,7 +126,7 @@ impl Locator for MacCmdLineTools {
         }
 
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacCommandLineTools)
+            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacXCode)
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(prefix)
@@ -140,42 +138,42 @@ impl Locator for MacCmdLineTools {
     fn find(&self, _reporter: &dyn Reporter) {
         // We will end up looking in current PATH variable
         // Given thats done else where, lets not repeat it here.
-        if std::env::consts::OS != "macos" {
-            return;
-        }
+        // if std::env::consts::OS != "macos" {
+        //     return;
+        // }
 
-        for exe in find_executables("/Library/Developer/CommandLineTools/usr")
-            .iter()
-            .filter(
-                |f|                     // If this file name is `python3`, then ignore this for now.
-            // We would prefer to use `python3.x` instead of `python3`.
-            // That way its more consistent and future proof
-                f.file_name().unwrap_or_default() != "python3" &&
-                f.file_name().unwrap_or_default() != "python",
-            )
-        {
-            // These files should end up being symlinks to something like /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
-            let mut env = PythonEnv::new(exe.to_owned(), None, None);
-            let mut symlinks = vec![];
-            if let Some(symlink) = resolve_symlink(exe) {
-                // Symlinks must exist, they always point to something like the following
-                // /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
-                symlinks.push(symlink);
-            }
+        // for exe in find_executables("/Library/Developer/CommandLineTools/usr")
+        //     .iter()
+        //     .filter(
+        //         |f|                     // If this file name is `python3`, then ignore this for now.
+        //     // We would prefer to use `python3.x` instead of `python3`.
+        //     // That way its more consistent and future proof
+        //         f.file_name().unwrap_or_default() != "python3" &&
+        //         f.file_name().unwrap_or_default() != "python",
+        //     )
+        // {
+        //     // These files should end up being symlinks to something like /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
+        //     let mut env = PythonEnv::new(exe.to_owned(), None, None);
+        //     let mut symlinks = vec![];
+        //     if let Some(symlink) = resolve_symlink(exe) {
+        //         // Symlinks must exist, they always point to something like the following
+        //         // /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
+        //         symlinks.push(symlink);
+        //     }
 
-            // Also check whether the corresponding python and python3 files in this directory point to the same files.
-            for python_exe in &["python", "python3"] {
-                let python_exe = exe.with_file_name(python_exe);
-                if let Some(symlink) = resolve_symlink(&python_exe) {
-                    if symlinks.contains(&symlink) {
-                        symlinks.push(python_exe);
-                    }
-                }
-            }
-            env.symlinks = Some(symlinks);
-            if let Some(env) = self.from(&env) {
-                _reporter.report_environment(&env);
-            }
-        }
+        //     // Also check whether the corresponding python and python3 files in this directory point to the same files.
+        //     for python_exe in &["python", "python3"] {
+        //         let python_exe = exe.with_file_name(python_exe);
+        //         if let Some(symlink) = resolve_symlink(&python_exe) {
+        //             if symlinks.contains(&symlink) {
+        //                 symlinks.push(python_exe);
+        //             }
+        //         }
+        //     }
+        //     env.symlinks = Some(symlinks);
+        //     if let Some(env) = self.from(&env) {
+        //         _reporter.report_environment(&env);
+        //     }
+        // }
     }
 }

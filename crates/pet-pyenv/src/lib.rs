@@ -13,7 +13,7 @@ use pet_conda::CondaLocator;
 use pet_core::{
     manager::{EnvManager, EnvManagerType},
     os_environment::Environment,
-    python_environment::PythonEnvironment,
+    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
     reporter::Reporter,
     Locator,
 };
@@ -42,6 +42,14 @@ impl PyEnv {
 }
 
 impl Locator for PyEnv {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![
+            PythonEnvironmentCategory::Pyenv,
+            PythonEnvironmentCategory::PyenvVirtualEnv,
+            PythonEnvironmentCategory::PyenvOther,
+        ]
+    }
+
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         // Env path must exists,
         // If exe is Scripts/python.exe or bin/python.exe

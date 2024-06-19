@@ -10,6 +10,7 @@ use pet_fs::path::resolve_symlink;
 use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
+use pet_virtualenv::is_virtualenv;
 use std::fs;
 use std::path::PathBuf;
 
@@ -26,8 +27,18 @@ impl Default for MacPythonOrg {
     }
 }
 impl Locator for MacPythonOrg {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::MacPythonOrg]
+    }
+
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if std::env::consts::OS != "macos" {
+            return None;
+        }
+        // Assume we create a virtual env from a python install,
+        // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
+        // Hence the first part of the condition will be true, but the second part will be false.
+        if is_virtualenv(env) {
             return None;
         }
 

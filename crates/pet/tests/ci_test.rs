@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::path::PathBuf;
+
 use common::resolve_test_path;
 use lazy_static::lazy_static;
 use pet_core::{
@@ -35,7 +37,8 @@ fn verify_validity_of_discovered_envs() {
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator),
+        &create_locators(conda_locator.clone()),
+        conda_locator,
     );
     let result = reporter.get_result();
 
@@ -73,7 +76,8 @@ fn check_if_virtualenvwrapper_exists() {
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator),
+        &create_locators(conda_locator.clone()),
+        conda_locator,
     );
 
     let result = reporter.get_result();
@@ -116,7 +120,8 @@ fn check_if_pyenv_virtualenv_exists() {
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator),
+        &create_locators(conda_locator.clone()),
+        conda_locator,
     );
 
     let result = reporter.get_result();
@@ -148,9 +153,14 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     // Home brew has too many syminks, unfortunately its not easy to test in CI.
     if environment.category != PythonEnvironmentCategory::Homebrew {
         let expected_executable = environment.executable.clone().unwrap();
-        assert_eq!(
-            expected_executable.to_str().unwrap(),
-            interpreter_info.clone().executable,
+
+        // Ensure the executable is in one of the identified symlinks
+        assert!(
+            environment
+                .symlinks
+                .clone()
+                .unwrap_or_default()
+                .contains(&PathBuf::from(expected_executable)),
             "Executable mismatch for {:?}",
             environment.clone()
         );

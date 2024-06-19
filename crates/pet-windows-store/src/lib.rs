@@ -8,11 +8,12 @@ mod environments;
 use crate::env_variables::EnvVariables;
 #[cfg(windows)]
 use environments::list_store_pythons;
-use pet_core::python_environment::PythonEnvironment;
+use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentCategory};
 use pet_core::reporter::Reporter;
 use pet_core::{os_environment::Environment, Locator};
 use pet_python_utils::env::PythonEnv;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
@@ -23,40 +24,57 @@ pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
 pub struct WindowsStore {
     pub env_vars: EnvVariables,
     #[allow(dead_code)]
-    environments: Arc<RwLock<Option<Vec<PythonEnvironment>>>>,
+    searched: AtomicBool,
+    #[allow(dead_code)]
+    environments: Arc<RwLock<Vec<PythonEnvironment>>>,
 }
 
 impl WindowsStore {
     pub fn from(environment: &dyn Environment) -> WindowsStore {
         WindowsStore {
+            searched: AtomicBool::new(false),
             env_vars: EnvVariables::from(environment),
-            environments: Arc::new(RwLock::new(None)),
+            environments: Arc::new(RwLock::new(vec![])),
         }
     }
     #[cfg(windows)]
     fn find_with_cache(&self) -> Option<Vec<PythonEnvironment>> {
-        let envs = self
-            .environments
-            .read()
-            .expect("Failed to read environments in windows store");
-        if let Some(environments) = envs.as_ref() {
-            return Some(environments.clone());
-        } else {
-            drop(envs);
-            let mut envs = self
-                .environments
-                .write()
-                .expect("Failed to read environments in windows store");
-            let environments = list_store_pythons(&self.env_vars)?;
-            envs.replace(environments.clone());
-            Some(environments)
+        use std::sync::atomic::Ordering;
+
+        if self.searched.load(Ordering::Relaxed) {
+            if let Ok(envs) = self.environments.read() {
+                return Some(envs.clone());
+            }
         }
+        self.searched.store(false, Ordering::Relaxed);
+        if let Ok(mut envs) = self.environments.write() {
+            envs.clear();
+        }
+        let environments = list_store_pythons(&self.env_vars)?;
+        if let Ok(mut envs) = self.environments.write() {
+            envs.clear();
+            envs.extend(environments.clone());
+            self.searched.store(true, Ordering::Relaxed);
+        }
+        Some(environments)
     }
 }
 
 impl Locator for WindowsStore {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::WindowsStore]
+    }
+
     #[cfg(windows)]
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+        use pet_virtualenv::is_virtualenv;
+
+        // Assume we create a virtual env from a python install,
+        // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
+        // Hence the first part of the condition will be true, but the second part will be false.
+        if is_virtualenv(env) {
+            return None;
+        }
         if let Some(environments) = self.find_with_cache() {
             for found_env in environments {
                 if let Some(ref python_executable_path) = found_env.executable {
@@ -76,16 +94,15 @@ impl Locator for WindowsStore {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        let mut envs = self.environments.write().unwrap();
-        if envs.is_some() {
-            envs.take();
-        }
-        drop(envs);
+        self.searched
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         if let Some(environments) = self.find_with_cache() {
             environments
                 .iter()
                 .for_each(|e| reporter.report_environment(e))
         }
+        self.searched
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[cfg(unix)]

@@ -2,8 +2,9 @@
 // Licensed under the MIT License.
 
 use crate::{
-    env_variables::EnvVariables, environments::get_conda_installation_used_to_create_conda_env,
-    package::CondaPackageInfo, utils::is_conda_env,
+    conda_info::CondaInfo, env_variables::EnvVariables,
+    environments::get_conda_installation_used_to_create_conda_env, package::CondaPackageInfo,
+    utils::is_conda_env,
 };
 use pet_core::{manager::EnvManager, manager::EnvManagerType};
 use std::{
@@ -93,6 +94,13 @@ impl CondaManager {
                 get_conda_manager(&conda_install_folder)
             }
         }
+    }
+    pub fn from_info(executable: &Path, info: &CondaInfo) -> Option<CondaManager> {
+        Some(CondaManager {
+            executable: executable.to_path_buf(),
+            version: Some(info.conda_version.clone()),
+            conda_dir: info.conda_prefix.clone(),
+        })
     }
 }
 

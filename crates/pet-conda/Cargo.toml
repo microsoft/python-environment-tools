@@ -9,6 +9,7 @@ msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
 [dependencies]
 pet-fs = { path = "../pet-fs" }
 pet-python-utils = { path = "../pet-python-utils" }
+pet-virtualenv = { path = "../pet-virtualenv" }
 serde = { version = "1.0.152", features = ["derive"] }
 serde_json = "1.0.93"
 lazy_static = "1.4.0"

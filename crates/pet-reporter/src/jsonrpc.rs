@@ -1,51 +1,27 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::{
-    environment::{get_environment_key, Environment},
-    manager::Manager,
-};
+use crate::{environment::Environment, manager::Manager};
 use env_logger::Builder;
 use log::LevelFilter;
 use pet_core::{manager::EnvManager, python_environment::PythonEnvironment, reporter::Reporter};
 use pet_jsonrpc::send_message;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
 
-pub struct JsonRpcReporter {
-    reported_managers: Arc<Mutex<HashSet<PathBuf>>>,
-    reported_environments: Arc<Mutex<HashSet<PathBuf>>>,
-}
+pub struct JsonRpcReporter {}
 
 impl Reporter for JsonRpcReporter {
     fn report_manager(&self, manager: &EnvManager) {
-        let mut reported_managers = self.reported_managers.lock().unwrap();
-        if !reported_managers.contains(&manager.executable) {
-            reported_managers.insert(manager.executable.clone());
-            send_message("manager", Manager::from(manager).into())
-        }
+        send_message("manager", Manager::from(manager).into())
     }
 
     fn report_environment(&self, env: &PythonEnvironment) {
-        if let Some(key) = get_environment_key(env) {
-            let mut reported_environments = self.reported_environments.lock().unwrap();
-            if !reported_environments.contains(&key) {
-                reported_environments.insert(key.clone());
-                send_message("environment", Environment::from(env).into())
-            }
-        }
+        send_message("environment", Environment::from(env).into())
     }
 }
 
 pub fn create_reporter() -> impl Reporter {
-    JsonRpcReporter {
-        reported_managers: Arc::new(Mutex::new(HashSet::new())),
-        reported_environments: Arc::new(Mutex::new(HashSet::new())),
-    }
+    JsonRpcReporter {}
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Eq, Clone)]

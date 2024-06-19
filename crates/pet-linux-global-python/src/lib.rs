@@ -1,18 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::{fs, path::PathBuf};
+
+use log::error;
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     reporter::Reporter,
     Locator,
 };
 use pet_fs::path::resolve_symlink;
-use pet_python_utils::version;
-use pet_python_utils::{
-    env::{PythonEnv, ResolvedPythonEnv},
-    executable::find_executables,
-};
-use std::path::PathBuf;
+use pet_python_utils::{env::PythonEnv, executable::find_executables};
+use pet_virtualenv::is_virtualenv;
 
 pub struct LinuxGlobalPython {}
 
@@ -27,142 +26,163 @@ impl Default for LinuxGlobalPython {
     }
 }
 impl Locator for LinuxGlobalPython {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::LinuxGlobal]
+    }
+
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
             return None;
         }
-
-        if !env
-            .executable
-            .to_string_lossy()
-            .starts_with("/Library/Developer/CommandLineTools/usr/bin/python")
-        {
+        // Assume we create a virtual env from a python install,
+        // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
+        // Hence the first part of the condition will be true, but the second part will be false.
+        if is_virtualenv(env) {
             return None;
         }
 
-        let mut version = env.version.clone();
-        let mut prefix = env.prefix.clone();
-        let mut symlinks = vec![env.executable.clone()];
+        if let (Some(prefix), Some(_)) = (env.prefix.clone(), env.version.clone()) {
+            let executable = env.executable.clone();
 
-        let existing_symlinks = env.symlinks.clone();
-        if let Some(existing_symlinks) = existing_symlinks {
-            symlinks.append(&mut existing_symlinks.clone());
-        }
-
-        // We know that /Library/Developer/CommandLineTools/usr/bin/python3 is actually a symlink to
-        // /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
-        // Verify this and add that to the list of symlinks as well.
-        if let Some(symlink) = resolve_symlink(&env.executable) {
-            symlinks.push(symlink);
-        }
-
-        // We know /usr/bin/python3 can end up pointing to this same Python exe as well
-        // Hence look for those symlinks as well.
-        // Unfortunately /usr/bin/python3 is not a real symlink
-        // Hence we must spawn and verify it points to the same Python exe.
-        for possible_exes in [PathBuf::from("/usr/bin/python3")] {
-            if !symlinks.contains(&possible_exes) {
-                if let Some(resolved_env) = ResolvedPythonEnv::from(&possible_exes) {
-                    if symlinks.contains(&resolved_env.executable) {
-                        symlinks.push(possible_exes);
-                        // Use the latest accurate information we have.
-                        version = Some(resolved_env.version);
-                        prefix = Some(resolved_env.prefix);
-                    }
-                }
+            // If prefix or version is not available, then we cannot use this method.
+            // 1. For files in /bin or /usr/bin, the prefix is always /usr
+            // 2. For files in /usr/local/bin, the prefix is always /usr/local
+            if !executable.starts_with("/bin")
+                && !executable.starts_with("/usr/bin")
+                && !executable.starts_with("/usr/local/bin")
+                && !prefix.starts_with("/usr")
+                && !prefix.starts_with("/usr/local")
+            {
+                return None;
             }
-        }
-        // Similarly the final exe can be /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
-        // & we might have another file `python3` in that bin directory which would point to the same exe.
-        // Lets get those as well.
-        if let Some(real_exe) = symlinks.iter().find(|s| {
-            s.to_string_lossy()
-                .contains("/Library/Developer/CommandLineTools/Library/Frameworks")
-        }) {
-            let python3 = real_exe.with_file_name("python3");
-            if !symlinks.contains(&python3) {
-                if let Some(symlink) = resolve_symlink(&python3) {
-                    if symlinks.contains(&symlink) {
-                        symlinks.push(python3);
-                    }
-                }
-            }
-        }
 
-        symlinks.sort();
-        symlinks.dedup();
-
-        if prefix.is_none() {
-            // We would have identified the symlinks by now.
-            // Look for the one with the path `/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9`
-            if let Some(symlink) = symlinks.iter().find(|s| {
-                s.to_string_lossy().starts_with("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions")
-            }) {
-                // Prefix is of the form `/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9`
-                // The symlink would be the same, all we need is to remove the last 2 components (exe and bin directory).
-                prefix = symlink.parent()?.parent().map(|p| p.to_path_buf());
+            // All known global linux are always installed in `/bin` or `/usr/bin`
+            if executable.starts_with("/bin") || executable.starts_with("/usr/bin") {
+                get_python_in_usr_bin(env)
+            } else if executable.starts_with("/usr/local/bin") {
+                get_python_in_usr_local_bin(env)
+            } else {
+                error!(
+                    "Invalid state, ex ({:?}) is not in any of /bin, /usr/bin, /usr/local/bin",
+                    executable
+                );
+                None
             }
+        } else {
+            None
         }
-
-        if version.is_none() {
-            if let Some(prefix) = &prefix {
-                version = version::from_header_files(prefix);
-            }
-        }
-        if version.is_none() || prefix.is_none() {
-            if let Some(resolved_env) = ResolvedPythonEnv::from(&env.executable) {
-                version = Some(resolved_env.version);
-                prefix = Some(resolved_env.prefix);
-            }
-        }
-
-        Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacCommandLineTools)
-                .executable(Some(env.executable.clone()))
-                .version(version)
-                .prefix(prefix)
-                .symlinks(Some(symlinks))
-                .build(),
-        )
     }
 
     fn find(&self, _reporter: &dyn Reporter) {
-        if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
-            return;
+        // No point looking in /usr/bin or /bin folder.
+        // We will end up looking in these global locations and spawning them in other parts.
+        // Here we cannot assume that anything in /usr/bin is a global Python, it could be a symlink or other.
+        // Safer approach is to just spawn it which we need to do to get the `sys.prefix`
+    }
+}
+
+fn get_python_in_usr_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
+    // If we do not have the prefix, then do not try
+    // This method will be called with resolved Python where prefix & version is available.
+    if env.version.clone().is_none() || env.prefix.clone().is_none() {
+        return None;
+    }
+    let executable = env.executable.clone();
+    let mut symlinks = env.symlinks.clone().unwrap_or_default();
+    symlinks.push(executable.clone());
+
+    let bin = PathBuf::from("/bin");
+    let usr_bin = PathBuf::from("/usr/bin");
+
+    // Possible this exe is a symlink to another file in the same directory.
+    // E.g. /usr/bin/python3 is a symlink to /usr/bin/python3.12
+    // let bin = executable.parent()?;
+    // We use canonicalize to get the real path of the symlink.
+    // Only used in this case, see notes for resolve_symlink.
+    if let Some(symlink) = resolve_symlink(&executable).or(fs::canonicalize(&executable).ok()) {
+        // Ensure this is a symlink in the bin or usr/bin directory.
+        if symlink.starts_with(&bin) || symlink.starts_with(&usr_bin) {
+            symlinks.push(symlink);
         }
+    }
 
-        for exe in find_executables("/Library/Developer/CommandLineTools/usr")
-            .iter()
-            .filter(
-                |f|                     // If this file name is `python3`, then ignore this for now.
-            // We would prefer to use `python3.x` instead of `python3`.
-            // That way its more consistent and future proof
-                f.file_name().unwrap_or_default() != "python3" &&
-                f.file_name().unwrap_or_default() != "python",
-            )
+    // Look for other symlinks in /usr/bin and /bin folder
+    // https://stackoverflow.com/questions/68728225/what-is-the-difference-between-usr-bin-python3-and-bin-python3
+    // We know that on linux there are symlinks in both places.
+    // & they all point to one exe and have the same version and same prefix.
+    for possible_symlink in [find_executables(&bin), find_executables(&usr_bin)].concat() {
+        if let Some(symlink) =
+            resolve_symlink(&possible_symlink).or(fs::canonicalize(&possible_symlink).ok())
         {
-            // These files should end up being symlinks to something like /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
-            let mut env = PythonEnv::new(exe.to_owned(), None, None);
-            let mut symlinks = vec![];
-            if let Some(symlink) = resolve_symlink(exe) {
-                // Symlinks must exist, they always point to something like the following
-                // /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
-                symlinks.push(symlink);
-            }
-
-            // Also check whether the corresponding python and python3 files in this directory point to the same files.
-            for python_exe in &["python", "python3"] {
-                let python_exe = exe.with_file_name(python_exe);
-                if let Some(symlink) = resolve_symlink(&python_exe) {
-                    if symlinks.contains(&symlink) {
-                        symlinks.push(python_exe);
-                    }
-                }
-            }
-            env.symlinks = Some(symlinks);
-            if let Some(env) = self.from(&env) {
-                _reporter.report_environment(&env);
+            // the file /bin/python3 is a symlink to /usr/bin/python3.12
+            // the file /bin/python3.12 is a symlink to /usr/bin/python3.12
+            // the file /usr/bin/python3 is a symlink to /usr/bin/python3.12
+            // Thus we have 3 symlinks pointing to the same exe /usr/bin/python3.12
+            if symlinks.contains(&symlink) {
+                symlinks.push(possible_symlink);
             }
         }
     }
+    symlinks.sort();
+    symlinks.dedup();
+
+    Some(
+        PythonEnvironmentBuilder::new(PythonEnvironmentCategory::LinuxGlobal)
+            .executable(Some(executable))
+            .version(env.version.clone())
+            .prefix(env.prefix.clone())
+            .symlinks(Some(symlinks))
+            .build(),
+    )
+}
+
+fn get_python_in_usr_local_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
+    // If we do not have the prefix, then do not try
+    // This method will be called with resolved Python where prefix & version is available.
+    if env.version.clone().is_none() || env.prefix.clone().is_none() {
+        return None;
+    }
+    let executable = env.executable.clone();
+    let mut symlinks = env.symlinks.clone().unwrap_or_default();
+    symlinks.push(executable.clone());
+
+    let usr_local_bin = PathBuf::from("/usr/local/bin");
+
+    // Possible this exe is a symlink to another file in the same directory.
+    // E.g. /usr/local/bin/python3 could be a symlink to /usr/local/bin/python3.12
+    // let bin = executable.parent()?;
+    // We use canonicalize to get the real path of the symlink.
+    // Only used in this case, see notes for resolve_symlink.
+    if let Some(symlink) = resolve_symlink(&executable).or(fs::canonicalize(&executable).ok()) {
+        // Ensure this is a symlink in the bin or usr/local/bin directory.
+        if symlink.starts_with(&usr_local_bin) {
+            symlinks.push(symlink);
+        }
+    }
+
+    // Look for other symlinks in this same folder
+    for possible_symlink in find_executables(&usr_local_bin) {
+        if let Some(symlink) =
+            resolve_symlink(&possible_symlink).or(fs::canonicalize(&possible_symlink).ok())
+        {
+            // the file /bin/python3 is a symlink to /usr/bin/python3.12
+            // the file /bin/python3.12 is a symlink to /usr/bin/python3.12
+            // the file /usr/bin/python3 is a symlink to /usr/bin/python3.12
+            // Thus we have 3 symlinks pointing to the same exe /usr/bin/python3.12
+            if symlinks.contains(&symlink) {
+                symlinks.push(possible_symlink);
+            }
+        }
+    }
+    symlinks.sort();
+    symlinks.dedup();
+
+    Some(
+        PythonEnvironmentBuilder::new(PythonEnvironmentCategory::LinuxGlobal)
+            .executable(Some(executable))
+            .version(env.version.clone())
+            .prefix(env.prefix.clone())
+            .symlinks(Some(symlinks))
+            .build(),
+    )
 }

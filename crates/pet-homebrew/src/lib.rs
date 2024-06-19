@@ -5,7 +5,10 @@ use env_variables::EnvVariables;
 use environment_locations::get_homebrew_prefix_bin;
 use environments::get_python_info;
 use pet_core::{
-    os_environment::Environment, python_environment::PythonEnvironment, reporter::Reporter, Locator,
+    os_environment::Environment,
+    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    reporter::Reporter,
+    Locator,
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::{env::PythonEnv, executable::find_executables};
@@ -90,6 +93,9 @@ fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
 }
 
 impl Locator for Homebrew {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+        vec![PythonEnvironmentCategory::Homebrew]
+    }
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         from(env)
     }
