@@ -1,6 +1,5 @@
 FROM arm64v8/python:3.11-alpine
 RUN apk add gcc libc-dev linux-headers musl-dev zlib zlib-dev python3-dev curl
-RUN python3 -m pip install ipykernel
 RUN sh -c "$(curl -fsSL https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh)" -- \
     -t powerlevel10k/powerlevel10k \
     -p git \
