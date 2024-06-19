@@ -161,13 +161,13 @@ jobs:
         run: cargo fetch
         shell: bash
 
-      - name: Run Tests
-        run: cargo test --frozen --all-features -- --nocapture
-        shell: bash
-
       - name: Find Environments
         if: matrix.run_cli == 'yes'
         run: cargo run --release --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Run Tests
+        run: cargo test --frozen --all-features -- --nocapture
         shell: bash
 
   builds:
