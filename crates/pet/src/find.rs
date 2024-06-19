@@ -211,7 +211,7 @@ fn find_python_environments(
                     &locators,
                     reporter,
                     is_workspace_folder,
-                    fallback_category
+                    fallback_category,
                 );
             });
         }
@@ -265,7 +265,9 @@ fn identify_python_executables_using_locators(
     for exe in executables.into_iter() {
         let executable = exe.clone();
         let env = PythonEnv::new(exe.to_owned(), None, None);
-        if let Some(env) = identify_python_environment_using_locators(&env, locators, fallback_category) {
+        if let Some(env) =
+            identify_python_environment_using_locators(&env, locators, fallback_category)
+        {
             reporter.report_environment(&env);
             continue;
         } else {
