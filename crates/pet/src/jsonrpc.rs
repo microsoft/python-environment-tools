@@ -12,7 +12,7 @@ use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
 };
-use pet_reporter::{environment::Environment, jsonrpc};
+use pet_reporter::{cache::CacheReporter, environment::Environment, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
@@ -39,9 +39,10 @@ pub fn start_jsonrpc_server() {
     // Hence passed around as Arcs via the context.
     let environment = EnvironmentApi::new();
     let jsonrpc_reporter = Arc::new(jsonrpc::create_reporter());
+    let reporter = Arc::new(CacheReporter::new(jsonrpc_reporter.clone()));
     let conda_locator = Arc::new(Conda::from(&environment));
     let context = Context {
-        reporter: jsonrpc_reporter,
+        reporter,
         locators: create_locators(conda_locator.clone()),
         conda_locator,
         configuration: RwLock::new(Configuration::default()),

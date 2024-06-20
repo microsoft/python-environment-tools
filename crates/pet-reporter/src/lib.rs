@@ -6,3 +6,4 @@ pub mod jsonrpc;
 pub mod manager;
 pub mod stdio;
 pub mod test;
+pub mod cache;
