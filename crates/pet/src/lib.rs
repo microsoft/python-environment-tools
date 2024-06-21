@@ -12,8 +12,12 @@ pub mod find;
 pub mod locators;
 pub mod resolve;
 
-pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool) {
-    stdio::initialize_logger(log::LevelFilter::Info);
+pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose: bool) {
+    stdio::initialize_logger(if verbose {
+        log::LevelFilter::Trace
+    } else {
+        log::LevelFilter::Info
+    });
     let now = SystemTime::now();
 
     let stdio_reporter = Arc::new(stdio::create_reporter(print_list));
@@ -25,13 +29,12 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool) {
     if let Ok(cwd) = env::current_dir() {
         config.search_paths = Some(vec![cwd]);
     }
+    let locators = create_locators(conda_locator.clone());
+    for locator in locators.iter() {
+        locator.configure(&config);
+    }
 
-    find_and_report_envs(
-        &reporter,
-        config,
-        &create_locators(conda_locator.clone()),
-        conda_locator,
-    );
+    find_and_report_envs(&reporter, config, &locators, conda_locator);
 
     if print_summary {
         let summary = stdio_reporter.get_summary();

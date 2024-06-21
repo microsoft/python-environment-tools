@@ -20,6 +20,7 @@ pub enum PythonEnvironmentCategory {
     PyenvVirtualEnv, // Pyenv virtualenvs.
     PyenvOther,      // Such as pyston, stackless, nogil, etc.
     Pipenv,
+    Poetry,
     System,
     MacPythonOrg,
     MacCommandLineTools,

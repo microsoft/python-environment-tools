@@ -9,6 +9,7 @@ use pet_core::reporter::Reporter;
 use pet_core::{Configuration, Locator};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
+use pet_poetry::Poetry;
 use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
@@ -52,11 +53,20 @@ pub fn find_and_report_envs(
             });
 
             // By now all conda envs have been found
-            // Get the conda info in a separate thread.
+            // Spawn conda  in a separate thread.
             // & see if we can find more environments by spawning conda.
             // But we will not wait for this to complete.
             thread::spawn(move || {
                 conda_locator.find_with_conda_executable(conda_executable);
+                Some(())
+            });
+            // By now all poetry envs have been found
+            // Spawn poetry exe in a separate thread.
+            // & see if we can find more environments by spawning poetry.
+            // But we will not wait for this to complete.
+            thread::spawn(move || {
+                let env = EnvironmentApi::new();
+                Poetry::new(&env).find_with_executable();
                 Some(())
             });
         });

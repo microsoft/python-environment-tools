@@ -22,6 +22,10 @@ enum Commands {
     Find {
         #[arg(short, long)]
         list: Option<bool>,
+
+        // Whether to display verbose output (defaults to just info).
+        #[arg(short, long)]
+        verbose: bool,
     },
     /// Starts the JSON RPC Server.
     Server,
@@ -30,8 +34,13 @@ enum Commands {
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command.unwrap_or(Commands::Find { list: Some(true) }) {
-        Commands::Find { list } => find_and_report_envs_stdio(list.unwrap_or(true), true),
+    match cli.command.unwrap_or(Commands::Find {
+        list: Some(true),
+        verbose: false,
+    }) {
+        Commands::Find { list, verbose } => {
+            find_and_report_envs_stdio(list.unwrap_or(true), true, verbose)
+        }
         Commands::Server => start_jsonrpc_server(),
     }
 }

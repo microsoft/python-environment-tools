@@ -9,6 +9,7 @@ fn tool_to_string(tool: &EnvManagerType) -> &'static str {
     match tool {
         EnvManagerType::Conda => "conda",
         EnvManagerType::Pyenv => "pyenv",
+        EnvManagerType::Poetry => "poery",
     }
 }
 

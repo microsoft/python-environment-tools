@@ -32,6 +32,7 @@ fn python_category_to_string(category: &PythonEnvironmentCategory) -> &'static s
         PythonEnvironmentCategory::Venv => "venv",
         PythonEnvironmentCategory::VirtualEnv => "virtualenv",
         PythonEnvironmentCategory::Unknown => "unknown",
+        PythonEnvironmentCategory::Poetry => "poetry",
     }
 }
 

@@ -9,6 +9,7 @@ use std::path::PathBuf;
 #[derive(Debug, Hash)]
 pub enum EnvManagerType {
     Conda,
+    Poetry,
     Pyenv,
 }
 
