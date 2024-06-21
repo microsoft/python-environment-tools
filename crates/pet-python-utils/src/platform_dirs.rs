@@ -30,14 +30,14 @@ impl Platformdirs {
             env::var("CSIDL_LOCAL_APPDATA")
                 .ok()
                 .map(PathBuf::from)
-                .map(|app_data| {
-                    self.append_app_name_and_version(app_data.join(&self.app_name).join("Cache"))
-                })
+                .or(env::var("USERPROFILE") // Fallback for CSIDL_LOCAL_APPDATA
+                    .ok()
+                    .map(|user| PathBuf::from(user).join("AppData").join("Local")))
+                .map(|app_data| self.append_app_name_and_version(app_data, Some("Cache")))
         } else if std::env::consts::OS == "macos" {
-            env::var("HOME")
-                .ok()
-                .map(PathBuf::from)
-                .map(|home| self.append_app_name_and_version(home.join("Library").join("Caches")))
+            env::var("HOME").ok().map(PathBuf::from).map(|home| {
+                self.append_app_name_and_version(home.join("Library").join("Caches"), None)
+            })
         } else {
             let mut path = env::var("XDG_CACHE_HOME").ok().map(PathBuf::from);
             if path.is_none() {
@@ -46,7 +46,7 @@ impl Platformdirs {
                     .map(PathBuf::from)
                     .map(|home| home.join(".cache"));
             }
-            path.map(|path| self.append_app_name_and_version(path))
+            path.map(|path| self.append_app_name_and_version(path, None))
         }
     }
 
@@ -62,24 +62,32 @@ impl Platformdirs {
                     .map(PathBuf::from)
                     .map(|home| home.join(".config"));
             }
-            path.map(|path| self.append_app_name_and_version(path))
+            path.map(|path| self.append_app_name_and_version(path, None))
         }
     }
     /// Maps to the user_data_dir function in platformdirs package (Python)
     pub fn user_data_dir(&self) -> Option<PathBuf> {
         if std::env::consts::OS == "windows" {
-            let var = if self.roaming {
-                "CSIDL_APPDATA"
+            let app_data = if self.roaming {
+                env::var("CSIDL_APPDATA").ok().map(PathBuf::from).or(
+                    env::var("USERPROFILE") // Fallback for CSIDL_LOCAL_APPDATA
+                        .ok()
+                        .map(|user| PathBuf::from(user).join("AppData").join("Roaming")),
+                )
             } else {
-                "CSIDL_LOCAL_APPDATA"
+                env::var("CSIDL_LOCAL_APPDATA").ok().map(PathBuf::from).or(
+                    env::var("USERPROFILE") // Fallback for CSIDL_LOCAL_APPDATA
+                        .ok()
+                        .map(|user| PathBuf::from(user).join("AppData").join("Local")),
+                )
             };
-            env::var(var)
-                .ok()
-                .map(PathBuf::from)
-                .map(|app_data| self.append_app_name_and_version(app_data))
+            app_data.map(|app_data| self.append_app_name_and_version(app_data, None))
         } else if std::env::consts::OS == "macos" {
             env::var("HOME").ok().map(PathBuf::from).map(|home| {
-                self.append_app_name_and_version(home.join("Library").join("Application Support"))
+                self.append_app_name_and_version(
+                    home.join("Library").join("Application Support"),
+                    None,
+                )
             })
         } else {
             let mut path = env::var("XDG_DATA_HOME").ok().map(PathBuf::from);
@@ -89,14 +97,19 @@ impl Platformdirs {
                     .map(PathBuf::from)
                     .map(|home| home.join(".local").join("share"));
             }
-            path.map(|path| self.append_app_name_and_version(path))
+            path.map(|path| self.append_app_name_and_version(path, None))
         }
     }
 
-    fn append_app_name_and_version(&self, path: PathBuf) -> PathBuf {
-        let path = path.join(&self.app_name);
+    fn append_app_name_and_version(&self, path: PathBuf, suffix: Option<&str>) -> PathBuf {
+        let mut path = path.join(&self.app_name);
         if let Some(version) = &self.version {
-            path.join(version)
+            path = path.join(version)
+        } else {
+            path = path
+        }
+        if let Some(suffix) = suffix {
+            path.join(suffix)
         } else {
             path
         }

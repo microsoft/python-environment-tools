@@ -3,6 +3,7 @@
 
 use base64::{engine::general_purpose, Engine as _};
 use lazy_static::lazy_static;
+use log::trace;
 use pet_core::python_environment::PythonEnvironment;
 use pet_fs::path::norm_case;
 use regex::Regex;
@@ -38,10 +39,19 @@ pub fn list_environments(
     for project_dir in project_dirs {
         if let Some(pyproject_toml) = PyProjectToml::find(project_dir) {
             let virtualenv_prefix = generate_env_name(&pyproject_toml.name, project_dir);
+            trace!(
+                "Found pyproject.toml ({}): {:?} in {:?}",
+                virtualenv_prefix,
+                pyproject_toml.name,
+                project_dir
+            );
 
-            for virtual_env in
+            for virtual_env in [
                 list_all_environments_from_project_config(&global_config, project_dir, env)
-                    .unwrap_or(global_envs.clone())
+                    .unwrap_or_default(),
+                global_envs.clone(),
+            ]
+            .concat()
             {
                 // Check if this virtual env belongs to this project
                 let name = virtual_env
@@ -66,15 +76,21 @@ fn list_all_environments_from_project_config(
     path: &Path,
     env: &EnvVariables,
 ) -> Option<Vec<PathBuf>> {
-    let config = Config::find_local(path, env)?;
+    let config = Config::find_local(path, env);
     let mut envs = vec![];
-    if let Some(project_envs) = list_all_environments_from_config(&config) {
-        envs.extend(project_envs);
+
+    if let Some(config) = &config {
+        if let Some(project_envs) = list_all_environments_from_config(config) {
+            envs.extend(project_envs);
+        }
     }
 
     // Check if we're allowed to use .venv as a poetry env
     // This can be configured in global, project or env variable.
-    if config.virtualenvs_in_project
+    if config
+        .clone()
+        .map(|c| c.virtualenvs_in_project)
+        .unwrap_or_default()
         || global
             .clone()
             .map(|config| config.virtualenvs_in_project)
@@ -113,9 +129,13 @@ pub fn generate_env_name(name: &str, cwd: &PathBuf) -> String {
         .chars()
         .take(42)
         .collect::<String>();
-    let normalized_cwd = norm_case(Path::new(cwd));
+    let normalized_cwd = if cfg!(windows) {
+        norm_case(cwd).to_str().unwrap_or_default().to_lowercase()
+    } else {
+        norm_case(cwd).to_str().unwrap_or_default().to_string()
+    };
     let mut hasher = Sha256::new();
-    hasher.update(normalized_cwd.to_str().unwrap().as_bytes());
+    hasher.update(normalized_cwd.as_bytes());
     let h_bytes = hasher.finalize();
     let h_str = general_purpose::URL_SAFE
         .encode(h_bytes)
@@ -130,6 +150,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)]
     fn test_hash_generation() {
         let hashed_name = generate_env_name(
             "poetry-demo",
@@ -137,5 +158,27 @@ mod tests {
         );
 
         assert_eq!(hashed_name, "poetry-demo-gNT2WXAV-py");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_hash_generation_upper_case() {
+        let hashed_name = generate_env_name(
+            "new-project",
+            &"/Users/donjayamanne/temp/POETRY-UPPER/new-PROJECT".into(),
+        );
+
+        assert_eq!(hashed_name, "new-project-TbBV0MKD-py");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_hash_generation_windows() {
+        let hashed_name = generate_env_name(
+            "demo-project1",
+            &"C:\\temp\\poetry-folders\\demo-project1".into(),
+        );
+
+        assert_eq!(hashed_name, "demo-project1-f7sQRtG5-py");
     }
 }

@@ -182,6 +182,11 @@ impl Locator for Poetry {
 
     fn find(&self, reporter: &dyn Reporter) {
         if let Some(result) = self.find_with_cache() {
+            if let Ok(manager) = self.manager.lock() {
+                if let Some(manager) = manager.as_ref() {
+                    reporter.report_manager(&manager.to_manager());
+                }
+            }
             for found_env in result.environments {
                 if let Some(manager) = &found_env.manager {
                     reporter.report_manager(manager);

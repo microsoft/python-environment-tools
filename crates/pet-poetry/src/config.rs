@@ -17,11 +17,11 @@ static _APP_NAME: &str = "pypoetry";
 pub struct Config {
     pub virtualenvs_in_project: bool,
     pub virtualenvs_path: PathBuf,
-    pub file: PathBuf,
+    pub file: Option<PathBuf>,
 }
 
 impl Config {
-    fn new(file: PathBuf, virtualenvs_path: PathBuf, virtualenvs_in_project: bool) -> Self {
+    fn new(file: Option<PathBuf>, virtualenvs_path: PathBuf, virtualenvs_in_project: bool) -> Self {
         trace!(
             "Poetry config file: {:?} with virtualenv.path {:?}",
             file,
@@ -34,47 +34,31 @@ impl Config {
         }
     }
     pub fn find_global(env: &EnvVariables) -> Option<Self> {
-        let file = find_config_file(env)?;
-        create_config(&file, env)
+        let file = find_config_file(env);
+        create_config(file, env)
     }
     pub fn find_local(path: &Path, env: &EnvVariables) -> Option<Self> {
         let file = path.join("poetry.toml");
         if file.is_file() {
-            create_config(&file, env)
+            create_config(Some(file), env)
         } else {
             None
         }
     }
 }
 
-fn create_config(file: &Path, env: &EnvVariables) -> Option<Config> {
-    let cfg = parse(file)?;
-
-    if let Some(virtualenvs_path) = &cfg.virtualenvs_path {
+fn create_config(file: Option<PathBuf>, env: &EnvVariables) -> Option<Config> {
+    let cfg = file.clone().and_then(|f| parse(&f));
+    if let Some(virtualenvs_path) = &cfg.clone().and_then(|cfg| cfg.virtualenvs_path) {
         return Some(Config::new(
-            file.to_path_buf(),
+            file.clone(),
             virtualenvs_path.clone(),
-            cfg.virtualenvs_in_project,
+            cfg.map(|cfg| cfg.virtualenvs_in_project)
+                .unwrap_or_default(),
         ));
     }
-
-    let cache_dir = match cfg.cache_dir {
-        Some(cache_dir) => {
-            if cache_dir.is_dir() {
-                Some(cache_dir)
-            } else {
-                get_default_cache_dir(env)
-            }
-        }
-        None => get_default_cache_dir(env),
-    };
-
-    if let Some(cache_dir) = cache_dir {
-        Some(Config::new(
-            file.to_path_buf(),
-            cache_dir.join("virtualenvs"),
-            cfg.virtualenvs_in_project,
-        ))
+    if let Some(cache_dir) = get_default_cache_dir(env) {
+        Some(Config::new(file, cache_dir.join("virtualenvs"), false))
     } else {
         None
     }
@@ -106,6 +90,7 @@ fn find_config_file(env: &EnvVariables) -> Option<PathBuf> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ConfigToml {
     virtualenvs_in_project: bool,
     cache_dir: Option<PathBuf>,
