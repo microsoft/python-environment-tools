@@ -58,10 +58,10 @@ impl PoetryManager {
                     search_paths.push(
                         // https://python-poetry.org/docs/#installing-with-the-official-installer
                         app_data
-                        .join("pypoetry")
-                        .join("venv")
-                        .join("Scripts")
-                        .join("poetry"),
+                            .join("pypoetry")
+                            .join("venv")
+                            .join("Scripts")
+                            .join("poetry"),
                     );
                     search_paths.push(
                         app_data.join("Python").join("scripts").join("poetry.exe"), // https://python-poetry.org/docs/#installing-with-the-official-installer
