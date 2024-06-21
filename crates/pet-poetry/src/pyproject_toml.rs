@@ -10,13 +10,12 @@ use log::trace;
 
 pub struct PyProjectToml {
     pub name: String,
-    pub file: PathBuf,
 }
 
 impl PyProjectToml {
     pub fn new(name: String, file: PathBuf) -> Self {
         trace!("Poetry project: {:?} with name {:?}", file, name);
-        PyProjectToml { name, file }
+        PyProjectToml { name }
     }
     pub fn find(path: &Path) -> Option<Self> {
         parse(&path.join("pyproject.toml"))

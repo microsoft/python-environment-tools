@@ -57,11 +57,9 @@ fn create_config(file: Option<PathBuf>, env: &EnvVariables) -> Option<Config> {
                 .unwrap_or_default(),
         ));
     }
-    if let Some(cache_dir) = get_default_cache_dir(env) {
-        Some(Config::new(file, cache_dir.join("virtualenvs"), false))
-    } else {
-        None
-    }
+
+    get_default_cache_dir(env)
+        .map(|cache_dir| Config::new(file, cache_dir.join("virtualenvs"), false))
 }
 /// Maps to DEFAULT_CACHE_DIR in poetry
 fn get_default_cache_dir(env: &EnvVariables) -> Option<PathBuf> {
