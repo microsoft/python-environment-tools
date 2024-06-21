@@ -105,8 +105,6 @@ impl Platformdirs {
         let mut path = path.join(&self.app_name);
         if let Some(version) = &self.version {
             path = path.join(version)
-        } else {
-            path = path
         }
         if let Some(suffix) = suffix {
             path.join(suffix)
