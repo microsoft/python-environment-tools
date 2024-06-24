@@ -8,8 +8,7 @@ use std::{
 
 use env_variables::EnvVariables;
 use environments::{
-    get_generic_environment, get_pure_python_environment, get_virtual_env_environment,
-    list_pyenv_environments,
+    get_generic_python_environment, get_virtual_env_environment, list_pyenv_environments,
 };
 use manager::PyEnvInfo;
 use pet_conda::{utils::is_conda_env, CondaLocator};
@@ -53,7 +52,6 @@ impl Locator for PyEnv {
         vec![
             PythonEnvironmentCategory::Pyenv,
             PythonEnvironmentCategory::PyenvVirtualEnv,
-            PythonEnvironmentCategory::PyenvOther,
         ]
     }
 
@@ -103,15 +101,11 @@ impl Locator for PyEnv {
             let manager = managers.clone();
             if env.executable.starts_with(versions) {
                 let env_path = env.prefix.clone()?;
-                if let Some(env) = get_pure_python_environment(&env.executable, &env_path, &manager)
+                if let Some(env) = get_virtual_env_environment(&env.executable, &env_path, &manager)
                 {
                     return Some(env);
                 } else if let Some(env) =
-                    get_virtual_env_environment(&env.executable, &env_path, &manager)
-                {
-                    return Some(env);
-                } else if let Some(env) =
-                    get_generic_environment(&env.executable, &env_path, &manager)
+                    get_generic_python_environment(&env.executable, &env_path, &manager)
                 {
                     return Some(env);
                 }

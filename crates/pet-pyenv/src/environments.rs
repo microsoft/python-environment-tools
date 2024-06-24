@@ -63,15 +63,11 @@ pub fn list_pyenv_environments(
                                 });
                             }
                         } else if let Some(env) =
-                            get_pure_python_environment(&executable, &path, &manager)
-                        {
-                            envs.lock().unwrap().push(env);
-                        } else if let Some(env) =
                             get_virtual_env_environment(&executable, &path, &manager)
                         {
                             envs.lock().unwrap().push(env);
                         } else if let Some(env) =
-                            get_generic_environment(&executable, &path, &manager)
+                            get_generic_python_environment(&executable, &path, &manager)
                         {
                             envs.lock().unwrap().push(env);
                         }
@@ -89,7 +85,7 @@ pub fn list_pyenv_environments(
     })
 }
 
-pub fn get_pure_python_environment(
+pub fn get_generic_python_environment(
     executable: &Path,
     path: &Path,
     manager: &Option<EnvManager>,
@@ -126,22 +122,6 @@ pub fn get_virtual_env_environment(
         PythonEnvironmentBuilder::new(PythonEnvironmentCategory::PyenvVirtualEnv)
             .executable(Some(executable.to_path_buf()))
             .version(Some(version))
-            .prefix(Some(path.to_path_buf()))
-            .manager(manager.clone())
-            .symlinks(Some(find_executables(path)))
-            .build(),
-    )
-}
-
-pub fn get_generic_environment(
-    executable: &Path,
-    path: &Path,
-    manager: &Option<EnvManager>,
-) -> Option<PythonEnvironment> {
-    Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentCategory::PyenvOther)
-            .executable(Some(executable.to_path_buf()))
-            .version(version::from_header_files(path))
             .prefix(Some(path.to_path_buf()))
             .manager(manager.clone())
             .symlinks(Some(find_executables(path)))

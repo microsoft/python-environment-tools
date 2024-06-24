@@ -266,7 +266,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/nogil-3.9.10-1/bin/python",
         ])),
-        category: PythonEnvironmentCategory::PyenvOther,
+        category: PythonEnvironmentCategory::Pyenv,
         version: Some("3.9.10".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -288,7 +288,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/pypy3.9-7.3.15/bin/python",
         ])),
-        category: PythonEnvironmentCategory::PyenvOther,
+        category: PythonEnvironmentCategory::Pyenv,
         version: Some("3.9.18".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
