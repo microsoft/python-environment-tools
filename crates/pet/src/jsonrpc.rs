@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use log::{error, trace};
+use log::{error, info, trace};
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
 use pet_core::{
@@ -68,13 +68,13 @@ pub struct RequestOptions {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RefreshResult {
-    duration: Option<u128>,
+    duration: u128,
 }
 
 impl RefreshResult {
-    pub fn new(duration: Result<Duration, SystemTimeError>) -> RefreshResult {
+    pub fn new(duration: Duration) -> RefreshResult {
         RefreshResult {
-            duration: duration.ok().map(|d| d.as_millis()),
+            duration: duration.as_millis(),
         }
     }
 }
@@ -90,14 +90,30 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
             for locator in context.locators.iter() {
                 locator.configure(&config);
             }
-            let now = SystemTime::now();
-            find_and_report_envs(
+            let summary = find_and_report_envs(
                 context.reporter.as_ref(),
                 config,
                 &context.locators,
                 context.conda_locator.clone(),
             );
-            send_reply(id, Some(RefreshResult::new(now.elapsed())));
+            let summary = summary.lock().unwrap();
+            for locator in summary.find_locators_times.iter() {
+                info!("Locator {} took {:?}", locator.0, locator.1);
+            }
+            info!(
+                "Environments found using locators in {:?}",
+                summary.find_locators_time
+            );
+            info!("Environments in PATH found in {:?}", summary.find_path_time);
+            info!(
+                "Environments in global virtual env paths found in {:?}",
+                summary.find_global_virtual_envs_time
+            );
+            info!(
+                "Environments in custom search paths found in {:?}",
+                summary.find_search_paths_time
+            );
+            send_reply(id, Some(RefreshResult::new(summary.time)));
         }
         Err(e) => {
             send_reply(id, None::<u128>);

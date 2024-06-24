@@ -48,6 +48,9 @@ impl PyEnv {
 }
 
 impl Locator for PyEnv {
+    fn get_name(&self) -> &'static str {
+        "PyEnv"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![
             PythonEnvironmentCategory::Pyenv,

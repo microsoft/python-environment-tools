@@ -28,6 +28,9 @@ impl Default for MacCmdLineTools {
     }
 }
 impl Locator for MacCmdLineTools {
+    fn get_name(&self) -> &'static str {
+        "MacCmdLineTools"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::MacCommandLineTools]
     }

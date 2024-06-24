@@ -134,6 +134,9 @@ impl Poetry {
 }
 
 impl Locator for Poetry {
+    fn get_name(&self) -> &'static str {
+        "Poetry"
+    }
     fn configure(&self, config: &Configuration) {
         if let Some(search_paths) = &config.search_paths {
             if !search_paths.is_empty() {

@@ -34,9 +34,32 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
         locator.configure(&config);
     }
 
-    find_and_report_envs(&reporter, config, &locators, conda_locator);
+    let summary = find_and_report_envs(&reporter, config, &locators, conda_locator);
 
     if print_summary {
+        let summary = summary.lock().unwrap();
+        println!();
+        println!("Breakdown by each locator:");
+        for locator in summary.find_locators_times.iter() {
+            println!("Locator {} took {:?}", locator.0, locator.1);
+        }
+        println!();
+
+        println!("Breakdown:");
+        println!(
+            "Environments found using locators in {:?}",
+            summary.find_locators_time
+        );
+        println!("Environments in PATH found in {:?}", summary.find_path_time);
+        println!(
+            "Environments in global virtual env paths found in {:?}",
+            summary.find_global_virtual_envs_time
+        );
+        println!(
+            "Environments in custom search paths found in {:?}",
+            summary.find_search_paths_time
+        );
+        println!();
         let summary = stdio_reporter.get_summary();
         if !summary.managers.is_empty() {
             println!("Managers:");

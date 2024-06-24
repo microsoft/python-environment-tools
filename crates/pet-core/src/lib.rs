@@ -34,6 +34,8 @@ pub struct Configuration {
 }
 
 pub trait Locator: Send + Sync {
+    /// Returns the name of the locator.
+    fn get_name(&self) -> &'static str;
     fn configure(&self, _config: &Configuration) {
         //
     }
