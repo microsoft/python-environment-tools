@@ -32,6 +32,11 @@ impl Homebrew {
     }
 }
 
+/// Deafult prefix paths for Homebrew
+/// Below are from the docs `man brew`      Display Homebrew’s install path. Default:
+/// - macOS ARM: /opt/homebrew
+/// - macOS Intel: /usr/local
+/// - Linux: /home/linuxbrew/.linuxbrew
 fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
     // Assume we create a virtual env from a homebrew python install,
     // Then the exe in the virtual env bin will be a symlink to the homebrew python install.

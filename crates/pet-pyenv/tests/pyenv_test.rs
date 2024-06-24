@@ -266,7 +266,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/nogil-3.9.10-1/bin/python",
         ])),
-        category: PythonEnvironmentCategory::PyenvOther,
+        category: PythonEnvironmentCategory::Pyenv,
         version: Some("3.9.10".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -288,7 +288,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/pypy3.9-7.3.15/bin/python",
         ])),
-        category: PythonEnvironmentCategory::PyenvOther,
+        category: PythonEnvironmentCategory::Pyenv,
         version: Some("3.9.18".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -385,7 +385,7 @@ fn resolve_pyenv_environment() {
         create_test_environment(HashMap::new(), Some(home.clone()), vec![homebrew_bin], None);
 
     let conda = Arc::new(Conda::from(&environment));
-    let locator = PyEnv::from(&environment, conda);
+    let locator = PyEnv::from(&environment, conda.clone());
     // let mut result = locator.find().unwrap();
 
     let expected_manager = EnvManager {
@@ -462,7 +462,7 @@ fn resolve_pyenv_environment() {
 
     assert_eq!(result.unwrap(), expected_virtual_env);
 
-    // Should resolve conda envs in pyenv
+    // Should not resolve conda envs in pyenv
     let result = locator.from(&PythonEnv::new(
         resolve_test_path(&[
             home.to_str().unwrap(),
@@ -475,5 +475,21 @@ fn resolve_pyenv_environment() {
         None,
     ));
 
+    assert_eq!(result.is_none(), true);
+
+    // Should not resolve conda envs using Conda Locator
+    let result = conda.from(&PythonEnv::new(
+        resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/anaconda-4.0.0/bin/python",
+        ]),
+        Some(resolve_test_path(&[
+            home.to_str().unwrap(),
+            ".pyenv/versions/anaconda-4.0.0",
+        ])),
+        None,
+    ));
+
     assert_eq!(result.is_some(), true);
+    assert_eq!(result.unwrap().category, PythonEnvironmentCategory::Conda);
 }

@@ -18,8 +18,8 @@ pub enum PythonEnvironmentCategory {
     Pyenv,           // Relates to Python installations in pyenv that are from Python org.
     GlobalPaths,     // Python found in global locations like PATH, /usr/bin etc.
     PyenvVirtualEnv, // Pyenv virtualenvs.
-    PyenvOther,      // Such as pyston, stackless, nogil, etc.
     Pipenv,
+    Poetry,
     System,
     MacPythonOrg,
     MacCommandLineTools,

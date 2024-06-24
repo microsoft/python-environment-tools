@@ -12,7 +12,12 @@ use pet_core::{
 use pet_python_utils::executable::{find_executable, find_executables};
 use pet_python_utils::version;
 use regex::Regex;
-use std::{fs, path::Path, sync::Arc};
+use std::{
+    fs,
+    path::Path,
+    sync::{Arc, Mutex},
+    thread,
+};
 
 lazy_static! {
     // Stable Versions = like 3.10.10
@@ -34,49 +39,60 @@ pub fn list_pyenv_environments(
     versions_dir: &Path,
     conda_locator: &Arc<dyn CondaLocator>,
 ) -> Option<LocatorResult> {
-    let mut envs: Vec<PythonEnvironment> = vec![];
-    let mut managers: Vec<EnvManager> = vec![];
+    let envs = Arc::new(Mutex::new(vec![]));
+    let managers = Arc::new(Mutex::new(vec![]));
 
-    for path in fs::read_dir(versions_dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-    {
-        if let Some(executable) = find_executable(&path) {
-            if is_conda_env(&path) {
-                if let Some(result) = conda_locator.find_in(&path) {
-                    result.environments.iter().for_each(|e| {
-                        envs.push(e.clone());
-                    });
-                    result.managers.iter().for_each(|e| {
-                        managers.push(e.clone());
+    thread::scope(|s| {
+        if let Ok(reader) = fs::read_dir(versions_dir) {
+            for path in reader.filter_map(Result::ok).map(|e| e.path()) {
+                if let Some(executable) = find_executable(&path) {
+                    let path = path.clone();
+                    let executable = executable.clone();
+                    let conda_locator = conda_locator.clone();
+                    let manager = manager.clone();
+                    let envs = envs.clone();
+                    let managers = managers.clone();
+                    s.spawn(move || {
+                        if is_conda_env(&path) {
+                            if let Some(result) = conda_locator.find_in(&path) {
+                                result.environments.iter().for_each(|e| {
+                                    envs.lock().unwrap().push(e.clone());
+                                });
+                                result.managers.iter().for_each(|e| {
+                                    managers.lock().unwrap().push(e.clone());
+                                });
+                            }
+                        } else if let Some(env) =
+                            get_virtual_env_environment(&executable, &path, &manager)
+                        {
+                            envs.lock().unwrap().push(env);
+                        } else if let Some(env) =
+                            get_generic_python_environment(&executable, &path, &manager)
+                        {
+                            envs.lock().unwrap().push(env);
+                        }
                     });
                 }
-            } else if let Some(env) = get_pure_python_environment(&executable, &path, manager) {
-                envs.push(env);
-            } else if let Some(env) = get_virtual_env_environment(&executable, &path, manager) {
-                envs.push(env);
-            } else if let Some(env) = get_generic_environment(&executable, &path, manager) {
-                envs.push(env);
             }
         }
-    }
+    });
 
+    let managers = managers.lock().unwrap();
+    let envs = envs.lock().unwrap();
     Some(LocatorResult {
-        managers,
-        environments: envs,
+        managers: managers.clone(),
+        environments: envs.clone(),
     })
 }
 
-pub fn get_pure_python_environment(
+pub fn get_generic_python_environment(
     executable: &Path,
     path: &Path,
     manager: &Option<EnvManager>,
 ) -> Option<PythonEnvironment> {
     let file_name = path.file_name()?.to_string_lossy().to_string();
-    let version = get_version(&file_name)?;
     // If we can get the version from the header files, thats more accurate.
-    let version = version::from_header_files(path).unwrap_or(version.clone());
+    let version = version::from_header_files(path).or_else(|| get_version(&file_name));
 
     let arch = if file_name.ends_with("-win32") {
         Some(Architecture::X86)
@@ -87,7 +103,7 @@ pub fn get_pure_python_environment(
     Some(
         PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Pyenv)
             .executable(Some(executable.to_path_buf()))
-            .version(Some(version))
+            .version(version)
             .prefix(Some(path.to_path_buf()))
             .manager(manager.clone())
             .arch(arch)
@@ -106,23 +122,6 @@ pub fn get_virtual_env_environment(
         PythonEnvironmentBuilder::new(PythonEnvironmentCategory::PyenvVirtualEnv)
             .executable(Some(executable.to_path_buf()))
             .version(Some(version))
-            .prefix(Some(path.to_path_buf()))
-            .manager(manager.clone())
-            .symlinks(Some(find_executables(path)))
-            .build(),
-    )
-}
-
-pub fn get_generic_environment(
-    executable: &Path,
-    path: &Path,
-    manager: &Option<EnvManager>,
-) -> Option<PythonEnvironment> {
-    let version = version::from_header_files(path);
-    Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentCategory::PyenvOther)
-            .executable(Some(executable.to_path_buf()))
-            .version(version)
             .prefix(Some(path.to_path_buf()))
             .manager(manager.clone())
             .symlinks(Some(find_executables(path)))

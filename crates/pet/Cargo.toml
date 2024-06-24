@@ -16,7 +16,6 @@ pet-homebrew = { path = "../pet-homebrew" }
 [dependencies]
 pet-core = { path = "../pet-core" }
 pet-conda = { path = "../pet-conda" }
-pet-global = { path = "../pet-global" }
 pet-jsonrpc = { path = "../pet-jsonrpc" }
 pet-fs = { path = "../pet-fs" }
 pet-pyenv = { path = "../pet-pyenv" }

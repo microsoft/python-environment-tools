@@ -4,6 +4,7 @@
 pub mod env;
 pub mod executable;
 mod headers;
+pub mod platform_dirs;
 pub mod pyvenv_cfg;
 pub mod version;
 

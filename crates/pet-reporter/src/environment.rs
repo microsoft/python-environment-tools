@@ -24,7 +24,6 @@ fn python_category_to_string(category: &PythonEnvironmentCategory) -> &'static s
         PythonEnvironmentCategory::LinuxGlobal => "linux-global",
         PythonEnvironmentCategory::Pyenv => "pyenv",
         PythonEnvironmentCategory::PyenvVirtualEnv => "pyenv-virtualenv",
-        PythonEnvironmentCategory::PyenvOther => "pyenv-other",
         PythonEnvironmentCategory::WindowsStore => "windows-store",
         PythonEnvironmentCategory::WindowsRegistry => "windows-registry",
         PythonEnvironmentCategory::Pipenv => "pipenv",
@@ -32,6 +31,7 @@ fn python_category_to_string(category: &PythonEnvironmentCategory) -> &'static s
         PythonEnvironmentCategory::Venv => "venv",
         PythonEnvironmentCategory::VirtualEnv => "virtualenv",
         PythonEnvironmentCategory::Unknown => "unknown",
+        PythonEnvironmentCategory::Poetry => "poetry",
     }
 }
 
