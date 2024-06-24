@@ -25,8 +25,25 @@ lazy_static! {
 
 pub fn list_environments(
     env: &EnvVariables,
-    project_dirs: &Vec<PathBuf>,
+    project_dirs: &[PathBuf],
 ) -> Option<Vec<PythonEnvironment>> {
+    if project_dirs.is_empty() {
+        return None;
+    }
+
+    let project_dirs = project_dirs
+        .iter()
+        .map(|project_dir| (project_dir, PyProjectToml::find(project_dir)))
+        .filter_map(|(project_dir, pyproject_toml)| {
+            pyproject_toml.map(|pyproject_toml| (project_dir, pyproject_toml))
+        })
+        .collect::<Vec<_>>();
+
+    // We're only interested in directories that have a pyproject.toml
+    if project_dirs.is_empty() {
+        return None;
+    }
+
     let mut envs = vec![];
 
     let global_config = Config::find_global(env);
@@ -35,34 +52,31 @@ pub fn list_environments(
         global_envs = list_all_environments_from_config(&config).unwrap_or_default();
     }
 
-    // We're only interested in directories that have a pyproject.toml
-    for project_dir in project_dirs {
-        if let Some(pyproject_toml) = PyProjectToml::find(project_dir) {
-            let virtualenv_prefix = generate_env_name(&pyproject_toml.name, project_dir);
-            trace!(
-                "Found pyproject.toml ({}): {:?} in {:?}",
-                virtualenv_prefix,
-                pyproject_toml.name,
-                project_dir
-            );
+    for (project_dir, pyproject_toml) in project_dirs {
+        let virtualenv_prefix = generate_env_name(&pyproject_toml.name, project_dir);
+        trace!(
+            "Found pyproject.toml ({}): {:?} in {:?}",
+            virtualenv_prefix,
+            pyproject_toml.name,
+            project_dir
+        );
 
-            for virtual_env in [
-                list_all_environments_from_project_config(&global_config, project_dir, env)
-                    .unwrap_or_default(),
-                global_envs.clone(),
-            ]
-            .concat()
-            {
-                // Check if this virtual env belongs to this project
-                let name = virtual_env
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_str()
-                    .unwrap_or_default();
-                if name.starts_with(&virtualenv_prefix) {
-                    if let Some(env) = create_poetry_env(&virtual_env, project_dir.clone(), None) {
-                        envs.push(env);
-                    }
+        for virtual_env in [
+            list_all_environments_from_project_config(&global_config, project_dir, env)
+                .unwrap_or_default(),
+            global_envs.clone(),
+        ]
+        .concat()
+        {
+            // Check if this virtual env belongs to this project
+            let name = virtual_env
+                .file_name()
+                .unwrap_or_default()
+                .to_str()
+                .unwrap_or_default();
+            if name.starts_with(&virtualenv_prefix) {
+                if let Some(env) = create_poetry_env(&virtual_env, project_dir.clone(), None) {
+                    envs.push(env);
                 }
             }
         }
@@ -76,27 +90,19 @@ fn list_all_environments_from_project_config(
     path: &Path,
     env: &EnvVariables,
 ) -> Option<Vec<PathBuf>> {
-    let config = Config::find_local(path, env);
+    let local = Config::find_local(path, env);
     let mut envs = vec![];
 
-    if let Some(config) = &config {
-        if let Some(project_envs) = list_all_environments_from_config(config) {
+    if let Some(local) = &local {
+        if let Some(project_envs) = list_all_environments_from_config(local) {
             envs.extend(project_envs);
         }
     }
 
     // Check if we're allowed to use .venv as a poetry env
     // This can be configured in global, project or env variable.
-    if config
-        .clone()
-        .map(|c| c.virtualenvs_in_project)
-        .unwrap_or_default()
-        || global
-            .clone()
-            .map(|config| config.virtualenvs_in_project)
-            .unwrap_or(false)
-        || env.poetry_virtualenvs_in_project.unwrap_or_default()
-    {
+    // Order of preference is Global, EnvVariable & Project (project wins)
+    if should_use_local_venv_as_poetry_env(global, &local, env) {
         // If virtualenvs are in the project, then look for .venv
         let venv = path.join(".venv");
         if venv.is_dir() {
@@ -104,6 +110,30 @@ fn list_all_environments_from_project_config(
         }
     }
     Some(envs)
+}
+
+fn should_use_local_venv_as_poetry_env(
+    global: &Option<Config>,
+    local: &Option<Config>,
+    env: &EnvVariables,
+) -> bool {
+    // Give preference to setting in local config file.
+    if let Some(poetry_virtualenvs_in_project) =
+        local.clone().and_then(|c| c.virtualenvs_in_project)
+    {
+        return poetry_virtualenvs_in_project;
+    }
+
+    // Given preference to env variable.
+    if let Some(poetry_virtualenvs_in_project) = env.poetry_virtualenvs_in_project {
+        return poetry_virtualenvs_in_project;
+    }
+
+    // Check global config setting.
+    global
+        .clone()
+        .and_then(|config| config.virtualenvs_in_project)
+        .unwrap_or_default()
 }
 
 fn list_all_environments_from_config(cfg: &Config) -> Option<Vec<PathBuf>> {

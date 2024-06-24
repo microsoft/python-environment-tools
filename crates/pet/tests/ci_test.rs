@@ -217,6 +217,7 @@ fn get_conda_exe() -> &'static str {
 #[derive(Deserialize, Clone)]
 struct InterpreterInfo {
     sys_prefix: String,
+    #[allow(dead_code)]
     executable: String,
     sys_version: String,
     is64_bit: bool,

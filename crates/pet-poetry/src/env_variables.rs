@@ -9,11 +9,19 @@ use std::path::PathBuf;
 // Lets be explicit, this way we never miss a value (in Windows or Unix).
 pub struct EnvVariables {
     pub home: Option<PathBuf>,
-    pub appdata: Option<PathBuf>,
+    /// Only used in tests, None in production.
+    pub root: Option<PathBuf>,
+    /// Maps to env var `APPDATA`
+    pub app_data: Option<PathBuf>,
+    /// Maps to env var `POETRY_HOME`
     pub poetry_home: Option<PathBuf>,
+    /// Maps to env var `POETRY_CONFIG_DIR`
     pub poetry_config_dir: Option<PathBuf>,
+    /// Maps to env var `POETRY_CACHE_DIR`
     pub poetry_cache_dir: Option<PathBuf>,
+    /// Maps to env var `POETRY_VIRTUALENVS_IN_PROJECT`
     pub poetry_virtualenvs_in_project: Option<bool>,
+    /// Maps to env var `PATH`
     pub path: Option<String>,
 }
 
@@ -36,7 +44,8 @@ impl EnvVariables {
         EnvVariables {
             home,
             path: env.get_env_var("PATH".to_string()),
-            appdata: env.get_env_var("APPDATA".to_string()).map(PathBuf::from),
+            root: env.get_root(),
+            app_data: env.get_env_var("APPDATA".to_string()).map(PathBuf::from),
             poetry_cache_dir: env
                 .get_env_var("POETRY_CACHE_DIR".to_string())
                 .map(PathBuf::from),

@@ -24,6 +24,7 @@ impl PoetryManager {
         if let Some(home) = &env_variables.home {
             let mut search_paths = vec![
                 home.join(".poetry").join("bin").join("poetry"),
+                // Found after installing on Mac using pipx
                 home.join(".local")
                     .join("pipx")
                     .join("venvs")
@@ -38,7 +39,7 @@ impl PoetryManager {
                 search_paths.push(poetry_home.join("bin").join("poetry"));
             }
             if std::env::consts::OS == "windows" {
-                if let Some(app_data) = env_variables.appdata.clone() {
+                if let Some(app_data) = env_variables.app_data.clone() {
                     search_paths.push(
                         // https://python-poetry.org/docs/#installing-with-the-official-installer
                         app_data

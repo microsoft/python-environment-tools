@@ -84,6 +84,7 @@ fn finds_conda_rc_from_root() {
     use pet_conda::conda_rc::Condarc;
     use std::path::PathBuf;
 
+    print!("root: {:?}", resolve_test_path(&["unix", "conda_rc_root", "root"]));
     let root = resolve_test_path(&["unix", "conda_rc_root", "root"]);
     let home = resolve_test_path(&["unix", "conda_rc_root", "user_home"]);
     let env = create_env_variables(home, root);

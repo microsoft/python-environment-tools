@@ -13,7 +13,7 @@ pub struct PyProjectToml {
 }
 
 impl PyProjectToml {
-    pub fn new(name: String, file: PathBuf) -> Self {
+    fn new(name: String, file: PathBuf) -> Self {
         trace!("Poetry project: {:?} with name {:?}", file, name);
         PyProjectToml { name }
     }
@@ -24,8 +24,11 @@ impl PyProjectToml {
 
 fn parse(file: &Path) -> Option<PyProjectToml> {
     let contents = fs::read_to_string(file).ok()?;
+    parse_contents(&contents, file)
+}
 
-    match toml::from_str::<toml::Value>(&contents) {
+fn parse_contents(contents: &str, file: &Path) -> Option<PyProjectToml> {
+    match toml::from_str::<toml::Value>(contents) {
         Ok(value) => {
             let mut name = None;
             if let Some(tool) = value.get("tool") {
@@ -46,12 +49,12 @@ fn parse(file: &Path) -> Option<PyProjectToml> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::Value;
+    use super::*;
+    use std::path::Path;
 
     #[test]
-    fn extract_name_from_pypoetry_toml() {
-        let cfg: Value = toml::from_str(
-            r#"
+    fn extract_name_from_pyproject_toml() {
+        let cfg = r#"
 [tool.poetry]
 name = "poetry-demo"
 version = "0.1.0"
@@ -66,11 +69,11 @@ python = "^3.12"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-"#,
-        )
-        .unwrap();
+"#;
         assert_eq!(
-            cfg["tool"]["poetry"]["name"].as_str().unwrap(),
+            parse_contents(&cfg.to_string(), Path::new("pyproject.toml"))
+                .unwrap()
+                .name,
             "poetry-demo"
         );
     }

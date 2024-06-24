@@ -4,7 +4,6 @@
 use env_variables::EnvVariables;
 use environment_locations::list_environments;
 use log::{error, warn};
-use manager::PoetryManager;
 use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentCategory},
@@ -12,6 +11,7 @@ use pet_core::{
     Configuration, Locator, LocatorResult,
 };
 use pet_python_utils::env::PythonEnv;
+use pet_virtualenv::is_virtualenv;
 use std::{
     path::PathBuf,
     sync::{
@@ -20,12 +20,12 @@ use std::{
     },
 };
 
-mod config;
-mod env_variables;
+pub mod config;
+pub mod env_variables;
 mod environment;
-mod environment_locations;
+pub mod environment_locations;
 mod environment_locations_spawn;
-mod manager;
+pub mod manager;
 mod pyproject_toml;
 
 pub struct Poetry {
@@ -33,19 +33,17 @@ pub struct Poetry {
     pub env_vars: EnvVariables,
     pub poetry_executable: Arc<Mutex<Option<PathBuf>>>,
     searched: AtomicBool,
-    environments: Arc<Mutex<Vec<PythonEnvironment>>>,
-    manager: Arc<Mutex<Option<PoetryManager>>>,
+    search_result: Arc<Mutex<Option<LocatorResult>>>,
 }
 
 impl Poetry {
     pub fn new(environment: &dyn Environment) -> Self {
         Poetry {
             searched: AtomicBool::new(false),
+            search_result: Arc::new(Mutex::new(None)),
             project_dirs: Arc::new(Mutex::new(vec![])),
             env_vars: EnvVariables::from(environment),
             poetry_executable: Arc::new(Mutex::new(None)),
-            environments: Arc::new(Mutex::new(vec![])),
-            manager: Arc::new(Mutex::new(None)),
         }
     }
     pub fn from(environment: &dyn Environment) -> impl Locator {
@@ -95,54 +93,42 @@ impl Poetry {
         Some(())
     }
     fn find_with_cache(&self) -> Option<LocatorResult> {
-        if let Ok(environments) = self.environments.lock() {
-            if !environments.is_empty() {
-                if let Ok(manager) = self.manager.lock() {
-                    if let Some(manager) = manager.as_ref() {
-                        return Some(LocatorResult {
-                            managers: vec![manager.to_manager()],
-                            environments: environments.clone(),
-                        });
-                    }
-                }
-            }
-            if self.searched.load(Ordering::Relaxed) {
-                return None;
-            }
+        if self.searched.load(Ordering::Relaxed) {
+            return self.search_result.lock().unwrap().clone();
         }
         // First find the manager
         let manager = manager::PoetryManager::find(
             self.poetry_executable.lock().unwrap().clone(),
             &self.env_vars,
         );
-        let mut managers = vec![];
+        let mut result = LocatorResult {
+            managers: vec![],
+            environments: vec![],
+        };
         if let Some(manager) = manager {
-            let mut mgr = self.manager.lock().unwrap();
-            mgr.replace(manager.clone());
-            drop(mgr);
-            managers.push(manager.to_manager());
+            result.managers.push(manager.to_manager());
         }
-        let project_dirs = self.project_dirs.lock().unwrap().clone();
+        if let Ok(values) = self.project_dirs.lock() {
+            let project_dirs = values.clone();
+            drop(values);
+            let envs = list_environments(&self.env_vars, &project_dirs.clone()).unwrap_or_default();
+            result.environments.extend(envs.clone());
+        }
 
-        if let Some(result) = list_environments(&self.env_vars, &project_dirs) {
-            match self.environments.lock() {
-                Ok(mut environments) => {
-                    environments.clear();
-                    environments.extend(result);
-                    self.searched.store(true, Ordering::Relaxed);
-                    Some(LocatorResult {
-                        managers: managers.clone(),
-                        environments: environments.clone(),
-                    })
-                }
-                Err(err) => {
-                    error!("Failed to cache to Poetry environments: {:?}", err);
+        match self.search_result.lock().as_mut() {
+            Ok(search_result) => {
+                if result.managers.is_empty() && result.environments.is_empty() {
+                    search_result.take();
                     None
+                } else {
+                    search_result.replace(result.clone());
+                    Some(result)
                 }
             }
-        } else {
-            self.searched.store(true, Ordering::Relaxed);
-            None
+            Err(err) => {
+                error!("Failed to cache to Poetry environments: {:?}", err);
+                None
+            }
         }
     }
 }
@@ -168,6 +154,9 @@ impl Locator for Poetry {
     }
 
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+        if !is_virtualenv(env) {
+            return None;
+        }
         if let Some(result) = self.find_with_cache() {
             for found_env in result.environments {
                 if let Some(symlinks) = &found_env.symlinks {
@@ -182,15 +171,10 @@ impl Locator for Poetry {
 
     fn find(&self, reporter: &dyn Reporter) {
         if let Some(result) = self.find_with_cache() {
-            if let Ok(manager) = self.manager.lock() {
-                if let Some(manager) = manager.as_ref() {
-                    reporter.report_manager(&manager.to_manager());
-                }
+            for manager in result.managers {
+                reporter.report_manager(&manager.clone());
             }
             for found_env in result.environments {
-                if let Some(manager) = &found_env.manager {
-                    reporter.report_manager(manager);
-                }
                 reporter.report_environment(&found_env);
             }
         }

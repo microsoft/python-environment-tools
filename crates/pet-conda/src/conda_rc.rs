@@ -72,6 +72,8 @@ fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
 // Search paths documented here
 // https://conda.io/projects/conda/en/latest/user-guide/configuration/use-condarc.html#searching-for-condarc
 fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
+    use crate::utils::change_root_of_path;
+
     let mut search_paths: Vec<PathBuf> = [
         "/etc/conda/.condarc",
         "/etc/conda/condarc",
@@ -82,16 +84,7 @@ fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
     ]
     .iter()
     .map(PathBuf::from)
-    .map(|p| {
-        // This only applies in tests.
-        // We need this, as the root folder cannot be mocked.
-        if let Some(ref root) = env_vars.root {
-            // Strip the first `/` (this path is only for testing purposes)
-            root.join(&p.to_string_lossy()[1..])
-        } else {
-            p
-        }
-    })
+    .map(|p| change_root_of_path(&p, &env_vars.root))
     .collect();
 
     if let Some(ref conda_root) = env_vars.conda_root {

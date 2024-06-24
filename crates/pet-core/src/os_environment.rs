@@ -7,9 +7,7 @@ use pet_fs::path::norm_case;
 
 pub trait Environment {
     fn get_user_home(&self) -> Option<PathBuf>;
-    /**
-     * Only used in tests, this is the root `/`.
-     */
+    /// Only used in tests, None in production.
     #[allow(dead_code)]
     fn get_root(&self) -> Option<PathBuf>;
     fn get_env_var(&self, key: String) -> Option<String>;

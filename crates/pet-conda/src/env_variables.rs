@@ -10,6 +10,7 @@ use pet_core::os_environment::Environment;
 // Lets be explicit, this way we never miss a value (in Windows or Unix).
 pub struct EnvVariables {
     pub home: Option<PathBuf>,
+    /// Only used in tests, None in production.
     pub root: Option<PathBuf>,
     pub path: Option<String>,
     pub userprofile: Option<String>,
