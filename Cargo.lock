@@ -340,7 +340,6 @@ dependencies = [
  "pet-fs",
  "pet-python-utils",
  "pet-reporter",
- "pet-virtualenv",
  "regex",
  "serde",
  "serde_json",

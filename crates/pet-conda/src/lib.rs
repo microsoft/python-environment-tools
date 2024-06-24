@@ -14,14 +14,13 @@ use pet_core::{
     Locator, LocatorResult,
 };
 use pet_python_utils::env::PythonEnv;
-use pet_virtualenv::is_virtualenv;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
 };
-use utils::is_conda_install;
+use utils::{is_conda_env, is_conda_install};
 
 mod conda_info;
 pub mod conda_rc;
@@ -151,15 +150,29 @@ impl Locator for Conda {
         vec![PythonEnvironmentCategory::Conda]
     }
     fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
-        // Assume we create a virtual env from a conda python install,
-        // Doing this is a big no no, but people do this.
-        // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
-        // Hence the first part of the condition will be true, but the second part will be false.
-        if is_virtualenv(env) {
-            return None;
+        // Possible we do not have the prefix, but this exe is in the bin directory and its a conda env or root conda install.
+        let mut prefix = env.prefix.clone();
+        if prefix.is_none() {
+            if let Some(parent_dir) = &env.executable.parent() {
+                if is_conda_env(parent_dir) {
+                    // This is a conda env (most likely root conda env as the exe is in the same directory (generally on windows))
+                    prefix = Some(parent_dir.to_path_buf());
+                } else if parent_dir.ends_with("bin") || parent_dir.ends_with("Scripts") {
+                    if let Some(parent_dir) = parent_dir.parent() {
+                        if is_conda_env(parent_dir) {
+                            // This is a conda env
+                            prefix = Some(parent_dir.to_path_buf());
+                        }
+                    }
+                }
+            }
         }
 
-        if let Some(ref path) = env.prefix {
+        if let Some(ref path) = prefix {
+            if !is_conda_env(path) {
+                return None;
+            }
+
             let mut environments = self.environments.lock().unwrap();
 
             // Do we already have an env for this.
