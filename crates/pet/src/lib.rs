@@ -40,12 +40,14 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
         let summary = summary.lock().unwrap();
         println!();
         println!("Breakdown by each locator:");
+        println!("--------------------------");
         for locator in summary.find_locators_times.iter() {
             println!("Locator {} took {:?}", locator.0, locator.1);
         }
         println!();
 
         println!("Breakdown:");
+        println!("----------");
         println!(
             "Environments found using locators in {:?}",
             summary.find_locators_time
