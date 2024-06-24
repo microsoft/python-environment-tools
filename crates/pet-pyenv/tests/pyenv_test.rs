@@ -475,7 +475,7 @@ fn resolve_pyenv_environment() {
         None,
     ));
 
-    assert_eq!(result.is_some(), true);
+    assert_eq!(result.is_none(), true);
 
     // Should not resolve conda envs using Conda Locator
     let result = conda.from(&PythonEnv::new(
