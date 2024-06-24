@@ -193,6 +193,8 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
             }
             // Sometimes we can have paths like
             // # cmd: C:\Users\donja\miniconda3\lib\site-packages\conda\__main__.py create --yes --prefix .conda python=3.9
+            // # cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --prefix .conda python=3.12
+
             let mut cmd_line = cmd_line.to_path_buf();
             if cmd_line
                 .to_str()
@@ -201,10 +203,8 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
                 && cmd_line.to_str().unwrap_or_default().contains("lib")
             {
                 loop {
-                    if cmd_line
-                        .to_str()
-                        .unwrap_or_default()
-                        .contains("site-packages")
+                    if cmd_line.to_str().unwrap_or_default().contains("lib")
+                        && !cmd_line.to_str().unwrap_or_default().ends_with("lib")
                     {
                         let _ = cmd_line.pop();
                     } else {
@@ -253,7 +253,6 @@ pub fn get_activation_command(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(windows)]
     use super::*;
 
     #[test]
@@ -275,5 +274,17 @@ mod tests {
         let conda_dir = get_conda_dir_from_cmd(line.to_string());
 
         assert!(conda_dir.is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn parse_cmd_line() {
+        let line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --prefix .conda python=3.12";
+        let conda_dir = get_conda_dir_from_cmd(line.to_string()).unwrap();
+
+        assert_eq!(
+            conda_dir,
+            PathBuf::from("/Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3")
+        );
     }
 }
