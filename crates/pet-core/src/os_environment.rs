@@ -5,10 +5,8 @@ use std::{
     env,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::SystemTime,
 };
 
-use log::info;
 use pet_fs::path::norm_case;
 
 pub trait Environment {
@@ -118,7 +116,6 @@ impl Environment for EnvironmentApi {
             });
 
             if let Some(home) = self.get_user_home() {
-                // PathBuf::from("~/.local/bin"),
                 paths.push(home.join(".local").join("bin"));
             }
 

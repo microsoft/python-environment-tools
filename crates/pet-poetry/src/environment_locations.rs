@@ -143,7 +143,6 @@ fn list_all_environments_from_config(cfg: &Config) -> Option<Vec<PathBuf>> {
             .filter_map(Result::ok)
             // .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
             .map(|entry| entry.path())
-            // .filter(|path| path.is_dir())
             .collect(),
     )
 }

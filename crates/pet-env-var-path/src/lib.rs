@@ -2,11 +2,12 @@
 // Licensed under the MIT License.
 
 use pet_core::os_environment::Environment;
-use std::{collections::HashSet, path::PathBuf};
+use std::path::PathBuf;
 
 pub fn get_search_paths_from_env_variables(environment: &dyn Environment) -> Vec<PathBuf> {
     // Exclude files from this folder, as they would have been discovered elsewhere (widows_store)
     // Also the exe is merely a pointer to another file.
+    #[allow(unused_variables)]
     if let Some(home) = environment.get_user_home() {
         #[cfg(windows)]
         let apps_path = home
@@ -35,13 +36,9 @@ pub fn get_search_paths_from_env_variables(environment: &dyn Environment) -> Vec
             if invalid_search_paths_on_unix.contains(&p) {
                 return false;
             }
-            if invalid_search_paths_suffixes_on_unix
+            !invalid_search_paths_suffixes_on_unix
                 .iter()
                 .any(|s| p.ends_with(s))
-            {
-                return false;
-            }
-            return true;
         };
 
         #[cfg(windows)]
@@ -51,7 +48,7 @@ pub fn get_search_paths_from_env_variables(environment: &dyn Environment) -> Vec
             .get_know_global_search_locations()
             .clone()
             .into_iter()
-            .filter(|p| filter_path(p))
+            .filter(filter_path)
             .collect::<Vec<PathBuf>>()
     } else {
         Vec::new()

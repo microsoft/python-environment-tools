@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use std::{sync::Arc, thread};
 
 use crate::locators::identify_python_environment_using_locators;

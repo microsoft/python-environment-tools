@@ -53,8 +53,9 @@ pub fn list_global_virtual_envs_paths(
     user_home: Option<PathBuf>,
 ) -> Vec<PathBuf> {
     let mut python_envs: Vec<PathBuf> = vec![];
-    for root_dir in get_global_virtualenv_dirs(work_on_home_env_var, user_home).iter()
-    // .filter(|d| d.is_dir() && d.exists())
+    for root_dir in get_global_virtualenv_dirs(work_on_home_env_var, user_home)
+    // .iter()
+    // .filter(|d| d.exists())
     {
         if let Ok(dirs) = fs::read_dir(root_dir) {
             python_envs.append(

@@ -5,7 +5,7 @@ use conda_info::CondaInfo;
 use env_variables::EnvVariables;
 use environment_locations::{get_conda_environment_paths, get_environments};
 use environments::{get_conda_environment_info, CondaEnvironment};
-use log::{error, info, warn};
+use log::{error, warn};
 use manager::CondaManager;
 use pet_core::{
     os_environment::Environment,
@@ -15,7 +15,7 @@ use pet_core::{
 };
 use pet_python_utils::env::PythonEnv;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
@@ -41,6 +41,7 @@ pub struct Conda {
     pub environments: Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
     pub managers: Arc<Mutex<HashMap<PathBuf, CondaManager>>>,
     pub env_vars: EnvVariables,
+    conda_dirs_searched: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 impl Conda {
@@ -50,6 +51,7 @@ impl Conda {
             environments: Arc::new(Mutex::new(HashMap::new())),
             managers: Arc::new(Mutex::new(HashMap::new())),
             env_vars: EnvVariables::from(env),
+            conda_dirs_searched: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }
@@ -93,6 +95,15 @@ impl CondaLocator for Conda {
         if !is_conda_install(conda_dir) {
             return None;
         }
+        // Do we already have an env for this.
+        if self.conda_dirs_searched.lock().unwrap().contains(conda_dir) {
+            return None;
+        }
+        self.conda_dirs_searched
+            .lock()
+            .unwrap()
+            .insert(conda_dir.to_path_buf());
+
         if let Some(manager) = CondaManager::from(conda_dir) {
             let conda_dir = manager.conda_dir.clone();
             // Keep track to search again later.
@@ -104,11 +115,20 @@ impl CondaLocator for Conda {
             drop(managers);
 
             let mut new_environments = vec![];
-            info!("ENUMERATE IN {:?}", conda_dir);
+            let paths = get_environments(&conda_dir);
+            paths.iter().for_each(|p| {
+                self.conda_dirs_searched
+                    .lock()
+                    .unwrap()
+                    .insert(p.to_path_buf());
+            });
             // Find all the environments in the conda install folder. (under `envs` folder)
-            for conda_env in
-                get_conda_environments(&get_environments(&conda_dir), &manager.clone().into())
-            {
+            for conda_env in get_conda_environments(&paths, &manager.clone().into()) {
+                self.conda_dirs_searched
+                    .lock()
+                    .unwrap()
+                    .insert(conda_dir.to_path_buf());
+
                 let mut environments = self.environments.lock().unwrap();
                 if environments.contains_key(&conda_env.prefix) {
                     continue;
@@ -227,7 +247,16 @@ impl Locator for Conda {
             let possible_conda_envs = get_conda_environment_paths(&env_vars, &additional_paths);
             for path in possible_conda_envs {
                 s.spawn(move || {
-                    // 2. Get the details of the conda environment
+                    // Do we already have an env for this.
+                    if self.conda_dirs_searched.lock().unwrap().contains(&path) {
+                        return None;
+                    }
+                    self.conda_dirs_searched
+                        .lock()
+                        .unwrap()
+                        .insert(path.to_path_buf());
+
+                        // 2. Get the details of the conda environment
                     // This we do not get any details, then its not a conda environment
                     let env = get_conda_environment_info(&path, &None)?;
 

@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use lazy_static::lazy_static;
-use log::{info, trace};
+use log::trace;
 use regex::Regex;
 use std::{
     fs,
@@ -85,7 +85,6 @@ pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
                     // .filter(|d| d.file_type().is_ok_and(|f| f.is_file() || f.is_symlink()))
                     .map(|d| d.path())
                     .filter(|f| is_python_executable_name(f))
-                    // .inspect(|f| info!("Found python executable: {:?} in {:?}", f.clone(), env_path))
                     .collect(),
             );
         }

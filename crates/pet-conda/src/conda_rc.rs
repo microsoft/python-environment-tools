@@ -65,6 +65,10 @@ fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
         search_paths.append(&mut vec![PathBuf::from(condarc)]);
     }
 
+    // let search_paths = search_paths
+    //     .into_iter()
+    //     .filter(|p| p.exists())
+    //     .collect::<Vec<PathBuf>>();
     search_paths
 }
 
@@ -123,6 +127,10 @@ fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
         search_paths.append(&mut vec![PathBuf::from(condarc)]);
     }
 
+    // let search_paths = search_paths
+    //     .into_iter()
+    //     .filter(|p| p.exists())
+    //     .collect::<Vec<PathBuf>>();
     search_paths
 }
 
@@ -154,7 +162,10 @@ fn parse_conda_rc(conda_rc: &Path) -> Option<Condarc> {
             if line.trim().starts_with('-') {
                 if let Some(env_dir) = line.split_once('-').map(|x| x.1) {
                     // Directories in conda-rc are where `envs` are stored.
-                    env_dirs.push(norm_case(&PathBuf::from(env_dir.trim()).join("envs")));
+                    let path = PathBuf::from(env_dir.trim()).join("envs");
+                    // if path.exists() {
+                    env_dirs.push(norm_case(&path));
+                    // }
                 }
                 continue;
             } else {

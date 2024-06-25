@@ -6,7 +6,7 @@ use crate::{
     env_variables::EnvVariables,
     utils::{is_conda_env, is_conda_install},
 };
-use log::{info, trace};
+use log::trace;
 use pet_fs::path::norm_case;
 use std::{
     fs,
@@ -16,17 +16,12 @@ use std::{
 
 pub fn get_conda_environment_paths(
     env_vars: &EnvVariables,
-    additional_env_dirs: &Vec<PathBuf>,
+    additional_env_dirs: &[PathBuf],
 ) -> Vec<PathBuf> {
     let mut env_paths = thread::scope(|s| {
         let mut envs = vec![];
         for thread in [
-            s.spawn(|| {
-                get_conda_envs_from_environment_txt(env_vars)
-                    .iter()
-                    .map(PathBuf::from)
-                    .collect::<Vec<PathBuf>>()
-            }),
+            s.spawn(|| get_conda_envs_from_environment_txt(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_conda_rc(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_known_paths(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_additional_paths(additional_env_dirs)),
@@ -90,10 +85,6 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
         #[cfg(unix)]
         let known_conda_paths = [home.join(PathBuf::from(".conda").join("envs"))];
         for path in known_conda_paths.iter().filter(|p| p.exists()) {
-            info!(
-                "ENUMERATING (get_conda_environment_paths_from_known_paths) {:?}",
-                path
-            );
             // We prefix with home only for testing purposes.
             let full_path = home.join(path);
             if let Ok(entries) = fs::read_dir(full_path) {
@@ -112,14 +103,10 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
 }
 
 fn get_conda_environment_paths_from_additional_paths(
-    additional_env_dirs: &Vec<PathBuf>,
+    additional_env_dirs: &[PathBuf],
 ) -> Vec<PathBuf> {
     let mut env_paths: Vec<PathBuf> = vec![];
     for path in additional_env_dirs.iter().filter(|p| p.exists()) {
-        info!(
-            "ENUMERATING (get_conda_environment_paths_from_additional_paths) {:?}",
-            path
-        );
         if let Ok(entries) = fs::read_dir(path) {
             env_paths.push(
                 entries
@@ -130,7 +117,7 @@ fn get_conda_environment_paths_from_additional_paths(
             );
         }
     }
-    env_paths.append(&mut additional_env_dirs.clone());
+    env_paths.append(&mut additional_env_dirs.into());
     env_paths
 }
 
@@ -143,10 +130,6 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
         envs.push(conda_dir.to_path_buf());
 
         if let Ok(entries) = fs::read_dir(conda_dir.join("envs")) {
-            info!(
-                "ENUMERATING (get_environments.1) {:?}",
-                conda_dir.join("envs")
-            );
             envs.append(
                 &mut entries
                     .filter_map(Result::ok)
@@ -167,10 +150,6 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
         // I.e. its not necessarily the root conda install directory.
         // E.g. C:\Users\donjayamanne\.conda
         if let Ok(entries) = fs::read_dir(conda_dir.join("envs")) {
-            info!(
-                "ENUMERATING (get_environments.2) {:?}",
-                conda_dir.join("envs")
-            );
             envs.append(
                 &mut entries
                     .filter_map(Result::ok)
@@ -195,7 +174,10 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
         if let Ok(reader) = fs::read_to_string(environment_txt.clone()) {
             trace!("Found environments.txt file {:?}", environment_txt);
             for line in reader.lines() {
-                envs.push(norm_case(&PathBuf::from(line.to_string())));
+                let path = PathBuf::from(line.to_string());
+                // if path.exists() {
+                envs.push(norm_case(&path));
+                // }
             }
         }
     }
@@ -304,5 +286,6 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     known_paths.sort();
     known_paths.dedup();
 
+    // known_paths.into_iter().filter(|p| p.exists()).collect()
     known_paths
 }
