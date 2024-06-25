@@ -21,12 +21,7 @@ pub fn get_conda_environment_paths(
     let mut env_paths = thread::scope(|s| {
         let mut envs = vec![];
         for thread in [
-            s.spawn(|| {
-                get_conda_envs_from_environment_txt(env_vars)
-                    .iter()
-                    .map(PathBuf::from)
-                    .collect::<Vec<PathBuf>>()
-            }),
+            s.spawn(|| get_conda_envs_from_environment_txt(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_conda_rc(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_known_paths(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_additional_paths(additional_env_dirs)),
