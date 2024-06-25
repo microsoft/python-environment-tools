@@ -49,10 +49,8 @@ pub fn find_conda_binary(env_vars: &EnvVariables) -> Option<PathBuf> {
     for path in env::split_paths(&paths) {
         for bin in get_conda_bin_names() {
             let conda_path = path.join(bin);
-            if let Ok(metadata) = std::fs::metadata(&conda_path) {
-                if metadata.is_file() || metadata.is_symlink() {
-                    return Some(conda_path);
-                }
+            if conda_path.is_file() || conda_path.is_symlink() {
+                return Some(conda_path);
             }
         }
     }

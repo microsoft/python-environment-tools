@@ -49,13 +49,11 @@ pub fn get_version(path: &Path) -> Option<String> {
             // Try the other path
             // Sometimes we have it in a sub directory such as `python3.10` or `pypy3.9`
             if let Ok(readdir) = fs::read_dir(&headers_path) {
-                for path in readdir.filter_map(Result::ok) {
-                    if let Ok(t) = path.file_type() {
-                        if !t.is_dir() {
-                            continue;
-                        }
-                    }
-                    let path = path.path();
+                for path in readdir
+                    .filter_map(Result::ok)
+                    // .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+                    .map(|d| d.path())
+                {
                     let patchlevel_h = path.join("patchlevel.h");
                     if let Ok(result) = fs::read_to_string(patchlevel_h) {
                         contents = result;
