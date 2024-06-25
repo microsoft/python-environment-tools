@@ -44,7 +44,11 @@ pub fn list_pyenv_environments(
 
     thread::scope(|s| {
         if let Ok(reader) = fs::read_dir(versions_dir) {
-            for path in reader.filter_map(Result::ok).map(|e| e.path()) {
+            for path in reader
+                .filter_map(Result::ok)
+                // .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+                .map(|e| e.path())
+            {
                 if let Some(executable) = find_executable(&path) {
                     let path = path.clone();
                     let executable = executable.clone();

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use log::{trace, warn};
+use log::{info, trace, warn};
 use pet_conda::Conda;
 use pet_core::arch::Architecture;
 use pet_core::os_environment::EnvironmentApi;

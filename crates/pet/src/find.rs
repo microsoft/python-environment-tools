@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::{sync::Arc, thread};
 
 use crate::locators::identify_python_environment_using_locators;
@@ -186,6 +186,7 @@ fn find_python_environments_in_workspace_folders_recursive(
             // I.e. no point looking for python environments in a Python environment.
             let paths = paths
                 .into_iter()
+                // .filter(|p| p.exists())
                 .filter(|p| !p.join(bin).exists())
                 .collect::<Vec<PathBuf>>();
 
@@ -270,6 +271,7 @@ fn find_python_environments_in_paths_with_locators(
         // I.e. bin/python will almost always exist.
         paths
             .iter()
+            .filter(|p| p.exists())
             // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
             // Hence do not just look for files in a bin directory of the path.
             .flat_map(|p| find_executable(p))
@@ -278,6 +280,7 @@ fn find_python_environments_in_paths_with_locators(
     } else {
         paths
             .iter()
+            .filter(|p| p.exists())
             // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
             // Hence do not just look for files in a bin directory of the path.
             .flat_map(find_executables)
@@ -290,8 +293,14 @@ fn find_python_environments_in_paths_with_locators(
             })
             .collect::<Vec<PathBuf>>()
     };
-
-    identify_python_executables_using_locators(executables, locators, reporter, fallback_category);
+    if !executables.is_empty() {
+        identify_python_executables_using_locators(
+            executables,
+            locators,
+            reporter,
+            fallback_category,
+        );
+    }
 }
 
 fn identify_python_executables_using_locators(

@@ -6,7 +6,7 @@ use crate::{
     env_variables::EnvVariables,
     utils::{is_conda_env, is_conda_install},
 };
-use log::trace;
+use log::{info, trace};
 use pet_fs::path::norm_case;
 use std::{
     fs,
@@ -79,26 +79,31 @@ fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<Pat
 fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
     let mut env_paths: Vec<PathBuf> = vec![];
     if let Some(ref home) = env_vars.home {
-        let known_conda_paths = [
-            PathBuf::from(".conda").join("envs"),
+        #[cfg(windows)]
+        let known_conda_paths = [home.join(
             PathBuf::from("AppData")
                 .join("Local")
                 .join("conda")
                 .join("conda")
                 .join("envs"),
-        ];
-        for path in known_conda_paths {
+        )];
+        #[cfg(unix)]
+        let known_conda_paths = [home.join(PathBuf::from(".conda").join("envs"))];
+        for path in known_conda_paths.iter().filter(|p| p.exists()) {
+            info!(
+                "ENUMERATING (get_conda_environment_paths_from_known_paths) {:?}",
+                path
+            );
             // We prefix with home only for testing purposes.
             let full_path = home.join(path);
             if let Ok(entries) = fs::read_dir(full_path) {
-                for entry in entries.filter_map(Result::ok) {
-                    let path = entry.path();
-                    if let Ok(meta) = fs::metadata(&path) {
-                        if meta.is_dir() {
-                            env_paths.push(path);
-                        }
-                    }
-                }
+                env_paths.append(
+                    &mut entries
+                        .filter_map(Result::ok)
+                        // .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+                        .map(|d| d.path())
+                        .collect(),
+                );
             }
         }
     }
@@ -110,16 +115,19 @@ fn get_conda_environment_paths_from_additional_paths(
     additional_env_dirs: &Vec<PathBuf>,
 ) -> Vec<PathBuf> {
     let mut env_paths: Vec<PathBuf> = vec![];
-    for path in additional_env_dirs {
+    for path in additional_env_dirs.iter().filter(|p| p.exists()) {
+        info!(
+            "ENUMERATING (get_conda_environment_paths_from_additional_paths) {:?}",
+            path
+        );
         if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.filter_map(Result::ok) {
-                let path = entry.path();
-                if let Ok(meta) = fs::metadata(&path) {
-                    if meta.is_dir() {
-                        env_paths.push(path);
-                    }
-                }
-            }
+            env_paths.push(
+                entries
+                    .filter_map(Result::ok)
+                    // .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+                    .map(|d| d.path())
+                    .collect(),
+            );
         }
     }
     env_paths.append(&mut additional_env_dirs.clone());
@@ -128,15 +136,22 @@ fn get_conda_environment_paths_from_additional_paths(
 
 pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
     let mut envs: Vec<PathBuf> = vec![];
-
+    if !conda_dir.exists() || !conda_dir.is_dir() {
+        return envs;
+    }
     if is_conda_install(conda_dir) {
         envs.push(conda_dir.to_path_buf());
 
         if let Ok(entries) = fs::read_dir(conda_dir.join("envs")) {
+            info!(
+                "ENUMERATING (get_environments.1) {:?}",
+                conda_dir.join("envs")
+            );
             envs.append(
                 &mut entries
                     .filter_map(Result::ok)
-                    .map(|e| e.path())
+                    // .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+                    .map(|d| d.path())
                     .filter(|p| is_conda_env(p))
                     .collect(),
             );
@@ -147,14 +162,19 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
         }
     } else if is_conda_env(conda_dir) {
         envs.push(conda_dir.to_path_buf());
-    } else if fs::metadata(conda_dir.join("envs")).is_ok() {
+    } else {
         // This could be a directory where conda environments are stored.
         // I.e. its not necessarily the root conda install directory.
         // E.g. C:\Users\donjayamanne\.conda
         if let Ok(entries) = fs::read_dir(conda_dir.join("envs")) {
+            info!(
+                "ENUMERATING (get_environments.2) {:?}",
+                conda_dir.join("envs")
+            );
             envs.append(
                 &mut entries
                     .filter_map(Result::ok)
+                    // .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
                     .map(|e| e.path())
                     .filter(|p| is_conda_env(p))
                     .collect(),

@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use lazy_static::lazy_static;
-use log::trace;
+use log::{info, trace};
 use regex::Regex;
 use std::{
     fs,
@@ -41,14 +41,15 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
 }
 
 pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
+    let env_path = env_path.as_ref();
     // Never find exes in `.pyenv/shims/` folder, they are not valid exes
-    if env_path.as_ref().ends_with(".pyenv/shims") {
+    if env_path.ends_with(".pyenv/shims") || env_path.ends_with(".DS_Store") {
         return vec![];
     }
     let mut python_executables = vec![];
     let bin = if cfg!(windows) { "Scripts" } else { "bin" };
-    let mut env_path = env_path.as_ref().to_path_buf();
-    if env_path.join(bin).metadata().is_ok() {
+    let mut env_path = env_path.to_path_buf();
+    if env_path.join(bin).exists() {
         env_path = env_path.join(bin);
     }
 
@@ -72,20 +73,21 @@ pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
     // If you install python@3.10, then only a python3.10 exe is created in that bin directory.
     // As a compromise, we only enumerate if this is a bin directory and there are no python exes
     // Else enumerating entire directories is very expensive.
-    if env_path.join(python_exe).metadata().is_ok()
-        || env_path.join(python3_exe).metadata().is_ok()
+    if env_path.join(python_exe).exists()
+        || env_path.join(python3_exe).exists()
         || env_path.ends_with(bin)
     {
         // Enumerate this directory and get all `python` & `pythonX.X` files.
-        if let Ok(entries) = fs::read_dir(env_path) {
-            for entry in entries.filter_map(Result::ok) {
-                let file = entry.path();
-                if let Ok(metadata) = fs::metadata(&file) {
-                    if is_python_executable_name(&entry.path()) && metadata.is_file() {
-                        python_executables.push(file);
-                    }
-                }
-            }
+        if let Ok(entries) = fs::read_dir(&env_path) {
+            python_executables.append(
+                &mut entries
+                    .filter_map(Result::ok)
+                    // .filter(|d| d.file_type().is_ok_and(|f| f.is_file() || f.is_symlink()))
+                    .map(|d| d.path())
+                    .filter(|f| is_python_executable_name(f))
+                    // .inspect(|f| info!("Found python executable: {:?} in {:?}", f.clone(), env_path))
+                    .collect(),
+            );
         }
     }
 

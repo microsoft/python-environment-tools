@@ -5,7 +5,7 @@ use conda_info::CondaInfo;
 use env_variables::EnvVariables;
 use environment_locations::{get_conda_environment_paths, get_environments};
 use environments::{get_conda_environment_info, CondaEnvironment};
-use log::{error, warn};
+use log::{error, info, warn};
 use manager::CondaManager;
 use pet_core::{
     os_environment::Environment,
@@ -104,7 +104,7 @@ impl CondaLocator for Conda {
             drop(managers);
 
             let mut new_environments = vec![];
-
+            info!("ENUMERATE IN {:?}", conda_dir);
             // Find all the environments in the conda install folder. (under `envs` folder)
             for conda_env in
                 get_conda_environments(&get_environments(&conda_dir), &manager.clone().into())

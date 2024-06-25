@@ -1,8 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{env, path::PathBuf};
+use std::{
+    env,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::SystemTime,
+};
 
+use log::info;
 use pet_fs::path::norm_case;
 
 pub trait Environment {
@@ -14,10 +20,14 @@ pub trait Environment {
     fn get_know_global_search_locations(&self) -> Vec<PathBuf>;
 }
 
-pub struct EnvironmentApi {}
+pub struct EnvironmentApi {
+    global_search_locations: Arc<Mutex<Vec<PathBuf>>>,
+}
 impl EnvironmentApi {
     pub fn new() -> Self {
-        EnvironmentApi {}
+        EnvironmentApi {
+            global_search_locations: Arc::new(Mutex::new(vec![])),
+        }
     }
 }
 impl Default for EnvironmentApi {
@@ -38,7 +48,19 @@ impl Environment for EnvironmentApi {
         get_env_var(key)
     }
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        vec![]
+        if self.global_search_locations.lock().unwrap().is_empty() {
+            let mut paths =
+                env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
+                    .into_iter()
+                    .filter(|p| p.exists())
+                    .collect::<Vec<PathBuf>>();
+
+            self.global_search_locations
+                .lock()
+                .unwrap()
+                .append(&mut paths);
+        }
+        self.global_search_locations.lock().unwrap().clone()
     }
 }
 
@@ -54,51 +76,63 @@ impl Environment for EnvironmentApi {
         get_env_var(key)
     }
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        let mut paths = env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
-            .collect::<Vec<PathBuf>>();
+        if self.global_search_locations.lock().unwrap().is_empty() {
+            let mut paths =
+                env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
+                    .collect::<Vec<PathBuf>>();
 
-        vec![
-            PathBuf::from("/bin"),
-            PathBuf::from("/etc"),
-            PathBuf::from("/lib"),
-            PathBuf::from("/lib/x86_64-linux-gnu"),
-            PathBuf::from("/lib64"),
-            PathBuf::from("/sbin"),
-            PathBuf::from("/snap/bin"),
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/usr/games"),
-            PathBuf::from("/usr/include"),
-            PathBuf::from("/usr/lib"),
-            PathBuf::from("/usr/lib/x86_64-linux-gnu"),
-            PathBuf::from("/usr/lib64"),
-            PathBuf::from("/usr/libexec"),
-            PathBuf::from("/usr/local"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/usr/local/etc"),
-            PathBuf::from("/usr/local/games"),
-            PathBuf::from("/usr/local/lib"),
-            PathBuf::from("/usr/local/sbin"),
-            PathBuf::from("/usr/sbin"),
-            PathBuf::from("/usr/share"),
-            PathBuf::from("/home/bin"),
-            PathBuf::from("/home/sbin"),
-            PathBuf::from("/opt"),
-            PathBuf::from("/opt/bin"),
-            PathBuf::from("/opt/sbin"),
-        ]
-        .iter()
-        .for_each(|p| {
-            if !paths.contains(p) {
-                paths.push(p.clone());
+            vec![
+                PathBuf::from("/bin"),
+                PathBuf::from("/etc"),
+                PathBuf::from("/lib"),
+                PathBuf::from("/lib/x86_64-linux-gnu"),
+                PathBuf::from("/lib64"),
+                PathBuf::from("/sbin"),
+                PathBuf::from("/snap/bin"),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/usr/games"),
+                PathBuf::from("/usr/include"),
+                PathBuf::from("/usr/lib"),
+                PathBuf::from("/usr/lib/x86_64-linux-gnu"),
+                PathBuf::from("/usr/lib64"),
+                PathBuf::from("/usr/libexec"),
+                PathBuf::from("/usr/local"),
+                PathBuf::from("/usr/local/bin"),
+                PathBuf::from("/usr/local/etc"),
+                PathBuf::from("/usr/local/games"),
+                PathBuf::from("/usr/local/lib"),
+                PathBuf::from("/usr/local/sbin"),
+                PathBuf::from("/usr/sbin"),
+                PathBuf::from("/usr/share"),
+                PathBuf::from("/home/bin"),
+                PathBuf::from("/home/sbin"),
+                PathBuf::from("/opt"),
+                PathBuf::from("/opt/bin"),
+                PathBuf::from("/opt/sbin"),
+            ]
+            .iter()
+            .for_each(|p| {
+                if !paths.contains(p) {
+                    paths.push(p.clone());
+                }
+            });
+
+            if let Some(home) = self.get_user_home() {
+                // PathBuf::from("~/.local/bin"),
+                paths.push(home.join(".local").join("bin"));
             }
-        });
 
-        if let Some(home) = self.get_user_home() {
-            // PathBuf::from("~/.local/bin"),
-            paths.push(home.join(".local").join("bin"));
+            let mut paths = paths
+                .into_iter()
+                .filter(|p| p.exists())
+                .collect::<Vec<PathBuf>>();
+
+            self.global_search_locations
+                .lock()
+                .unwrap()
+                .append(&mut paths);
         }
-
-        paths
+        self.global_search_locations.lock().unwrap().clone()
     }
 }
 
