@@ -14,15 +14,22 @@ use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 use std::{sync::Arc, thread};
 
 use crate::locators::identify_python_environment_using_locators;
 
 pub struct Summary {
-    pub search_time: Duration,
+    pub time: Duration,
+    pub find_locators_times: HashMap<&'static str, Duration>,
+    pub find_locators_time: Duration,
+    pub find_path_time: Duration,
+    pub find_global_virtual_envs_time: Duration,
+    pub find_search_paths_time: Duration,
 }
 
 pub fn find_and_report_envs(
@@ -30,10 +37,15 @@ pub fn find_and_report_envs(
     configuration: Configuration,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<dyn CondaLocator>,
-) -> Summary {
-    let mut summary = Summary {
-        search_time: Duration::from_secs(0),
-    };
+) -> Arc<Mutex<Summary>> {
+    let summary = Arc::new(Mutex::new(Summary {
+        time: Duration::from_secs(0),
+        find_locators_times: HashMap::new(),
+        find_locators_time: Duration::from_secs(0),
+        find_path_time: Duration::from_secs(0),
+        find_global_virtual_envs_time: Duration::from_secs(0),
+        find_search_paths_time: Duration::from_secs(0),
+    }));
     info!("Started Refreshing Environments");
     let start = std::time::Instant::now();
 
@@ -45,12 +57,23 @@ pub fn find_and_report_envs(
         // 1. Find using known global locators.
         s.spawn(|| {
             // Find in all the finders
+            let start = std::time::Instant::now();
             thread::scope(|s| {
                 for locator in locators.iter() {
                     let locator = locator.clone();
-                    s.spawn(move || locator.find(reporter));
+                    let summary = summary.clone();
+                    s.spawn(move || {
+                        let start = std::time::Instant::now();
+                        locator.find(reporter);
+                        summary
+                            .lock()
+                            .unwrap()
+                            .find_locators_times
+                            .insert(locator.get_name(), start.elapsed());
+                    });
                 }
             });
+            summary.lock().unwrap().find_locators_time = start.elapsed();
 
             // By now all conda envs have been found
             // Spawn conda  in a separate thread.
@@ -72,6 +95,7 @@ pub fn find_and_report_envs(
         });
         // Step 2: Search in PATH variable
         s.spawn(|| {
+            let start = std::time::Instant::now();
             let environment = EnvironmentApi::new();
             let search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(&environment);
 
@@ -79,17 +103,18 @@ pub fn find_and_report_envs(
                 "Searching for environments in global folders: {:?}",
                 search_paths
             );
-
             find_python_environments(
                 search_paths,
                 reporter,
                 locators,
                 false,
                 Some(PythonEnvironmentCategory::GlobalPaths),
-            )
+            );
+            summary.lock().unwrap().find_path_time = start.elapsed();
         });
         // Step 3: Search in some global locations for virtual envs.
         s.spawn(|| {
+            let start = std::time::Instant::now();
             let environment = EnvironmentApi::new();
             let search_paths: Vec<PathBuf> = [
                 list_global_virtual_envs_paths(
@@ -105,7 +130,8 @@ pub fn find_and_report_envs(
                 search_paths
             );
 
-            find_python_environments(search_paths, reporter, locators, false, None)
+            find_python_environments(search_paths, reporter, locators, false, None);
+            summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
         });
         // Step 4: Find in workspace folders too.
         // This can be merged with step 2 as well, as we're only look for environments
@@ -122,6 +148,7 @@ pub fn find_and_report_envs(
                 "Searching for environments in custom folders: {:?}",
                 search_paths
             );
+            let start = std::time::Instant::now();
             find_python_environments_in_workspace_folders_recursive(
                 search_paths,
                 reporter,
@@ -129,9 +156,10 @@ pub fn find_and_report_envs(
                 0,
                 1,
             );
+            summary.lock().unwrap().find_search_paths_time = start.elapsed();
         });
     });
-    summary.search_time = start.elapsed();
+    summary.lock().unwrap().time = start.elapsed();
 
     summary
 }

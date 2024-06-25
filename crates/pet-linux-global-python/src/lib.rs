@@ -26,6 +26,9 @@ impl Default for LinuxGlobalPython {
     }
 }
 impl Locator for LinuxGlobalPython {
+    fn get_name(&self) -> &'static str {
+        "LinuxGlobalPython"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::LinuxGlobal]
     }

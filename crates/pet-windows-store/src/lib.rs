@@ -61,6 +61,9 @@ impl WindowsStore {
 }
 
 impl Locator for WindowsStore {
+    fn get_name(&self) -> &'static str {
+        "WindowsStore"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::WindowsStore]
     }

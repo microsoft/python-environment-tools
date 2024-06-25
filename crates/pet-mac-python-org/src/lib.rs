@@ -27,6 +27,9 @@ impl Default for MacPythonOrg {
     }
 }
 impl Locator for MacPythonOrg {
+    fn get_name(&self) -> &'static str {
+        "MacPythonOrg"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::MacPythonOrg]
     }

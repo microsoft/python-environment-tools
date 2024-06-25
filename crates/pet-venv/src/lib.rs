@@ -33,6 +33,9 @@ impl Default for Venv {
     }
 }
 impl Locator for Venv {
+    fn get_name(&self) -> &'static str {
+        "Venv"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::Venv]
     }

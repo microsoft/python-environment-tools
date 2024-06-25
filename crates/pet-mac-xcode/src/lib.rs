@@ -25,6 +25,9 @@ impl Default for MacXCode {
     }
 }
 impl Locator for MacXCode {
+    fn get_name(&self) -> &'static str {
+        "MacXCode"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::MacCommandLineTools]
     }

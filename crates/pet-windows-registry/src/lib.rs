@@ -62,6 +62,9 @@ impl WindowsRegistry {
 }
 
 impl Locator for WindowsRegistry {
+    fn get_name(&self) -> &'static str {
+        "WindowsRegistry"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::WindowsRegistry]
     }

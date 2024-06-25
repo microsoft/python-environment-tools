@@ -29,6 +29,9 @@ impl VirtualEnvWrapper {
 }
 
 impl Locator for VirtualEnvWrapper {
+    fn get_name(&self) -> &'static str {
+        "VirtualEnvWrapper"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::VirtualEnvWrapper]
     }

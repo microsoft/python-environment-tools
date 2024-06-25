@@ -71,6 +71,9 @@ impl PipEnv {
     }
 }
 impl Locator for PipEnv {
+    fn get_name(&self) -> &'static str {
+        "PipEnv"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::Pipenv]
     }

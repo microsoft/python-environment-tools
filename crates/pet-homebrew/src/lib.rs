@@ -98,6 +98,9 @@ fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
 }
 
 impl Locator for Homebrew {
+    fn get_name(&self) -> &'static str {
+        "Homebrew"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::Homebrew]
     }

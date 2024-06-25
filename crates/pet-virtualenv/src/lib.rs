@@ -71,6 +71,9 @@ impl Default for VirtualEnv {
 }
 
 impl Locator for VirtualEnv {
+    fn get_name(&self) -> &'static str {
+        "VirtualEnv"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::VirtualEnv]
     }

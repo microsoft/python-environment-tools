@@ -146,6 +146,9 @@ impl Conda {
 }
 
 impl Locator for Conda {
+    fn get_name(&self) -> &'static str {
+        "Conda"
+    }
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::Conda]
     }
