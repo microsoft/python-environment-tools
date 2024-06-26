@@ -5,7 +5,7 @@ use find::find_and_report_envs;
 use locators::create_locators;
 use pet_conda::Conda;
 use pet_core::{os_environment::EnvironmentApi, Configuration};
-use pet_reporter::{self, cache::CacheReporter, stdio};
+use pet_reporter::{self, cache::CacheReporterImpl, stdio};
 use std::{collections::BTreeMap, env, sync::Arc, time::SystemTime};
 
 pub mod find;
@@ -21,7 +21,7 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
     let now = SystemTime::now();
 
     let stdio_reporter = Arc::new(stdio::create_reporter(print_list));
-    let reporter = CacheReporter::new(stdio_reporter.clone());
+    let reporter = CacheReporterImpl::new(stdio_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
 
