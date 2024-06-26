@@ -1,23 +1,51 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::fs;
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    thread,
+};
 
-use log::warn;
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     reporter::Reporter,
     Locator,
 };
 use pet_fs::path::resolve_symlink;
-use pet_python_utils::{env::PythonEnv, executable::find_executables};
+use pet_python_utils::{
+    env::{PythonEnv, ResolvedPythonEnv},
+    executable::find_executables,
+};
 use pet_virtualenv::is_virtualenv;
 
-pub struct LinuxGlobalPython {}
+pub struct LinuxGlobalPython {
+    reported_executables: Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
+}
 
 impl LinuxGlobalPython {
     pub fn new() -> LinuxGlobalPython {
-        LinuxGlobalPython {}
+        LinuxGlobalPython {
+            reported_executables: Arc::new(
+                Mutex::new(HashMap::<PathBuf, PythonEnvironment>::new()),
+            ),
+        }
+    }
+
+    fn find_cached(&self, reporter: Option<&dyn Reporter>) {
+        if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
+            return;
+        }
+        // Look through the /bin, /usr/bin, /usr/local/bin directories
+        thread::scope(|s| {
+            for bin in ["/bin", "/usr/bin", "/usr/local/bin"] {
+                s.spawn(move || {
+                    find_and_report_global_pythons_in(bin, reporter, &self.reported_executables);
+                });
+            }
+        });
     }
 }
 impl Default for LinuxGlobalPython {
@@ -47,41 +75,99 @@ impl Locator for LinuxGlobalPython {
         // If we do not have a version, then we cannot use this method.
         // Without version means we have not spawned the Python exe, thus do not have the real info.
         env.version.clone()?;
-        let prefix = env.prefix.clone()?;
         let executable = env.executable.clone();
 
-        // If prefix or version is not available, then we cannot use this method.
-        // 1. For files in /bin or /usr/bin, the prefix is always /usr
-        // 2. For files in /usr/local/bin, the prefix is always /usr/local
+        self.find_cached(None);
+
+        // We only support python environments in /bin, /usr/bin, /usr/local/bin
         if !executable.starts_with("/bin")
             && !executable.starts_with("/usr/bin")
             && !executable.starts_with("/usr/local/bin")
-            && !prefix.starts_with("/usr")
-            && !prefix.starts_with("/usr/local")
         {
             return None;
         }
 
-        // All known global linux are always installed in `/bin` or `/usr/bin` or `/usr/local/bin`
-        if executable.starts_with("/bin")
-            || executable.starts_with("/usr/bin")
-            || executable.starts_with("/usr/local/bin")
-        {
-            get_python_in_bin(env)
+        if let Some(env) = self.reported_executables.lock().unwrap().get(&executable) {
+            Some(env.clone())
         } else {
-            warn!(
-                    "Unknown Python exe ({:?}), not in any of the known locations /bin, /usr/bin, /usr/local/bin",
-                    executable
-                );
             None
         }
+        // // If prefix or version is not available, then we cannot use this method.
+        // // 1. For files in /bin or /usr/bin, the prefix is always /usr
+        // // 2. For files in /usr/local/bin, the prefix is always /usr/local
+        // if !executable.starts_with("/bin")
+        //     && !executable.starts_with("/usr/bin")
+        //     && !executable.starts_with("/usr/local/bin")
+        //     && !prefix.starts_with("/usr")
+        //     && !prefix.starts_with("/usr/local")
+        // {
+        //     return None;
+        // }
+
+        // // All known global linux are always installed in `/bin` or `/usr/bin` or `/usr/local/bin`
+        // if executable.starts_with("/bin")
+        //     || executable.starts_with("/usr/bin")
+        //     || executable.starts_with("/usr/local/bin")
+        // {
+
+        // } else {
+        //     warn!(
+        //                 "Unknown Python exe ({:?}), not in any of the known locations /bin, /usr/bin, /usr/local/bin",
+        //                 executable
+        //             );
+        //     None
+        // }
     }
 
-    fn find(&self, _reporter: &dyn Reporter) {
-        // No point looking in /usr/bin or /bin folder.
-        // We will end up looking in these global locations and spawning them in other parts.
-        // Here we cannot assume that anything in /usr/bin is a global Python, it could be a symlink or other.
-        // Safer approach is to just spawn it which we need to do to get the `sys.prefix`
+    fn find(&self, reporter: &dyn Reporter) {
+        if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
+            return;
+        }
+        self.reported_executables.lock().unwrap().clear();
+
+        // Look through the /bin, /usr/bin, /usr/local/bin directories
+        thread::scope(|s| {
+            for bin in ["/bin", "/usr/bin", "/usr/local/bin"] {
+                s.spawn(move || {
+                    find_and_report_global_pythons_in(
+                        bin,
+                        Some(reporter),
+                        &self.reported_executables,
+                    );
+                });
+            }
+        })
+    }
+}
+
+fn find_and_report_global_pythons_in(
+    bin: &str,
+    reporter: Option<&dyn Reporter>,
+    reported_executables: &Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
+) {
+    let python_executables = find_executables(Path::new(bin));
+
+    for exe in python_executables.clone().iter() {
+        if reported_executables.lock().unwrap().contains_key(exe) {
+            continue;
+        }
+        if let Some(resolved) = ResolvedPythonEnv::from(&exe) {
+            if let Some(env) = get_python_in_bin(&resolved.to_python_env()) {
+                let mut reported_executables = reported_executables.lock().unwrap();
+                // env.symlinks = Some([symlinks, env.symlinks.clone().unwrap_or_default()].concat());
+                if let Some(symlinks) = &env.symlinks {
+                    for symlink in symlinks {
+                        reported_executables.insert(symlink.clone(), env.clone());
+                    }
+                }
+                if let Some(exe) = env.executable.clone() {
+                    reported_executables.insert(exe, env.clone());
+                }
+                if let Some(reporter) = reporter {
+                    reporter.report_environment(&env);
+                }
+            }
+        }
     }
 }
 
@@ -100,6 +186,7 @@ fn get_python_in_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
     // Keep track of what the exe resolves to.
     // Will have a value only if the exe is in another dir
     // E.g. /bin/python3 might be a symlink to /usr/bin/python3.12
+    // Similarly /usr/local/python/current/bin/python might point to something like /usr/local/python/3.10.13/bin/python3.10
     // However due to legacy reasons we'll be treating these two as separate exes.
     // Hence they will be separate Python environments.
     let mut resolved_exe_is_from_another_dir = None;
@@ -112,6 +199,14 @@ fn get_python_in_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
     // We use canonicalize to get the real path of the symlink.
     // Only used in this case, see notes for resolve_symlink.
     if let Some(symlink) = resolve_symlink(&executable).or(fs::canonicalize(&executable).ok()) {
+        // Ensure this is a symlink in the bin or usr/bin directory.
+        if symlink.starts_with(bin) {
+            symlinks.push(symlink);
+        } else {
+            resolved_exe_is_from_another_dir = Some(symlink);
+        }
+    }
+    if let Some(symlink) = fs::canonicalize(&executable).ok() {
         // Ensure this is a symlink in the bin or usr/bin directory.
         if symlink.starts_with(bin) {
             symlinks.push(symlink);
