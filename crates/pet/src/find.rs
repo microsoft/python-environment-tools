@@ -14,7 +14,7 @@ use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -25,7 +25,7 @@ use crate::locators::identify_python_environment_using_locators;
 
 pub struct Summary {
     pub time: Duration,
-    pub find_locators_times: HashMap<&'static str, Duration>,
+    pub find_locators_times: BTreeMap<&'static str, Duration>,
     pub find_locators_time: Duration,
     pub find_path_time: Duration,
     pub find_global_virtual_envs_time: Duration,
@@ -40,7 +40,7 @@ pub fn find_and_report_envs(
 ) -> Arc<Mutex<Summary>> {
     let summary = Arc::new(Mutex::new(Summary {
         time: Duration::from_secs(0),
-        find_locators_times: HashMap::new(),
+        find_locators_times: BTreeMap::new(),
         find_locators_time: Duration::from_secs(0),
         find_path_time: Duration::from_secs(0),
         find_global_virtual_envs_time: Duration::from_secs(0),
