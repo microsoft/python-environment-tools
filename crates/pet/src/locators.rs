@@ -9,7 +9,6 @@ use pet_core::python_environment::{
     PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory,
 };
 use pet_core::Locator;
-use pet_fs::path::resolve_symlink;
 use pet_linux_global_python::LinuxGlobalPython;
 use pet_mac_commandlinetools::MacCmdLineTools;
 use pet_mac_python_org::MacPythonOrg;
@@ -156,6 +155,7 @@ fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
     // We use canonicalize to get the real path of the symlink.
     // Only used in this case, see notes for resolve_symlink.
 
+    use pet_fs::path::resolve_symlink;
     use pet_python_utils::executable::find_executables;
     use std::fs;
 
