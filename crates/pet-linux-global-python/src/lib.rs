@@ -92,31 +92,6 @@ impl Locator for LinuxGlobalPython {
         } else {
             None
         }
-        // // If prefix or version is not available, then we cannot use this method.
-        // // 1. For files in /bin or /usr/bin, the prefix is always /usr
-        // // 2. For files in /usr/local/bin, the prefix is always /usr/local
-        // if !executable.starts_with("/bin")
-        //     && !executable.starts_with("/usr/bin")
-        //     && !executable.starts_with("/usr/local/bin")
-        //     && !prefix.starts_with("/usr")
-        //     && !prefix.starts_with("/usr/local")
-        // {
-        //     return None;
-        // }
-
-        // // All known global linux are always installed in `/bin` or `/usr/bin` or `/usr/local/bin`
-        // if executable.starts_with("/bin")
-        //     || executable.starts_with("/usr/bin")
-        //     || executable.starts_with("/usr/local/bin")
-        // {
-
-        // } else {
-        //     warn!(
-        //                 "Unknown Python exe ({:?}), not in any of the known locations /bin, /usr/bin, /usr/local/bin",
-        //                 executable
-        //             );
-        //     None
-        // }
     }
 
     fn find(&self, reporter: &dyn Reporter) {
