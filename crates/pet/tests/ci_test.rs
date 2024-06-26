@@ -208,6 +208,67 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     }
 }
 
+#[cfg(unix)]
+#[cfg(target_os = "linux")]
+#[cfg_attr(feature = "ci", test)]
+#[allow(dead_code)]
+// On linux we /bin/python, /usr/bin/python and /usr/local/python are all separate environments.
+fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
+    use pet::{find::find_and_report_envs, locators::create_locators};
+    use pet_conda::Conda;
+    use pet_core::os_environment::EnvironmentApi;
+    use pet_reporter::test;
+    use std::sync::Arc;
+
+    let reporter = test::create_reporter();
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
+
+    find_and_report_envs(
+        &reporter,
+        Default::default(),
+        &create_locators(conda_locator.clone()),
+        conda_locator,
+    );
+
+    let result = reporter.get_result();
+    let environments = result.environments;
+
+    // Python env /bin/python cannot have symlinks in /usr/bin or /usr/local
+    // Python env /usr/bin/python cannot have symlinks /bin or /usr/local
+    // Python env /usr/local/bin/python cannot have symlinks in /bin or /usr/bin
+    let bins = ["/bin", "/usr/bin", "/usr/local/bin"];
+    for bin in bins.iter() {
+        if let Some(bin_python) = environments.iter().find(|e| {
+            e.executable.clone().is_some()
+                && e.executable
+                    .clone()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .starts_with(bin)
+        }) {
+            // If the exe is in /bin, then we can never have any symlinks to other folders such as /usr/bin or /usr/local
+            let other_bins = bins
+                .iter()
+                .filter(|b| *b != bin)
+                .map(|b| PathBuf::from(*b))
+                .collect::<Vec<PathBuf>>();
+            if let Some(symlinks) = &bin_python.symlinks {
+                for symlink in symlinks.iter() {
+                    let parent_of_symlink = symlink.parent().unwrap().to_path_buf();
+                    if other_bins.contains(&parent_of_symlink) {
+                        panic!(
+                            "Python environment {:?} cannot have a symlinks in {:?}",
+                            bin_python, other_bins
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[allow(dead_code)]
 fn get_conda_exe() -> &'static str {
     // On CI we expect conda to be in the current path.
