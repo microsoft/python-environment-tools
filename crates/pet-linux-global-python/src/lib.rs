@@ -125,14 +125,14 @@ fn get_python_in_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
     // & they all point to one exe and have the same version and same prefix.
     for possible_symlink in find_executables(bin).iter() {
         if let Some(ref symlink) =
-            resolve_symlink(&possible_symlink).or(fs::canonicalize(&possible_symlink).ok())
+            resolve_symlink(&possible_symlink).or(fs::canonicalize(possible_symlink).ok())
         {
             // Generally the file /bin/python3 is a symlink to /usr/bin/python3.12
             // Generally the file /bin/python3.12 is a symlink to /usr/bin/python3.12
             // Generally the file /usr/bin/python3 is a symlink to /usr/bin/python3.12
             // HOWEVER, we will be treating the files in /bin and /usr/bin as different.
             // Hence check whether the resolve symlink is in the same directory.
-            if symlink.starts_with(bin) & symlinks.contains(&symlink) {
+            if symlink.starts_with(bin) & symlinks.contains(symlink) {
                 symlinks.push(possible_symlink.to_owned());
             }
 
