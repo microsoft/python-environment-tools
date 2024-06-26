@@ -8,9 +8,6 @@
 	"postCreateCommand": "",
 	"postStartCommand": "bash ./setup.sh",
 	"customizations": {
-		"codespaces": {
-			"openFiles": []
-		},
 		"vscode": {
 			"extensions": [
 				"ms-python.python@prerelease",
