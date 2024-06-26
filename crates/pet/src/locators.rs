@@ -21,7 +21,6 @@ use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
 use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -158,6 +157,8 @@ fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
     // Only used in this case, see notes for resolve_symlink.
 
     use pet_python_utils::executable::find_executables;
+    use std::fs;
+
     let real_exe = resolve_symlink(executable).or(fs::canonicalize(executable).ok());
 
     let bin = executable.parent()?;
