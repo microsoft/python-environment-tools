@@ -99,19 +99,7 @@ impl Locator for LinuxGlobalPython {
             return;
         }
         self.reported_executables.lock().unwrap().clear();
-
-        // Look through the /bin, /usr/bin, /usr/local/bin directories
-        thread::scope(|s| {
-            for bin in ["/bin", "/usr/bin", "/usr/local/bin"] {
-                s.spawn(move || {
-                    find_and_report_global_pythons_in(
-                        bin,
-                        Some(reporter),
-                        &self.reported_executables,
-                    );
-                });
-            }
-        })
+        self.find_cached(Some(reporter))
     }
 }
 
