@@ -20,6 +20,7 @@ use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
 use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> {
@@ -114,23 +115,72 @@ pub fn identify_python_environment_using_locators(
             // We have check all of the resolvers.
             // Telemetry point, failed to identify env here.
             warn!(
-                "Unknown Env ({:?}) in Path resolved as {:?} and reported as Unknown",
-                executable, resolved_env
+                "Unknown Env ({:?}) in Path resolved as {:?} and reported as {:?}",
+                executable,
+                resolved_env,
+                fallback_category.unwrap_or(PythonEnvironmentCategory::Unknown)
             );
-            let env = PythonEnvironmentBuilder::new(
-                fallback_category.unwrap_or(PythonEnvironmentCategory::Unknown),
-            )
-            .executable(Some(resolved_env.executable))
-            .prefix(Some(resolved_env.prefix))
-            .arch(Some(if resolved_env.is64_bit {
-                Architecture::X64
-            } else {
-                Architecture::X86
-            }))
-            .version(Some(resolved_env.version))
-            .build();
-            return Some(env);
+            return Some(create_unknown_env(resolved_env, fallback_category));
         }
     }
+    None
+}
+
+fn create_unknown_env(
+    resolved_env: ResolvedPythonEnv,
+    fallback_category: Option<PythonEnvironmentCategory>,
+) -> PythonEnvironment {
+    // Find all the python exes in the same bin directory.
+
+    PythonEnvironmentBuilder::new(fallback_category.unwrap_or(PythonEnvironmentCategory::Unknown))
+        .symlinks(find_symlinks(&resolved_env.executable))
+        .executable(Some(resolved_env.executable))
+        .prefix(Some(resolved_env.prefix))
+        .arch(Some(if resolved_env.is64_bit {
+            Architecture::X64
+        } else {
+            Architecture::X86
+        }))
+        .version(Some(resolved_env.version))
+        .build()
+}
+
+#[cfg(unix)]
+fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
+    // Assume this is a python environment in /usr/bin/python.
+    // Now we know there can be other exes in the same directory as well, such as /usr/bin/python3.12 and that could be the same as /usr/bin/python
+    // However its possible /usr/bin/python is a symlink to /usr/local/bin/python3.12
+    // Either way, if both /usr/bin/python and /usr/bin/python3.12 point to the same exe (what ever it may be),
+    // then we know that both /usr/bin/python and /usr/bin/python3.12 are the same python environment.
+    // We use canonicalize to get the real path of the symlink.
+    // Only used in this case, see notes for resolve_symlink.
+
+    use pet_fs::path::resolve_symlink;
+    use pet_python_utils::executable::find_executables;
+    use std::fs;
+
+    let real_exe = resolve_symlink(executable).or(fs::canonicalize(executable).ok());
+
+    let bin = executable.parent()?;
+    // Make no assumptions that bin is always where exes are in linux
+    // No harm in supporting scripts as well.
+    if !bin.ends_with("bin") && !bin.ends_with("Scripts") && !bin.ends_with("scripts") {
+        return None;
+    }
+
+    let mut symlinks = vec![];
+    for exe in find_executables(bin) {
+        let symlink = resolve_symlink(&exe).or(fs::canonicalize(&exe).ok());
+        if symlink == real_exe {
+            symlinks.push(exe);
+        }
+    }
+    Some(symlinks)
+}
+
+#[cfg(windows)]
+fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
+    // In windows we will need to spawn the Python exe and then get the exes.
+    // Lets wait and see if this is necessary.
     None
 }

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use log::trace;
+use log::{error, trace};
 
 pub struct PyProjectToml {
     pub name: String,
@@ -41,7 +41,7 @@ fn parse_contents(contents: &str, file: &Path) -> Option<PyProjectToml> {
             name.map(|name| PyProjectToml::new(name, file.into()))
         }
         Err(e) => {
-            eprintln!("Error parsing toml file: {:?}", e);
+            error!("Error parsing toml file: {:?}", e);
             None
         }
     }

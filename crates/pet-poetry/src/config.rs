@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use log::trace;
+use log::{error, trace};
 use pet_python_utils::platform_dirs::Platformdirs;
 
 use crate::env_variables::EnvVariables;
@@ -152,7 +152,7 @@ fn parse_contents(contents: &str) -> Option<ConfigToml> {
             })
         }
         Err(e) => {
-            eprintln!("Error parsing poetry toml file: {:?}", e);
+            error!("Error parsing poetry toml file: {:?}", e);
             None
         }
     }
