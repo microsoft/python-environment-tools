@@ -307,6 +307,9 @@ fn identify_python_executables_using_locators(
             identify_python_environment_using_locators(&env, locators, fallback_category)
         {
             reporter.report_environment(&env);
+            if let Some(manager) = env.manager {
+                reporter.report_manager(&manager);
+            }
             continue;
         } else {
             warn!("Unknown Python Env {:?}", executable);

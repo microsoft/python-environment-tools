@@ -1,0 +1,20 @@
+{
+	// Based off, https://github.com/github/codespaces-jupyter
+	// Making this the top level container so it works on codespaces,
+	// Cannot always use locally as this is only x64 compatible
+	"name": "codespaces-jupyter",
+	"image": "mcr.microsoft.com/devcontainers/universal:2",
+	"waitFor": "onCreateCommand",
+	"postCreateCommand": "bash ./.devcontainer/setup.sh",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python@prerelease",
+				"esbenp.prettier-vscode",
+				"rust-lang.rust-analyzer",
+				"EditorConfig.EditorConfig"
+			]
+		}
+	},
+	"workspaceFolder": "/workspaces/python-environment-tools"
+}

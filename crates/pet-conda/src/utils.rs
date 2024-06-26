@@ -6,13 +6,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-// conda-meta must exist as this contains a mandatory `history` file.
+/// conda-meta must exist as this contains a mandatory `history` file.
 pub fn is_conda_install(path: &Path) -> bool {
-    path.join("envs").metadata().is_ok() && path.join("conda-meta").metadata().is_ok()
+    (path.join("condabin").metadata().is_ok() || path.join("envs").metadata().is_ok())
+        && path.join("conda-meta").metadata().is_ok()
 }
 
-// conda-meta must exist as this contains a mandatory `history` file.
-// The root conda installation folder is also a conda environment (its the base environment).
+/// conda-meta must exist as this contains a mandatory `history` file.
+/// The root conda installation folder is also a conda environment (its the base environment).
 pub fn is_conda_env(path: &Path) -> bool {
     if let Ok(metadata) = fs::metadata(path.join("conda-meta")) {
         metadata.is_dir()

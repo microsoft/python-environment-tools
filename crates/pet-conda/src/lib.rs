@@ -270,7 +270,6 @@ impl Locator for Conda {
                     if manager.is_none() {
                         // 4.1 Build the manager from the conda dir if we do not have it.
                         if let Some(conda_manager) = CondaManager::from(conda_dir) {
-                            reporter.report_manager(&conda_manager.to_manager());
                             let mut managers = self.managers.lock().unwrap();
                             managers.insert(conda_dir.to_path_buf().clone(), conda_manager.clone());
                             manager = Some(conda_manager);
@@ -285,6 +284,7 @@ impl Locator for Conda {
                         );
                         let mut environments = self.environments.lock().unwrap();
                         environments.insert(prefix.clone(), env.clone());
+                        reporter.report_manager(&manager.to_manager());
                         reporter.report_environment(&env);
                     } else {
                         // We will still return the conda env even though we do not have the manager.
