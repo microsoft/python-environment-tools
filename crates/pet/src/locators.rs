@@ -163,7 +163,7 @@ fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
     let bin = executable.parent()?;
     // Make no assumptions that bin is always where exes are in linux
     // No harm in supporting scripts as well.
-    if bin.ends_with("bin") || bin.ends_with("Scripts") || bin.ends_with("scripts") {
+    if !bin.ends_with("bin") && !bin.ends_with("Scripts") && !bin.ends_with("scripts") {
         return None;
     }
 
@@ -178,7 +178,8 @@ fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
 }
 
 #[cfg(windows)]
-fn find_symlinks(executable: &PathBuf) -> Some(Vec<PathBuf>) {
-    let bin = executable.parent()?;
+fn find_symlinks(_executable: &PathBuf) -> Some(Vec<PathBuf>) {
+    // In windows we will need to spawn the Python exe and then get the exes.
+    // Lets wait and see if this is necessary.
     None
 }
