@@ -5,7 +5,7 @@
 	"name": "codespaces-jupyter",
 	"image": "mcr.microsoft.com/devcontainers/universal:2",
 	"waitFor": "onCreateCommand",
-	"postStartCommand": "bash ./setup.sh",
+	"postStartCommand": "bash ./.devcontainer/setup.sh",
 	"customizations": {
 		"vscode": {
 			"extensions": [
