@@ -87,11 +87,11 @@ impl Locator for LinuxGlobalPython {
             return None;
         }
 
-        if let Some(env) = self.reported_executables.lock().unwrap().get(&executable) {
-            Some(env.clone())
-        } else {
-            None
-        }
+        self.reported_executables
+            .lock()
+            .unwrap()
+            .get(&executable)
+            .cloned()
     }
 
     fn find(&self, reporter: &dyn Reporter) {
@@ -126,7 +126,7 @@ fn find_and_report_global_pythons_in(
         if reported_executables.lock().unwrap().contains_key(exe) {
             continue;
         }
-        if let Some(resolved) = ResolvedPythonEnv::from(&exe) {
+        if let Some(resolved) = ResolvedPythonEnv::from(exe) {
             if let Some(env) = get_python_in_bin(&resolved.to_python_env()) {
                 let mut reported_executables = reported_executables.lock().unwrap();
                 // env.symlinks = Some([symlinks, env.symlinks.clone().unwrap_or_default()].concat());
@@ -181,7 +181,7 @@ fn get_python_in_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
             resolved_exe_is_from_another_dir = Some(symlink);
         }
     }
-    if let Some(symlink) = fs::canonicalize(&executable).ok() {
+    if let Ok(symlink) = fs::canonicalize(&executable) {
         // Ensure this is a symlink in the bin or usr/bin directory.
         if symlink.starts_with(bin) {
             symlinks.push(symlink);
