@@ -136,7 +136,7 @@ fn get_python_in_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
                 symlinks.push(possible_symlink.to_owned());
             }
 
-            // Possible the env.exevutable = /bin/python3
+            // Possible the env.executable = /bin/python3
             // And the possible_symlink = /bin/python3.12
             // & possible that both of the above are symlinks and point to /usr/bin/python3.12
             // In this case /bin/python3 === /bin/python.3.12
