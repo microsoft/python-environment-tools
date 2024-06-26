@@ -1,0 +1,20 @@
+{
+	"image": "mcr.microsoft.com/devcontainers/universal:2",
+	"waitFor": "onCreateCommand",
+	"updateContentCommand": "python3 -m pip install -r requirements.txt",
+	"postCreateCommand": "",
+	"customizations": {
+		"codespaces": {
+			"openFiles": []
+		},
+		"vscode": {
+			"extensions": [
+				"ms-python.python@prerelease",
+				"esbenp.prettier-vscode",
+				"rust-lang.rust-analyzer",
+				"EditorConfig.EditorConfig"
+			]
+		}
+	},
+	"workspaceFolder": "/workspaces/python-environment-tools"
+}
