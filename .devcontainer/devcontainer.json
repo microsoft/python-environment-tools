@@ -3,13 +3,10 @@
 	// Making this the top level container so it works on codespaces,
 	// Cannot always use locally as this is only x64 compatible
 	"name": "codespaces-jupyter",
-	// "image": "mcr.microsoft.com/devcontainers/universal:2",
-	"build": {
-		"context": "..",
-		"dockerfile": "./Dockerfile"
-	},
+	"image": "mcr.microsoft.com/devcontainers/universal:2",
 	"waitFor": "onCreateCommand",
 	"postCreateCommand": "",
+	"postStartCommand": "bash ./setup.sh",
 	"customizations": {
 		"codespaces": {
 			"openFiles": []
