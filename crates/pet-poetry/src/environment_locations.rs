@@ -74,7 +74,8 @@ pub fn list_environments(
                 .unwrap_or_default()
                 .to_str()
                 .unwrap_or_default();
-            if name.starts_with(&virtualenv_prefix) {
+            // Look for .venv as well, in case we create the virtual envs in the local project folder.
+            if name.starts_with(&virtualenv_prefix) || name.starts_with(".venv") {
                 if let Some(env) = create_poetry_env(&virtual_env, project_dir.clone(), None) {
                     envs.push(env);
                 }
@@ -91,6 +92,7 @@ fn list_all_environments_from_project_config(
     env: &EnvVariables,
 ) -> Option<Vec<PathBuf>> {
     let local = Config::find_local(path, env);
+    trace!("Poetry Project ({:?}) config file => {:?}", path, local);
     let mut envs = vec![];
 
     if let Some(local) = &local {
@@ -121,19 +123,32 @@ fn should_use_local_venv_as_poetry_env(
     if let Some(poetry_virtualenvs_in_project) =
         local.clone().and_then(|c| c.virtualenvs_in_project)
     {
+        trace!(
+            "Poetry virtualenvs_in_project from local config file: {}",
+            poetry_virtualenvs_in_project
+        );
         return poetry_virtualenvs_in_project;
     }
 
     // Given preference to env variable.
     if let Some(poetry_virtualenvs_in_project) = env.poetry_virtualenvs_in_project {
+        trace!(
+            "Poetry virtualenvs_in_project from Env Variable: {}",
+            poetry_virtualenvs_in_project
+        );
         return poetry_virtualenvs_in_project;
     }
 
     // Check global config setting.
-    global
+    let value = global
         .clone()
         .and_then(|config| config.virtualenvs_in_project)
-        .unwrap_or_default()
+        .unwrap_or_default();
+    trace!(
+        "Poetry virtualenvs_in_project from global config file: {}",
+        value
+    );
+    value
 }
 
 fn list_all_environments_from_config(cfg: &Config) -> Option<Vec<PathBuf>> {

@@ -16,7 +16,7 @@ pet-core = { path = "../pet-core" }
 log = "0.4.21"
 regex = "1.10.4"
 pet-reporter = { path = "../pet-reporter" }
-
+env_logger = "0.10.2"
 
 [features]
 ci = []

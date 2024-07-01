@@ -10,6 +10,7 @@ use std::{
 };
 
 use pet_core::{
+    arch::Architecture,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
     reporter::Reporter,
     Locator,
@@ -115,7 +116,7 @@ fn find_and_report_global_pythons_in(
             continue;
         }
         if let Some(resolved) = ResolvedPythonEnv::from(exe) {
-            if let Some(env) = get_python_in_bin(&resolved.to_python_env()) {
+            if let Some(env) = get_python_in_bin(&resolved.to_python_env(), resolved.is64_bit) {
                 let mut reported_executables = reported_executables.lock().unwrap();
                 // env.symlinks = Some([symlinks, env.symlinks.clone().unwrap_or_default()].concat());
                 if let Some(symlinks) = &env.symlinks {
@@ -134,7 +135,7 @@ fn find_and_report_global_pythons_in(
     }
 }
 
-fn get_python_in_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
+fn get_python_in_bin(env: &PythonEnv, is_64bit: bool) -> Option<PythonEnvironment> {
     // If we do not have the prefix, then do not try
     // This method will be called with resolved Python where prefix & version is available.
     if env.version.clone().is_none() || env.prefix.clone().is_none() {
@@ -211,6 +212,11 @@ fn get_python_in_bin(env: &PythonEnv) -> Option<PythonEnvironment> {
         PythonEnvironmentBuilder::new(PythonEnvironmentCategory::LinuxGlobal)
             .executable(Some(executable))
             .version(env.version.clone())
+            .arch(if is_64bit {
+                Some(Architecture::X64)
+            } else {
+                Some(Architecture::X86)
+            })
             .prefix(env.prefix.clone())
             .symlinks(Some(symlinks))
             .build(),

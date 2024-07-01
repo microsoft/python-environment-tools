@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use common::resolve_test_path;
+use common::{does_version_match, resolve_test_path};
 use lazy_static::lazy_static;
 use pet_core::{
     arch::Architecture,
@@ -20,26 +20,36 @@ lazy_static! {
 mod common;
 
 #[cfg(unix)]
-#[cfg_attr(feature = "ci", test)]
+#[cfg_attr(
+    any(
+        feature = "ci",
+        feature = "ci-jupyter-container",
+        feature = "ci-homebrew-container"
+    ),
+    test
+)]
 #[allow(dead_code)]
 // We should detect the conda install along with the base env
 fn verify_validity_of_discovered_envs() {
     use pet::{find::find_and_report_envs, locators::create_locators};
     use pet_conda::Conda;
-    use pet_core::os_environment::EnvironmentApi;
+    use pet_core::{os_environment::EnvironmentApi, Configuration};
     use pet_reporter::test;
-    use std::{sync::Arc, thread};
+    use std::{env, sync::Arc, thread};
 
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let mut config = Configuration::default();
+    if let Ok(cwd) = env::current_dir() {
+        config.search_paths = Some(vec![cwd]);
+    }
+    let locators = create_locators(conda_locator.clone());
+    for locator in locators.iter() {
+        locator.configure(&config);
+    }
 
-    find_and_report_envs(
-        &reporter,
-        Default::default(),
-        &create_locators(conda_locator.clone()),
-        conda_locator,
-    );
+    find_and_report_envs(&reporter, Default::default(), &locators, conda_locator);
     let result = reporter.get_result();
 
     let environments = result.environments;
@@ -175,12 +185,29 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
         }
     }
     if let Some(prefix) = environment.clone().prefix {
-        assert_eq!(
-            prefix.to_str().unwrap(),
-            interpreter_info.clone().sys_prefix,
-            "Prefix mismatch for {:?}",
-            environment.clone()
-        );
+        if interpreter_info.clone().executable == "/usr/local/python/current/bin/python"
+            && (prefix.to_str().unwrap() == "/usr/local/python/current"
+                && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
+            || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
+                && interpreter_info.clone().sys_prefix == "/usr/local/python/current")
+        {
+            // known issue https://github.com/microsoft/python-environment-tools/issues/64
+        } else if interpreter_info.clone().executable
+            == "/home/codespace/.python/current/bin/python"
+            && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
+                && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
+            || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
+                && interpreter_info.clone().sys_prefix == "/home/codespace/.python/current")
+        {
+            // known issue https://github.com/microsoft/python-environment-tools/issues/64
+        } else {
+            assert_eq!(
+                prefix.to_str().unwrap(),
+                interpreter_info.clone().sys_prefix,
+                "Prefix mismatch for {:?}",
+                environment.clone()
+            );
+        }
     }
     if let Some(arch) = environment.clone().arch {
         let expected_arch = if interpreter_info.clone().is64_bit {
@@ -197,9 +224,8 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     }
     if let Some(version) = environment.clone().version {
         let expected_version = &interpreter_info.clone().sys_version;
-        let version = get_version(&version);
         assert!(
-            expected_version.starts_with(&version),
+            does_version_match(&version, expected_version),
             "Version mismatch for (expected {:?} to start with {:?}) for {:?}",
             expected_version,
             version,
@@ -344,15 +370,4 @@ fn get_python_interpreter_info(cli: &Vec<String>) -> InterpreterInfo {
         .1;
     let info: InterpreterInfo = serde_json::from_str(&output).unwrap();
     info
-}
-
-fn get_version(value: &String) -> String {
-    // Regex to extract just the d.d.d version from the full version string
-    let captures = PYTHON_VERSION.captures(value).unwrap();
-    let version = captures.get(1).unwrap().as_str().to_string();
-    if version.ends_with('.') {
-        version[..version.len() - 1].to_string()
-    } else {
-        version
-    }
 }

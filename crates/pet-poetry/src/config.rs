@@ -27,9 +27,10 @@ impl Config {
         virtualenvs_in_project: Option<bool>,
     ) -> Self {
         trace!(
-            "Poetry config file: {:?} with virtualenv.path {:?}",
+            "Poetry config file => {:?}, virtualenv.path => {:?}, virtualenvs_in_project => {:?}",
             file,
-            virtualenvs_path
+            virtualenvs_path,
+            virtualenvs_in_project
         );
         Config {
             file,
@@ -54,6 +55,26 @@ impl Config {
 fn create_config(file: Option<PathBuf>, env: &EnvVariables) -> Option<Config> {
     let cfg = file.clone().and_then(|f| parse(&f));
     if let Some(virtualenvs_path) = &cfg.clone().and_then(|cfg| cfg.virtualenvs_path) {
+        let mut virtualenvs_path = virtualenvs_path.clone();
+        trace!("Poetry virtualenvs path => {:?}", virtualenvs_path);
+        if virtualenvs_path
+            .to_string_lossy()
+            .to_lowercase()
+            .contains("{cache-dir}")
+        {
+            if let Some(cache_dir) = &get_default_cache_dir(env) {
+                virtualenvs_path = PathBuf::from(
+                    virtualenvs_path
+                        .to_string_lossy()
+                        .replace("{cache-dir}", cache_dir.to_string_lossy().as_ref()),
+                );
+                trace!(
+                    "Poetry virtualenvs path after replacing cache-dir => {:?}",
+                    virtualenvs_path
+                );
+            }
+        }
+
         return Some(Config::new(
             file.clone(),
             virtualenvs_path.clone(),
