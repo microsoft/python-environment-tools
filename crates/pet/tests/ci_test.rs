@@ -1,14 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Once};
 
 use common::{does_version_match, resolve_test_path};
 use lazy_static::lazy_static;
+use log::trace;
+use pet::locators::identify_python_environment_using_locators;
 use pet_core::{
     arch::Architecture,
     python_environment::{PythonEnvironment, PythonEnvironmentCategory},
 };
+use pet_python_utils::env::PythonEnv;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -17,19 +20,43 @@ lazy_static! {
         .expect("error parsing Version regex for Python Version in test");
 }
 
+static INIT: Once = Once::new();
+
+/// Setup function that is only run once, even if called multiple times.
+fn setup() {
+    INIT.call_once(|| {
+        env_logger::builder()
+            .filter(None, log::LevelFilter::Trace)
+            .init();
+    });
+}
+
 mod common;
 
-#[cfg(unix)]
+// #[cfg(unix)]
 #[cfg_attr(
     any(
         feature = "ci",
         feature = "ci-jupyter-container",
-        feature = "ci-homebrew-container"
+        feature = "ci-homebrew-container",
+        feature = "ci-poetry-global",
+        feature = "ci-poetry-project",
+        feature = "ci-poetry-custom",
     ),
     test
 )]
 #[allow(dead_code)]
-// We should detect the conda install along with the base env
+/// Verification 1
+/// For each discovered enviornment verify the accuracy of sys.prefix and sys.version
+/// by spawning the Python executable
+/// Verification 2:
+/// For each enviornment, given the executable verify we can get the exact same information
+/// Using the `locators.from` method (without having to find all environments).
+/// I.e. we should be able to get the same information using only the executable.
+/// Verification 3:
+/// Similarly for each environment use one of the known symlinks and verify we can get the same information.
+/// Verification 4 & 5:
+/// Similarly for each environment use resolve method and verify we get the exact same information.
 fn verify_validity_of_discovered_envs() {
     use pet::{find::find_and_report_envs, locators::create_locators};
     use pet_conda::Conda;
@@ -37,18 +64,20 @@ fn verify_validity_of_discovered_envs() {
     use pet_reporter::test;
     use std::{env, sync::Arc, thread};
 
+    setup();
+
+    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let mut config = Configuration::default();
-    if let Ok(cwd) = env::current_dir() {
-        config.search_paths = Some(vec![cwd]);
-    }
+    config.search_paths = Some(vec![project_dir.clone()]);
     let locators = create_locators(conda_locator.clone());
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
+    // Find all environments on this machine.
     find_and_report_envs(&reporter, Default::default(), &locators, conda_locator);
     let result = reporter.get_result();
 
@@ -58,8 +87,26 @@ fn verify_validity_of_discovered_envs() {
         if environment.executable.is_none() {
             continue;
         }
+        // Verification 1
+        // For each enviornment verify the accuracy of sys.prefix and sys.version
+        // by spawning the Python executable
+        let e = environment.clone();
         threads.push(thread::spawn(move || {
-            verify_validity_of_interpreter_info(environment.clone());
+            verify_validity_of_interpreter_info(e);
+        }));
+        // Verification 2:
+        // For each enviornment, given the executable verify we can get the exact same information
+        // Using the `locators.from` method (without having to find all environments).
+        // I.e. we should be able to get the same information using only the executable.
+        //
+        // Verification 3:
+        // Similarly for each environment use one of the known symlinks and verify we can get the same information.
+        //
+        // TODO: Verification 4 & 5:
+        // Similarly for each environment use resolve method and verify we get the exact same information.
+        let e = environment.clone();
+        threads.push(thread::spawn(move || {
+            verify_we_can_get_same_env_info_using_from(e)
         }));
     }
     for thread in threads {
@@ -79,6 +126,7 @@ fn check_if_virtualenvwrapper_exists() {
     use pet_reporter::test;
     use std::sync::Arc;
 
+    setup();
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
@@ -123,6 +171,7 @@ fn check_if_pyenv_virtualenv_exists() {
     use pet_reporter::test;
     use std::sync::Arc;
 
+    setup();
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
@@ -234,6 +283,156 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     }
 }
 
+fn verify_we_can_get_same_env_info_using_from(environment: PythonEnvironment) {
+    for exe in &environment.clone().symlinks.unwrap_or_default() {
+        verify_we_can_get_same_env_inf_using_from_with_exe(exe, environment.clone());
+    }
+}
+
+fn verify_we_can_get_same_env_inf_using_from_with_exe(
+    executable: &PathBuf,
+    environment: PythonEnvironment,
+) {
+    let mut environment = environment.clone();
+
+    // Assume we were given a path to the exe, then we use the `locator.from` method.
+    // We should be able to get the exct same information back given only the exe.
+    //
+    // Note: We will not not use the old locator objects, as we do not want any cached information.
+    // Hence create the locators all over again.
+    use pet::locators::create_locators;
+    use pet_conda::Conda;
+    use pet_core::{os_environment::EnvironmentApi, Configuration};
+    use std::{env, sync::Arc};
+
+    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let os_environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&os_environment));
+    let mut config = Configuration::default();
+    config.search_paths = Some(vec![project_dir.clone()]);
+    let locators = create_locators(conda_locator.clone());
+    for locator in locators.iter() {
+        locator.configure(&config);
+    }
+
+    let env = PythonEnv::new(executable.clone(), None, None);
+    let mut env = identify_python_environment_using_locators(&env, &locators, None).expect(
+        format!(
+            "Failed to resolve environment using `from` for {:?}",
+            environment
+        )
+        .as_str(),
+    );
+    trace!(
+        "For exe {:?} we got Environment = {:?}, To compare against {:?}",
+        executable,
+        env,
+        environment
+    );
+
+    // if env.category = Unknown and the executable is in PATH, then category will be GlobalPaths
+    if let Some(exe) = env.executable.clone() {
+        if let Some(bin) = exe.parent() {
+            if env.category == PythonEnvironmentCategory::Unknown {
+                let paths = env::split_paths(&env::var("PATH").ok().unwrap_or_default())
+                    .into_iter()
+                    .collect::<Vec<PathBuf>>();
+                if paths.contains(&bin.to_path_buf()) {
+                    env.category = PythonEnvironmentCategory::GlobalPaths;
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        env.category,
+        environment.clone().category,
+        "Category mismatch for {:?} and {:?}",
+        environment,
+        env
+    );
+
+    if let (Some(version), Some(expected_version)) =
+        (environment.clone().version, env.clone().version)
+    {
+        assert!(
+            does_version_match(&version, &expected_version),
+            "Version mismatch for (expected {:?} to start with {:?}) for env = {:?} and environment = {:?}",
+            expected_version,
+            version,
+            env.clone(),
+            environment.clone()
+        );
+    }
+    // We have compared the versions, now ensure they are treated as the same
+    // So that we can compare the objects easily
+    env.version = environment.clone().version;
+
+    if let Some(prefix) = environment.clone().prefix {
+        if env.clone().executable == Some(PathBuf::from("/usr/local/python/current/bin/python"))
+            && (prefix.to_str().unwrap() == "/usr/local/python/current"
+                && env.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
+            || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
+                && env.clone().prefix == Some(PathBuf::from("/usr/local/python/current")))
+        {
+            // known issue https://github.com/microsoft/python-environment-tools/issues/64
+            env.prefix = environment.clone().prefix;
+        } else if env.clone().executable
+            == Some(PathBuf::from("/home/codespace/.python/current/bin/python"))
+            && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
+                && env.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
+            || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
+                && env.clone().prefix == Some(PathBuf::from("/home/codespace/.python/current")))
+        {
+            // known issue https://github.com/microsoft/python-environment-tools/issues/64
+            env.prefix = environment.clone().prefix;
+        }
+    }
+    // known issue
+    env.symlinks = Some(
+        env.clone()
+            .symlinks
+            .unwrap_or_default()
+            .iter()
+            .filter(|p| {
+                // This is in the path, but not easy to figure out, unless we add support for codespaces or CI.
+                if p.starts_with("/Users/runner/hostedtoolcache/Python")
+                    && p.to_string_lossy().contains("arm64")
+                {
+                    false
+                } else {
+                    true
+                }
+            })
+            .map(|p| p.to_path_buf())
+            .collect::<Vec<PathBuf>>(),
+    );
+    environment.symlinks = Some(
+        environment
+            .clone()
+            .symlinks
+            .unwrap_or_default()
+            .iter()
+            .filter(|p| {
+                // This is in the path, but not easy to figure out, unless we add support for codespaces or CI.
+                if p.starts_with("/Users/runner/hostedtoolcache/Python")
+                    && p.to_string_lossy().contains("arm64")
+                {
+                    false
+                } else {
+                    true
+                }
+            })
+            .map(|p| p.to_path_buf())
+            .collect::<Vec<PathBuf>>(),
+    );
+    assert_eq!(
+        env, environment,
+        "Environment mismatch for {:?}",
+        environment
+    );
+}
+
 #[cfg(unix)]
 #[cfg(target_os = "linux")]
 #[cfg_attr(feature = "ci", test)]
@@ -246,6 +445,7 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
     use pet_reporter::test;
     use std::sync::Arc;
 
+    setup();
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));

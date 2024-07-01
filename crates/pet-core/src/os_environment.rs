@@ -7,6 +7,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use log::trace;
 use pet_fs::path::norm_case;
 
 pub trait Environment {
@@ -78,7 +79,7 @@ impl Environment for EnvironmentApi {
             let mut paths =
                 env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .collect::<Vec<PathBuf>>();
-
+            trace!("Env PATH: {:?}", paths);
             vec![
                 PathBuf::from("/bin"),
                 PathBuf::from("/etc"),

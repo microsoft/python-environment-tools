@@ -48,8 +48,10 @@ impl Locator for MacCmdLineTools {
 
         if !env
             .executable
-            .to_string_lossy()
-            .starts_with("/Library/Developer/CommandLineTools/usr/bin/python")
+            .starts_with("/Library/Developer/CommandLineTools/usr/bin")
+            && !env.executable.starts_with(
+                "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions",
+            )
         {
             return None;
         }
@@ -68,6 +70,33 @@ impl Locator for MacCmdLineTools {
         // Verify this and add that to the list of symlinks as well.
         if let Some(symlink) = resolve_symlink(&env.executable) {
             symlinks.push(symlink);
+        }
+
+        // Possible we got the file /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
+        // We know that /Library/Developer/CommandLineTools/usr/bin/python3 is a symlink to the above.
+        if env
+            .executable
+            .starts_with("/Library/Developer/CommandLineTools/usr/bin")
+        {
+            let exe = PathBuf::from("/Library/Developer/CommandLineTools/usr/bin/python3");
+            if let Some(symlink) = resolve_symlink(&exe) {
+                if symlinks.contains(&symlink) {
+                    symlinks.push(symlink);
+
+                    // Rest of the files in this directory are also symlinks to the same exe.
+                    for exe in find_executables(PathBuf::from(
+                        "/Library/Developer/CommandLineTools/usr/bin",
+                    )) {
+                        if !symlinks.contains(&exe) {
+                            if let Some(symlink) = resolve_symlink(&exe) {
+                                if symlinks.contains(&symlink) {
+                                    symlinks.push(exe);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // We know /usr/bin/python3 can end up pointing to this same Python exe as well
@@ -105,6 +134,17 @@ impl Locator for MacCmdLineTools {
 
         symlinks.sort();
         symlinks.dedup();
+
+        // Find other exes that are symlinks to the same exe in /Library/Developer/CommandLineTools/usr/bin
+        for exe in find_executables("/Library/Developer/CommandLineTools/usr/bin") {
+            if !symlinks.contains(&exe) {
+                if let Some(symlink) = resolve_symlink(&exe) {
+                    if symlinks.contains(&symlink) {
+                        symlinks.push(exe);
+                    }
+                }
+            }
+        }
 
         if prefix.is_none() {
             // We would have identified the symlinks by now.

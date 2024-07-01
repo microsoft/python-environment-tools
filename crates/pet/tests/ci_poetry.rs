@@ -3,7 +3,6 @@
 
 mod common;
 
-#[cfg(unix)]
 #[cfg_attr(any(feature = "ci-poetry-global", feature = "ci-poetry-custom"), test)]
 #[allow(dead_code)]
 /// This is a test with Poetry for current directory with Python 3.12 and 3.11 and envs are created in regular global cache directory
@@ -36,11 +35,14 @@ fn verify_ci_poetry_global() {
 
     let environments = result.environments;
 
-    result
-        .managers
-        .iter()
-        .find(|m| m.tool == EnvManagerType::Poetry)
-        .expect("Poetry manager not found");
+    // On CI the poetry manager is installed using wsl, and the path isn't available on windows
+    if std::env::consts::OS != "windows" {
+        result
+            .managers
+            .iter()
+            .find(|m| m.tool == EnvManagerType::Poetry)
+            .expect("Poetry manager not found");
+    }
 
     let poetry_envs = environments
         .iter()
@@ -62,7 +64,6 @@ fn verify_ci_poetry_global() {
         .expect("Python 3.12 not found");
 }
 
-#[cfg(unix)]
 #[cfg_attr(feature = "ci-poetry-project", test)]
 #[allow(dead_code)]
 /// This is a test with Poetry for current directory with Python 3.11 and created as .venv in project directory.
@@ -95,11 +96,14 @@ fn verify_ci_poetry_project() {
 
     let environments = result.environments;
 
-    result
-        .managers
-        .iter()
-        .find(|m| m.tool == EnvManagerType::Poetry)
-        .expect("Poetry manager not found");
+    // On CI the poetry manager is installed using wsl, and the path isn't available on windows
+    if std::env::consts::OS != "windows" {
+        result
+            .managers
+            .iter()
+            .find(|m| m.tool == EnvManagerType::Poetry)
+            .expect("Poetry manager not found");
+    }
 
     let poetry_envs = environments
         .iter()

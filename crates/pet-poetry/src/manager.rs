@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use log::trace;
 use pet_core::manager::{EnvManager, EnvManagerType};
 use std::{env, path::PathBuf};
 
@@ -35,8 +36,10 @@ impl PoetryManager {
             if let Some(poetry_home) = &env_variables.poetry_home {
                 if std::env::consts::OS == "windows" {
                     search_paths.push(poetry_home.join("bin").join("poetry.exe"));
+                    search_paths.push(poetry_home.join("venv").join("bin").join("poetry.exe"));
                 }
                 search_paths.push(poetry_home.join("bin").join("poetry"));
+                search_paths.push(poetry_home.join("venv").join("bin").join("poetry"));
             }
             if std::env::consts::OS == "windows" {
                 if let Some(app_data) = env_variables.app_data.clone() {
@@ -71,6 +74,10 @@ impl PoetryManager {
                         app_data.join("Python").join("scripts").join("poetry"), // https://python-poetry.org/docs/#installing-with-the-official-installer
                     );
                 }
+                search_paths.push(
+                    // Found after installing on Windows via github actions.
+                    home.join(".local").join("bin").join("poetry"),
+                );
             } else if std::env::consts::OS == "macos" {
                 search_paths.push(
                     // https://python-poetry.org/docs/#installing-with-the-official-installer
@@ -111,9 +118,16 @@ impl PoetryManager {
                     if executable.is_file() {
                         return Some(PoetryManager { executable });
                     }
+                    if std::env::consts::OS == "windows" {
+                        let executable = each.join("poetry.exe");
+                        if executable.is_file() {
+                            return Some(PoetryManager { executable });
+                        }
+                    }
                 }
             }
         }
+        trace!("Poetry exe not found");
         None
     }
     pub fn to_manager(&self) -> EnvManager {

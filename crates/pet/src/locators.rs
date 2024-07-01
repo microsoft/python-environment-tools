@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use log::{trace, warn};
+use log::{info, trace};
 use pet_conda::Conda;
 use pet_core::arch::Architecture;
 use pet_core::os_environment::EnvironmentApi;
@@ -114,7 +114,7 @@ pub fn identify_python_environment_using_locators(
             // We have no idea what this is.
             // We have check all of the resolvers.
             // Telemetry point, failed to identify env here.
-            warn!(
+            info!(
                 "Unknown Env ({:?}) in Path resolved as {:?} and reported as {:?}",
                 executable,
                 resolved_env,
@@ -179,7 +179,7 @@ fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
 }
 
 #[cfg(windows)]
-fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
+fn find_symlinks(_executable: &PathBuf) -> Option<Vec<PathBuf>> {
     // In windows we will need to spawn the Python exe and then get the exes.
     // Lets wait and see if this is necessary.
     None

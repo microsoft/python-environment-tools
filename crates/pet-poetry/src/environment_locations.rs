@@ -15,7 +15,7 @@ use std::{
 
 use crate::{
     config::Config, env_variables::EnvVariables, environment::create_poetry_env,
-    pyproject_toml::PyProjectToml,
+    manager::PoetryManager, pyproject_toml::PyProjectToml,
 };
 
 lazy_static! {
@@ -26,6 +26,7 @@ lazy_static! {
 pub fn list_environments(
     env: &EnvVariables,
     project_dirs: &[PathBuf],
+    manager: Option<PoetryManager>,
 ) -> Option<Vec<PythonEnvironment>> {
     if project_dirs.is_empty() {
         return None;
@@ -76,7 +77,9 @@ pub fn list_environments(
                 .unwrap_or_default();
             // Look for .venv as well, in case we create the virtual envs in the local project folder.
             if name.starts_with(&virtualenv_prefix) || name.starts_with(".venv") {
-                if let Some(env) = create_poetry_env(&virtual_env, project_dir.clone(), None) {
+                if let Some(env) =
+                    create_poetry_env(&virtual_env, project_dir.clone(), manager.clone())
+                {
                     envs.push(env);
                 }
             }

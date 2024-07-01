@@ -286,6 +286,7 @@ name = "pet"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "env_logger",
  "lazy_static",
  "log",
  "msvc_spectre_libs",
