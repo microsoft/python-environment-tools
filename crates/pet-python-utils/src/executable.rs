@@ -89,6 +89,8 @@ pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
         }
     }
 
+    // Ensure the exe `python` is first, instead of `python3.10`
+    python_executables.sort();
     python_executables
 }
 

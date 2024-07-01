@@ -2,8 +2,13 @@ name: PR/CI Check
 
 on:
   pull_request:
+    branches:
+      - main
+      - release*
+      - release/*
+      - release-*
   push:
-    branches-ignore:
+    branches:
       - main
       - release*
       - release/*
@@ -11,6 +16,9 @@ on:
 
 jobs:
   tests:
+    # Very generic tests, we don't verify whether the envs are discovered correctly or not.
+    # However we do ensure that envs that are discovered are valid.
+    # See other jobs for specific tests.
     name: Tests
     runs-on: ${{ matrix.os }}
     strategy:
@@ -26,20 +34,12 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: arm-unknown-linux-gnueabihf
           - os: macos-latest
             target: x86_64-apple-darwin
             run_cli: "yes"
           - os: macos-14
             target: aarch64-apple-darwin
             run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: x86_64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-musl
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -151,6 +151,22 @@ jobs:
           pyenv virtualenv 3.12 pyenv-virtualenv-env1
         shell: bash
 
+      # region venv
+      - name: Create .venv
+        # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        run: |
+          python -m venv .venv
+        shell: bash
+
+      - name: Create .venv2
+        # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+        run: |
+          python -m venv .venv2
+        shell: bash
+
+      # endregion venv
+
+      # Rust
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -167,7 +183,194 @@ jobs:
         shell: bash
 
       - name: Run Tests
-        run: cargo test --frozen --all-features -- --nocapture
+        # Run integration tests in a single thread,
+        # We end up creating conda envs and running multiple tests in parallel
+        # that creat conda envs simultaneously causes issues (sometimes the conda envs do not seem to get created)
+        # Similar issues were identified in vscode-jupyter tests as well (something to do with conda lock files or the like)
+        run: cargo test --frozen --features ci -- --nocapture --test-threads=1
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: trace
+        shell: bash
+
+  isolated-tests:
+    # Some of these tests are very specific and need to be run in isolation.
+    # E.g. we need to ensure we have a poetry project setup correctly (without .venv created using `pip -m venv .venv`).
+    # We can try to use the previous `tests` job, but that gets very complicated.
+    name: Other Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - feature: ci-poetry-global
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - feature: ci-poetry-project
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - feature: ci-poetry-custom
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Setup Poetry
+      - name: Set Python 3.x to PATH
+        if: startsWith( matrix.feature, 'ci-poetry')
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Set Python 3.12 to PATH
+        if: startsWith( matrix.feature, 'ci-poetry')
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set Python 3.11 to PATH
+        if: startsWith( matrix.feature, 'ci-poetry')
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry (envs globally)
+        if: startsWith( matrix.feature, 'ci-poetry-global')
+        uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: false
+          installer-parallel: true
+
+      - name: Install Poetry (env locally)
+        if: startsWith( matrix.feature, 'ci-poetry-project')
+        uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+
+      - name: Install Poetry (env locally)
+        if: startsWith( matrix.feature, 'ci-poetry-custom')
+        uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: false
+          virtualenvs-path: ~/my-custom-path
+          installer-parallel: true
+
+      - name: Petry config
+        if: startsWith( matrix.feature, 'ci-poetry')
+        run: poetry config --list
+        shell: bash
+
+      - name: Petry setup
+        if: startsWith( matrix.feature, 'ci-poetry')
+        # We want to have 2 envs for this poetry project 3.12 and 3.11.
+        run: poetry init --name=pet-test --python=^3.11 -q -n
+        shell: bash
+
+      - name: Petry virtual env setup 3.12
+        if: startsWith( matrix.feature, 'ci-poetry')
+        run: poetry env use python3.12
+        shell: bash
+
+      - name: Petry virtual env setup 3.11
+        if: startsWith( matrix.feature, 'ci-poetry')
+        run: poetry env use python3.11
+        shell: bash
+
+      - name: Petry list envs
+        if: startsWith( matrix.feature, 'ci-poetry')
+        run: poetry env list
+        shell: bash
+
+      - name: Petry pyproject.toml
+        if: startsWith( matrix.feature, 'ci-poetry')
+        run: cat pyproject.toml
+        shell: bash
+
+      # # Dump env vars
+      # - name: Env
+      #   run: set
+      #   shell: bash
+
+      # Rust
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cargo Fetch
+        run: cargo fetch
+        shell: bash
+
+      - name: Find Environments
+        run: cargo run --release --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Run Tests
+        # Run integration tests in a single thread,
+        # We end up creating conda envs and running multiple tests in parallel
+        # that creat conda envs simultaneously causes issues (sometimes the conda envs do not seem to get created)
+        # Similar issues were identified in vscode-jupyter tests as well (something to do with conda lock files or the like)
+        run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture --test-threads=1
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: trace
+        shell: bash
+
+  container-tests:
+    # These tests are required as its not easy/possible to use the previous jobs.
+    # E.g. we need to test against the jupyter container, as we found some issues specific to that env.
+    name: Tests in Containers
+    container:
+      image: ${{ matrix.image }}
+      options: --user=root
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - feature: ci-jupyter-container
+            os: ubuntu-latest
+            # For Tests again the container used in https://github.com/github/codespaces-jupyter
+            image: mcr.microsoft.com/devcontainers/universal:2.11.1
+            target: x86_64-unknown-linux-musl
+          - feature: ci-homebrew-container
+            os: ubuntu-latest
+            # For Homebrew in Ubuntu
+            image: homebrew/brew
+            target: x86_64-unknown-linux-musl
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Homebrew
+      - name: Homebrew Python
+        if: startsWith( matrix.image, 'homebrew')
+        run: brew install python@3.12 python@3.11
+        shell: bash
+
+      # Rust
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cargo Fetch
+        run: cargo fetch
+        shell: bash
+
+      - name: Find Environments
+        run: cargo run --release --target ${{ matrix.target }} -- find -v
+        shell: bash
+
+      - name: Run Tests
+        run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture
         shell: bash
 
   builds:

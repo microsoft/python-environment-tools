@@ -44,3 +44,8 @@ lazy_static = "1.4.0"
 
 [features]
 ci = []
+ci-jupyter-container = []
+ci-homebrew-container = []
+ci-poetry-global = []
+ci-poetry-project = []
+ci-poetry-custom = []

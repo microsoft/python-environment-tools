@@ -1,0 +1,18 @@
+{
+	"name": "linux-homebrew",
+	"build": {
+		"context": "../..",
+		"dockerfile": "./Dockerfile"
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python@prerelease",
+				"esbenp.prettier-vscode",
+				"rust-lang.rust-analyzer",
+				"EditorConfig.EditorConfig"
+			]
+		}
+	},
+	"workspaceFolder": "/workspaces/python-environment-tools"
+}

@@ -65,8 +65,10 @@ pub fn get_conda_environment_paths(
  */
 fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<PathBuf> {
     if let Some(conda_rc) = Condarc::from(env_vars) {
+        trace!("Conda environments in .condarc {:?}", conda_rc.env_dirs);
         conda_rc.env_dirs
     } else {
+        trace!("No Conda environments in .condarc");
         vec![]
     }
 }
@@ -98,6 +100,7 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
         }
     }
     env_paths.append(&mut env_vars.known_global_search_locations.clone());
+    trace!("Conda environments in known paths {:?}", env_paths);
     env_paths
 }
 
@@ -118,6 +121,7 @@ fn get_conda_environment_paths_from_additional_paths(
         }
     }
     env_paths.append(&mut additional_env_dirs.clone());
+    trace!("Conda environments in additional paths {:?}", env_paths);
     env_paths
 }
 
@@ -170,7 +174,9 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
         if let Ok(reader) = fs::read_to_string(environment_txt.clone()) {
             trace!("Found environments.txt file {:?}", environment_txt);
             for line in reader.lines() {
-                envs.push(norm_case(&PathBuf::from(line.to_string())));
+                let line = norm_case(&PathBuf::from(line.to_string()));
+                trace!("Conda env in environments.txt file {:?}", line);
+                envs.push(line);
             }
         }
     }

@@ -4,7 +4,8 @@
 mod common;
 
 #[cfg(unix)]
-#[test]
+#[cfg_attr(any(feature = "ci",), test)]
+#[allow(dead_code)]
 fn global_config_with_defaults() {
     use common::create_env_variables;
     use common::resolve_test_path;
@@ -36,7 +37,8 @@ fn global_config_with_defaults() {
 }
 
 #[cfg(unix)]
-#[test]
+#[cfg_attr(any(feature = "ci",), test)]
+#[allow(dead_code)]
 fn global_config_with_specific_values() {
     use std::path::PathBuf;
 
@@ -82,7 +84,9 @@ fn global_config_with_specific_values() {
 }
 
 #[cfg(unix)]
-#[test]
+#[cfg_attr(any(feature = "ci",), test)]
+#[allow(dead_code)]
+
 fn local_config_with_specific_values() {
     use std::path::PathBuf;
 
