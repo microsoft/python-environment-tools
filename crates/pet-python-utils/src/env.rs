@@ -97,6 +97,11 @@ impl ResolvedPythonEnv {
         match result {
             Ok(output) => {
                 let output = String::from_utf8(output.stdout).unwrap().trim().to_string();
+                trace!(
+                    "Python Execution for {:?} produced an output {:?}",
+                    executable,
+                    output
+                );
                 if let Some((_, output)) = output.split_once(PYTHON_INFO_JSON_SEPARATOR) {
                     if let Ok(info) = serde_json::from_str::<InterpreterInfo>(output) {
                         Some(Self {

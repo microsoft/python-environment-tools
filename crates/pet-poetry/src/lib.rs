@@ -105,13 +105,14 @@ impl Poetry {
             managers: vec![],
             environments: vec![],
         };
-        if let Some(manager) = manager {
+        if let Some(manager) = &manager {
             result.managers.push(manager.to_manager());
         }
         if let Ok(values) = self.project_dirs.lock() {
             let project_dirs = values.clone();
             drop(values);
-            let envs = list_environments(&self.env_vars, &project_dirs.clone()).unwrap_or_default();
+            let envs = list_environments(&self.env_vars, &project_dirs.clone(), manager)
+                .unwrap_or_default();
             result.environments.extend(envs.clone());
         }
 

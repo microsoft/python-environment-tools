@@ -7,8 +7,11 @@ use pet_core::{
     Locator,
 };
 use pet_fs::path::resolve_symlink;
-use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
 use pet_python_utils::version;
+use pet_python_utils::{
+    env::{PythonEnv, ResolvedPythonEnv},
+    executable::find_executables,
+};
 use pet_virtualenv::is_virtualenv;
 use std::path::PathBuf;
 
@@ -65,7 +68,34 @@ impl Locator for MacXCode {
         // /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
         // Verify this and add that to the list of symlinks as well.
         if let Some(symlink) = resolve_symlink(&env.executable) {
-            symlinks.push(symlink);
+            symlinks.push(symlink.clone());
+
+            // All exes in the bin directory of the symlink are also symlinks (thats generally of the form /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9)
+            for exe in find_executables(symlink.parent().unwrap()) {
+                symlinks.push(exe);
+            }
+        }
+
+        // Possible the env.executable is "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"
+        // The symlink to the above exe is in /Applications/Xcode.app/Contents/Developer/usr/bin/python3
+        // Lets try to find that, because /usr/bin/python3 could also exist and when we run python, the sys.execuctable points to the file /Applications/Xcode.app/Contents/Developer/usr/bin/python3
+        // The name of the `Xcode.app` folder can be different on other machines, e.g. on CI it is `Xcode_15.0.1.app`
+        let xcode_folder_name = exe_str.split('/').nth(2).unwrap_or_default();
+
+        let bin = PathBuf::from(format!(
+            "/Applications/{}/Contents/Developer/usr/bin",
+            xcode_folder_name
+        ));
+        let exe = bin.join("python3");
+        if let Some(symlink) = resolve_symlink(&exe) {
+            if symlinks.contains(&symlink) {
+                symlinks.push(exe.clone());
+
+                // All exes in this directory are symlinks
+                for exe in find_executables(bin) {
+                    symlinks.push(exe);
+                }
+            }
         }
 
         // We know /usr/bin/python3 can end up pointing to this same Python exe as well

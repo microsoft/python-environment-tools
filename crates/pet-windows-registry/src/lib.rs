@@ -88,8 +88,10 @@ impl Locator for WindowsRegistry {
         if let Some(result) = self.find_with_cache() {
             // Find the same env here
             for found_env in result.environments {
-                if env.executable.to_str() == env.executable.to_str() {
-                    return Some(found_env);
+                if let Some(ref python_executable_path) = found_env.executable {
+                    if python_executable_path == &env.executable {
+                        return Some(found_env);
+                    }
                 }
             }
         }
