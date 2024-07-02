@@ -260,7 +260,7 @@ jobs:
         shell: bash
 
       - name: Create .venv
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
+        if: startsWith( matrix.feature, 'ci-venv')
         run: $PYTHON_3_11_PATH -m venv .venv
         shell: bash
 
