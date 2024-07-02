@@ -5,7 +5,10 @@ use lazy_static::lazy_static;
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::executable::find_executables;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 lazy_static! {
     static ref PYTHON_VERSION: Regex =
@@ -94,7 +97,11 @@ pub fn get_known_symlinks_impl(
                         ] {
 
                         // Validate the symlinks
-                        if possible_symlink == symlink_resolved_python_exe || resolve_symlink(&possible_symlink).unwrap_or_default() == symlink_resolved_python_exe {
+                        if symlinks.contains(
+                            &resolve_symlink(&possible_symlink)
+                                // .or(fs::canonicalize(&possible_symlink).ok())
+                                .unwrap_or_default(),
+                        ) {
                             symlinks.push(possible_symlink);
                         }
                     }
@@ -149,7 +156,11 @@ pub fn get_known_symlinks_impl(
                         ] {
 
                         // Validate the symlinks
-                        if possible_symlink == symlink_resolved_python_exe || resolve_symlink(&possible_symlink).unwrap_or_default() == symlink_resolved_python_exe {
+                        if symlinks.contains(
+                            &resolve_symlink(&possible_symlink)
+                                // .or(fs::canonicalize(&possible_symlink).ok())
+                                .unwrap_or_default(),
+                        ) {
                             symlinks.push(possible_symlink);
                         }
                     }
@@ -189,10 +200,11 @@ pub fn get_known_symlinks_impl(
                         PathBuf::from("/usr/local/bin/python"),
                     ] {
                         // Validate the symlinks
-                        if possible_symlink == symlink_resolved_python_exe
-                            || resolve_symlink(&possible_symlink).unwrap_or_default()
-                                == symlink_resolved_python_exe
-                        {
+                        if symlinks.contains(
+                            &resolve_symlink(&possible_symlink)
+                                .or(fs::canonicalize(&possible_symlink).ok())
+                                .unwrap_or_default(),
+                        ) {
                             symlinks.push(possible_symlink);
                         }
                     }
