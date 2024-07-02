@@ -92,7 +92,7 @@ fn get_prefix(_resolved_file: &Path) -> Option<PathBuf> {
     // }
 
     // // 2. Linux
-    // if resolved_file.starts_with("/home/linuxbrew/.linuxbrew/Cellar") {
+    // if resolved_file.starts_with("/home/linuxbrew/.linuxbrew") {
     //     // Resolved exe is something like `/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.3/bin/python3.12`
     //     let reg_ex = Regex::new("/home/linuxbrew/.linuxbrew/Cellar/python@(\\d+\\.?\\d+\\.?)/(\\d+\\.?\\d+\\.?\\d+\\.?)/bin/python.*").unwrap();
     //     let captures = reg_ex.captures(resolved_file)?;

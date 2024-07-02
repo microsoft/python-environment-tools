@@ -81,16 +81,12 @@ pub fn get_known_symlinks_impl(
                     let version = version.as_str().to_string();
                     let mut symlinks = vec![symlink_resolved_python_exe.to_owned()];
                     // If we have the path `Current` in the resolved exe, then thats a symlink.
-                    if symlink_resolved_python_exe
-                        .to_string_lossy()
-                        .contains("Current")
+                    // E.g. /opt/homebrew/Frameworks/Python.framework/Versions/Current/bin/python3.12
+                    if let Some(resolved) = &resolve_symlink(&symlink_resolved_python_exe)
+                        .or(fs::canonicalize(symlink_resolved_python_exe).ok())
                     {
-                        if let Some(resolved) = &resolve_symlink(&symlink_resolved_python_exe)
-                            .or(fs::canonicalize(symlink_resolved_python_exe).ok())
-                        {
-                            if resolved.starts_with("/opt/homebrew/Cellar") {
-                                symlinks.push(resolved.clone());
-                            }
+                        if resolved.starts_with("/opt/homebrew/Cellar") {
+                            symlinks.push(resolved.clone());
                         }
                     }
                     for possible_symlink in [
@@ -186,7 +182,7 @@ pub fn get_known_symlinks_impl(
             },
             None => vec![],
         }
-    } else if symlink_resolved_python_exe.starts_with("/home/linuxbrew/.linuxbrew/Cellar") {
+    } else if symlink_resolved_python_exe.starts_with("/home/linuxbrew/.linuxbrew") {
         // Real exe - /home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.3/bin/python3.12
 
         // Known symlinks include

@@ -72,7 +72,7 @@ fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
             &PathBuf::from("/opt/homebrew/bin").join(exe_file_name),
             &resolved_file,
         )
-    } else if resolved_file.starts_with("/home/linuxbrew/.linuxbrew/Cellar") {
+    } else if resolved_file.starts_with("/home/linuxbrew/.linuxbrew") {
         // Symlink  - /home/linuxbrew/.linuxbrew/bin/python3.12
         // Symlink  - /home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12
         // Real exe - /home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.3/bin/python3.12
