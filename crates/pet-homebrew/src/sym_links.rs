@@ -86,15 +86,6 @@ pub fn get_known_symlinks_impl(
                 Some(version) => {
                     let version = version.as_str().to_string();
                     let mut symlinks = vec![symlink_resolved_python_exe.to_owned()];
-                    // If we have the path `Current` in the resolved exe, then thats a symlink.
-                    // E.g. /opt/homebrew/Frameworks/Python.framework/Versions/Current/bin/python3.12
-                    if let Some(resolved) = &resolve_symlink(&symlink_resolved_python_exe)
-                        .or(fs::canonicalize(symlink_resolved_python_exe).ok())
-                    {
-                        if resolved.starts_with("/opt/homebrew/Cellar") {
-                            symlinks.push(resolved.clone());
-                        }
-                    }
                     for possible_symlink in [
                         PathBuf::from(format!("/opt/homebrew/bin/python{}", version)),
                         PathBuf::from(format!("/opt/homebrew/opt/python@{}/bin/python{}", version, version)),
@@ -202,14 +193,6 @@ pub fn get_known_symlinks_impl(
                     // Never include `/usr/local/bin/python` into this list.
                     // See previous explanation
                     let mut symlinks = vec![symlink_resolved_python_exe.to_owned()];
-                    println!("GET SYMLINKS FOR {:?}", symlink_resolved_python_exe);
-                    if let Some(resolved) = &resolve_symlink(&symlink_resolved_python_exe)
-                        .or(fs::canonicalize(symlink_resolved_python_exe).ok())
-                    {
-                        if resolved.starts_with("/home/linuxbrew/.linuxbrew") {
-                            symlinks.push(resolved.clone());
-                        }
-                    }
                     for possible_symlink in [
                         PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3"),
                         PathBuf::from(format!("/home/linuxbrew/.linuxbrew/bin/python{}", version)),

@@ -84,7 +84,7 @@ fn verify_validity_of_discovered_envs() {
     let result = reporter.get_result();
 
     let environments = result.environments;
-    // let mut threads = vec![];
+    let mut threads = vec![];
     for environment in environments {
         if environment.executable.is_none() {
             continue;
@@ -93,33 +93,29 @@ fn verify_validity_of_discovered_envs() {
         // For each enviornment verify the accuracy of sys.prefix and sys.version
         // by spawning the Python executable
         let e = environment.clone();
-        // threads.push(thread::spawn(move || {
-        verify_validity_of_interpreter_info(e);
-        // }));
+        threads.push(thread::spawn(move || {
+            verify_validity_of_interpreter_info(e);
+        }));
         let e = environment.clone();
-        // threads.push(thread::spawn(move || {
-        for exe in &e.clone().symlinks.unwrap_or_default() {
-            // Verification 2:
-            // For each enviornment, given the executable verify we can get the exact same information
-            // Using the `locator.try_from` method (without having to find all environments).
-            // I.e. we should be able to get the same information using only the executable.
-            //
-            // Verification 3:
-            // Similarly for each environment use one of the known symlinks and verify we can get the same information.
-            println!("====================================================");
-            println!("VERIFY 2.3 {:?} {:?}", exe, environment.clone());
-            verify_we_can_get_same_env_info_using_from_with_exe(exe, environment.clone());
-            // Verification 4 & 5:
-            // Similarly for each environment use resolve method and verify we get the exact same information.
-            println!("====================================================");
-            println!("VERIFY 4.5 {:?} {:?}", exe, environment.clone());
-            verify_we_can_get_same_env_info_using_resolve_with_exe(exe, environment.clone());
-        }
-        // }));
+        threads.push(thread::spawn(move || {
+            for exe in &e.clone().symlinks.unwrap_or_default() {
+                // Verification 2:
+                // For each enviornment, given the executable verify we can get the exact same information
+                // Using the `locator.try_from` method (without having to find all environments).
+                // I.e. we should be able to get the same information using only the executable.
+                //
+                // Verification 3:
+                // Similarly for each environment use one of the known symlinks and verify we can get the same information.
+                verify_we_can_get_same_env_info_using_from_with_exe(exe, environment.clone());
+                // Verification 4 & 5:
+                // Similarly for each environment use resolve method and verify we get the exact same information.
+                verify_we_can_get_same_env_info_using_resolve_with_exe(exe, environment.clone());
+            }
+        }));
     }
-    // for thread in threads {
-    //     thread.join().unwrap();
-    // }
+    for thread in threads {
+        thread.join().unwrap();
+    }
 }
 
 #[cfg(unix)]

@@ -74,98 +74,98 @@ pub fn find_and_report_envs(
             });
             summary.lock().unwrap().find_locators_time = start.elapsed();
 
-            // // By now all conda envs have been found
-            // // Spawn conda  in a separate thread.
-            // // & see if we can find more environments by spawning conda.
-            // // But we will not wait for this to complete.
-            // thread::spawn(move || {
-            //     conda_locator.find_with_conda_executable(conda_executable);
-            //     Some(())
-            // });
-            // // By now all poetry envs have been found
-            // // Spawn poetry exe in a separate thread.
-            // // & see if we can find more environments by spawning poetry.
-            // // But we will not wait for this to complete.
-            // thread::spawn(move || {
-            //     let env = EnvironmentApi::new();
-            //     Poetry::new(&env).find_with_executable();
-            //     Some(())
-            // });
+            // By now all conda envs have been found
+            // Spawn conda  in a separate thread.
+            // & see if we can find more environments by spawning conda.
+            // But we will not wait for this to complete.
+            thread::spawn(move || {
+                conda_locator.find_with_conda_executable(conda_executable);
+                Some(())
+            });
+            // By now all poetry envs have been found
+            // Spawn poetry exe in a separate thread.
+            // & see if we can find more environments by spawning poetry.
+            // But we will not wait for this to complete.
+            thread::spawn(move || {
+                let env = EnvironmentApi::new();
+                Poetry::new(&env).find_with_executable();
+                Some(())
+            });
         });
-        // // Step 2: Search in PATH variable
-        // s.spawn(|| {
-        //     let start = std::time::Instant::now();
-        //     let environment = EnvironmentApi::new();
-        //     let global_env_search_paths: Vec<PathBuf> =
-        //         get_search_paths_from_env_variables(&environment);
+        // Step 2: Search in PATH variable
+        s.spawn(|| {
+            let start = std::time::Instant::now();
+            let environment = EnvironmentApi::new();
+            let global_env_search_paths: Vec<PathBuf> =
+                get_search_paths_from_env_variables(&environment);
 
-        //     trace!(
-        //         "Searching for environments in global folders: {:?}",
-        //         global_env_search_paths
-        //     );
-        //     find_python_environments(
-        //         global_env_search_paths.clone(),
-        //         reporter,
-        //         locators,
-        //         false,
-        //         &global_env_search_paths,
-        //     );
-        //     summary.lock().unwrap().find_path_time = start.elapsed();
-        // });
-        // // Step 3: Search in some global locations for virtual envs.
-        // s.spawn(|| {
-        //     let start = std::time::Instant::now();
-        //     let environment = EnvironmentApi::new();
-        //     let search_paths: Vec<PathBuf> = [
-        //         list_global_virtual_envs_paths(
-        //             environment.get_env_var("WORKON_HOME".into()),
-        //             environment.get_user_home(),
-        //         ),
-        //         environment_paths,
-        //     ]
-        //     .concat();
-        //     let global_env_search_paths: Vec<PathBuf> =
-        //         get_search_paths_from_env_variables(&environment);
+            trace!(
+                "Searching for environments in global folders: {:?}",
+                global_env_search_paths
+            );
+            find_python_environments(
+                global_env_search_paths.clone(),
+                reporter,
+                locators,
+                false,
+                &global_env_search_paths,
+            );
+            summary.lock().unwrap().find_path_time = start.elapsed();
+        });
+        // Step 3: Search in some global locations for virtual envs.
+        s.spawn(|| {
+            let start = std::time::Instant::now();
+            let environment = EnvironmentApi::new();
+            let search_paths: Vec<PathBuf> = [
+                list_global_virtual_envs_paths(
+                    environment.get_env_var("WORKON_HOME".into()),
+                    environment.get_user_home(),
+                ),
+                environment_paths,
+            ]
+            .concat();
+            let global_env_search_paths: Vec<PathBuf> =
+                get_search_paths_from_env_variables(&environment);
 
-        //     trace!(
-        //         "Searching for environments in global venv folders: {:?}",
-        //         search_paths
-        //     );
+            trace!(
+                "Searching for environments in global venv folders: {:?}",
+                search_paths
+            );
 
-        //     find_python_environments(
-        //         search_paths,
-        //         reporter,
-        //         locators,
-        //         false,
-        //         &global_env_search_paths,
-        //     );
-        //     summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
-        // });
-        // // Step 4: Find in workspace folders too.
-        // // This can be merged with step 2 as well, as we're only look for environments
-        // // in some folders.
-        // // However we want step 2 to happen faster, as that list of generally much smaller.
-        // // This list of folders generally map to workspace folders
-        // // & users can have a lot of workspace folders and can have a large number fo files/directories
-        // // that could the discovery.
-        // s.spawn(|| {
-        //     if search_paths.is_empty() {
-        //         return;
-        //     }
-        //     trace!(
-        //         "Searching for environments in custom folders: {:?}",
-        //         search_paths
-        //     );
-        //     let start = std::time::Instant::now();
-        //     find_python_environments_in_workspace_folders_recursive(
-        //         search_paths,
-        //         reporter,
-        //         locators,
-        //         0,
-        //         1,
-        //     );
-        //     summary.lock().unwrap().find_search_paths_time = start.elapsed();
-        // });
+            find_python_environments(
+                search_paths,
+                reporter,
+                locators,
+                false,
+                &global_env_search_paths,
+            );
+            summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
+        });
+        // Step 4: Find in workspace folders too.
+        // This can be merged with step 2 as well, as we're only look for environments
+        // in some folders.
+        // However we want step 2 to happen faster, as that list of generally much smaller.
+        // This list of folders generally map to workspace folders
+        // & users can have a lot of workspace folders and can have a large number fo files/directories
+        // that could the discovery.
+        s.spawn(|| {
+            if search_paths.is_empty() {
+                return;
+            }
+            trace!(
+                "Searching for environments in custom folders: {:?}",
+                search_paths
+            );
+            let start = std::time::Instant::now();
+            find_python_environments_in_workspace_folders_recursive(
+                search_paths,
+                reporter,
+                locators,
+                0,
+                1,
+            );
+            summary.lock().unwrap().find_search_paths_time = start.elapsed();
+        });
     });
     summary.lock().unwrap().time = start.elapsed();
 

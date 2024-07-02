@@ -31,18 +31,18 @@ pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> 
 
     // 1. Windows store Python
     // 2. Windows registry python
-    // if cfg!(windows) {
-    //     #[cfg(windows)]
-    //     use pet_windows_registry::WindowsRegistry;
-    //     #[cfg(windows)]
-    //     use pet_windows_store::WindowsStore;
-    //     #[cfg(windows)]
-    //     locators.push(Arc::new(WindowsStore::from(&environment)));
-    //     #[cfg(windows)]
-    //     locators.push(Arc::new(WindowsRegistry::from(conda_locator.clone())))
-    // }
-    // // 3. Pyenv Python
-    // locators.push(Arc::new(PyEnv::from(&environment, conda_locator.clone())));
+    if cfg!(windows) {
+        #[cfg(windows)]
+        use pet_windows_registry::WindowsRegistry;
+        #[cfg(windows)]
+        use pet_windows_store::WindowsStore;
+        #[cfg(windows)]
+        locators.push(Arc::new(WindowsStore::from(&environment)));
+        #[cfg(windows)]
+        locators.push(Arc::new(WindowsRegistry::from(conda_locator.clone())))
+    }
+    // 3. Pyenv Python
+    locators.push(Arc::new(PyEnv::from(&environment, conda_locator.clone())));
     // 4. Homebrew Python
     if cfg!(unix) {
         #[cfg(unix)]
@@ -52,25 +52,25 @@ pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> 
         #[cfg(unix)]
         locators.push(Arc::new(homebrew_locator));
     }
-    // // 5. Conda Python
-    // locators.push(conda_locator);
-    // // 6. Support for Virtual Envs
-    // // The order of these matter.
-    // // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
-    // locators.push(Arc::new(Poetry::from(&environment)));
-    // locators.push(Arc::new(PipEnv::from(&environment)));
-    // locators.push(Arc::new(VirtualEnvWrapper::from(&environment)));
-    // locators.push(Arc::new(Venv::new()));
-    // // VirtualEnv is the most generic, hence should be the last.
-    // locators.push(Arc::new(VirtualEnv::new()));
+    // 5. Conda Python
+    locators.push(conda_locator);
+    // 6. Support for Virtual Envs
+    // The order of these matter.
+    // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
+    locators.push(Arc::new(Poetry::from(&environment)));
+    locators.push(Arc::new(PipEnv::from(&environment)));
+    locators.push(Arc::new(VirtualEnvWrapper::from(&environment)));
+    locators.push(Arc::new(Venv::new()));
+    // VirtualEnv is the most generic, hence should be the last.
+    locators.push(Arc::new(VirtualEnv::new()));
 
-    // // 7. Global Mac Python
-    // // 8. CommandLineTools Python & xcode
-    // if std::env::consts::OS == "macos" {
-    //     locators.push(Arc::new(MacXCode::new()));
-    //     locators.push(Arc::new(MacCmdLineTools::new()));
-    //     locators.push(Arc::new(MacPythonOrg::new()));
-    // }
+    // 7. Global Mac Python
+    // 8. CommandLineTools Python & xcode
+    if std::env::consts::OS == "macos" {
+        locators.push(Arc::new(MacXCode::new()));
+        locators.push(Arc::new(MacCmdLineTools::new()));
+        locators.push(Arc::new(MacPythonOrg::new()));
+    }
     // 9. Global Linux Python
     // All other Linux (not mac, & not windows)
     // THIS MUST BE LAST
