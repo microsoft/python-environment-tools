@@ -259,18 +259,23 @@ jobs:
         run: echo "PYTHON_3_11_PATH=${{ steps.setupPython311.outputs.python-path }}" >> $GITHUB_ENV
         shell: bash
 
-      - name: Create .venv
+      - name: Create .venv (using 3.11)
         if: startsWith( matrix.feature, 'ci-venv')
         run: $PYTHON_3_11_PATH -m venv .venv
         shell: bash
 
-      - name: Create .venv2
+      - name: Create .venv2 (using .venv)
         if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
         run: ./.venv/Scripts/python.exe -m venv .venv2
 
-      - name: Create .venv2
+      - name: Create .venv2 (using .venv)
         if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
         run: ./.venv/bin/python -m venv .venv2
+
+      - name: Re-Create .venv (using 3.12)
+        if: startsWith( matrix.feature, 'ci-venv')
+        run: $PYTHON_3_12_PATH -m venv .venv
+        shell: bash
       # endregion
 
       # region Setup Poetry
