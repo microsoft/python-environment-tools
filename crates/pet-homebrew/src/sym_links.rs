@@ -196,6 +196,14 @@ pub fn get_known_symlinks_impl(
                     // Never include `/usr/local/bin/python` into this list.
                     // See previous explanation
                     let mut symlinks = vec![symlink_resolved_python_exe.to_owned()];
+                    println!("GET SYMLINKS FOR {:?}", symlink_resolved_python_exe);
+                    if let Some(resolved) = &resolve_symlink(&symlink_resolved_python_exe)
+                        .or(fs::canonicalize(symlink_resolved_python_exe).ok())
+                    {
+                        if resolved.starts_with("/home/linuxbrew/.linuxbrew") {
+                            symlinks.push(resolved.clone());
+                        }
+                    }
                     for possible_symlink in [
                         PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3"),
                         PathBuf::from(format!("/home/linuxbrew/.linuxbrew/bin/python{}", version)),

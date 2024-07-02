@@ -26,7 +26,14 @@ pub fn get_python_info(
         None => None,
     };
 
-    let mut symlinks = vec![python_exe_from_bin_dir.to_path_buf()];
+    let mut symlinks = vec![
+        python_exe_from_bin_dir.to_path_buf(),
+        resolved_exe.to_path_buf(),
+    ];
+    println!(
+        "GET SYMLINKS for {:?} and {:?}",
+        python_exe_from_bin_dir, resolved_exe
+    );
     if let Some(version) = &version {
         symlinks.append(&mut get_known_symlinks(resolved_exe, version));
     }
