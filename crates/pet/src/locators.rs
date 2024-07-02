@@ -23,6 +23,8 @@ use pet_virtualenvwrapper::VirtualEnvWrapper;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::resolve;
+
 pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> {
     // NOTE: The order of the items matter.
     let environment = EnvironmentApi::new();
@@ -119,7 +121,16 @@ pub fn identify_python_environment_using_locators(
             let mut fallback_category = None;
 
             // If one of the symlinks are in the PATH variable, then we can treat this as a GlobalPath category.
-            for symlink in resolved_env.symlink.clone().unwrap_or_default().into_iter() {
+            println!(
+                "DETERMINE CATEGORY for {:?} with {:?}",
+                resolved_env, global_env_search_paths
+            );
+            let symlinks = [
+                resolved_env.symlink.clone().unwrap_or_default(),
+                vec![resolved_env.executable.clone(), executable.clone()],
+            ]
+            .concat();
+            for symlink in symlinks {
                 if let Some(bin) = symlink.parent() {
                     if global_env_search_paths.contains(&bin.to_path_buf()) {
                         fallback_category = Some(PythonEnvironmentCategory::GlobalPaths);
