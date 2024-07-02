@@ -232,7 +232,7 @@ jobs:
         #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Windows Store Python 3.12
-        run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements
+        run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements --accept-package-agreements
 
       # - name: Winget
       #   run: winget --help
