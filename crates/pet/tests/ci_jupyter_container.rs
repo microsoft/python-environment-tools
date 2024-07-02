@@ -1,7 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::sync::Once;
+
 mod common;
+
+static INIT: Once = Once::new();
+
+/// Setup function that is only run once, even if called multiple times.
+fn setup() {
+    INIT.call_once(|| {
+        env_logger::builder()
+            .filter(None, log::LevelFilter::Trace)
+            .init();
+    });
+}
 
 #[cfg(unix)]
 #[cfg_attr(feature = "ci-jupyter-container", test)]
@@ -18,6 +31,8 @@ fn verify_python_in_jupyter_contaner() {
     };
     use pet_reporter::test;
     use std::{path::PathBuf, sync::Arc};
+
+    setup();
 
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
@@ -121,23 +136,53 @@ fn verify_python_in_jupyter_contaner() {
             .iter()
             .find(|e| e.executable == env.executable)
             .expect(format!("Expected to find python environment {:?}", env.executable).as_str());
-        assert_eq!(python_env.executable, env.executable);
-        assert_eq!(python_env.category, env.category);
-        assert_eq!(python_env.symlinks, env.symlinks);
-        assert_eq!(python_env.manager, env.manager);
-        assert_eq!(python_env.name, env.name);
-        assert_eq!(python_env.version, env.version);
-        assert_eq!(python_env.arch, env.arch);
+        assert_eq!(
+            python_env.executable, env.executable,
+            "Expected exe to be same when comparing {:?} and {:?}",
+            python_env, env
+        );
+        assert_eq!(
+            python_env.category, env.category,
+            "Expected category to be same when comparing {:?} and {:?}",
+            python_env, env
+        );
+        assert_eq!(
+            python_env.symlinks, env.symlinks,
+            "Expected symlinks to be same when comparing {:?} and {:?}",
+            python_env, env
+        );
+        assert_eq!(
+            python_env.manager, env.manager,
+            "Expected manager to be same when comparing {:?} and {:?}",
+            python_env, env
+        );
+        assert_eq!(
+            python_env.name, env.name,
+            "Expected name to be same when comparing {:?} and {:?}",
+            python_env, env
+        );
+        assert_eq!(
+            python_env.version, env.version,
+            "Expected version to be same when comparing {:?} and {:?}",
+            python_env, env
+        );
+        assert_eq!(
+            python_env.arch, env.arch,
+            "Expected arch to be same when comparing {:?} and {:?}",
+            python_env, env
+        );
 
         // known issue https://github.com/microsoft/python-environment-tools/issues/64
         if env.executable == Some(PathBuf::from("/home/codespace/.python/current/bin/python")) {
             assert!(
                 python_env.prefix == Some(PathBuf::from("/home/codespace/.python/current"))
                     || python_env.prefix == Some(PathBuf::from("/usr/local/python/3.10.13")),
-                "Expected {:?} to be {:?} or {:?}",
+                "Expected {:?} to be {:?} or {:?} when comparing {:?} and {:?}",
                 python_env.prefix,
                 "/home/codespace/.python/current",
-                "/usr/local/python/3.10.13"
+                "/usr/local/python/3.10.13",
+                python_env,
+                env
             );
         }
     }

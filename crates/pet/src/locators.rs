@@ -83,7 +83,7 @@ pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> 
 pub fn identify_python_environment_using_locators(
     env: &PythonEnv,
     locators: &[Arc<dyn Locator>],
-    fallback_category: Option<PythonEnvironmentCategory>,
+    global_env_search_paths: &[PathBuf],
 ) -> Option<PythonEnvironment> {
     let executable = env.executable.clone();
     if let Some(env) = locators.iter().fold(
@@ -116,11 +116,25 @@ pub fn identify_python_environment_using_locators(
             // We have no idea what this is.
             // We have check all of the resolvers.
             // Telemetry point, failed to identify env here.
+            let mut fallback_category = None;
+
+            // If one of the symlinks are in the PATH variable, then we can treat this as a GlobalPath category.
+            let symlinks = [
+                resolved_env.symlink.clone().unwrap_or_default(),
+                vec![resolved_env.executable.clone(), executable.clone()],
+            ]
+            .concat();
+            for symlink in symlinks {
+                if let Some(bin) = symlink.parent() {
+                    if global_env_search_paths.contains(&bin.to_path_buf()) {
+                        fallback_category = Some(PythonEnvironmentCategory::GlobalPaths);
+                        break;
+                    }
+                }
+            }
             info!(
                 "Unknown Env ({:?}) in Path resolved as {:?} and reported as {:?}",
-                executable,
-                resolved_env,
-                fallback_category.unwrap_or(PythonEnvironmentCategory::Unknown)
+                executable, resolved_env, fallback_category
             );
             return Some(create_unknown_env(resolved_env, fallback_category));
         }

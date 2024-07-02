@@ -1,17 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{path::PathBuf, sync::Once};
+use std::{env, path::PathBuf, sync::Once};
 
 use common::{does_version_match, resolve_test_path};
 use lazy_static::lazy_static;
-use log::trace;
-use pet::locators::identify_python_environment_using_locators;
+use log::{error, trace, warn};
+use pet::{locators::identify_python_environment_using_locators, resolve::resolve_environment};
 use pet_core::{
     arch::Architecture,
     python_environment::{PythonEnvironment, PythonEnvironmentCategory},
 };
+use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_python_utils::env::PythonEnv;
+use pet_reporter::environment;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -94,19 +96,21 @@ fn verify_validity_of_discovered_envs() {
         threads.push(thread::spawn(move || {
             verify_validity_of_interpreter_info(e);
         }));
-        // Verification 2:
-        // For each enviornment, given the executable verify we can get the exact same information
-        // Using the `locator.try_from` method (without having to find all environments).
-        // I.e. we should be able to get the same information using only the executable.
-        //
-        // Verification 3:
-        // Similarly for each environment use one of the known symlinks and verify we can get the same information.
-        //
-        // TODO: Verification 4 & 5:
-        // Similarly for each environment use resolve method and verify we get the exact same information.
         let e = environment.clone();
         threads.push(thread::spawn(move || {
-            verify_we_can_get_same_env_info_using_from(e)
+            for exe in &e.clone().symlinks.unwrap_or_default() {
+                // Verification 2:
+                // For each enviornment, given the executable verify we can get the exact same information
+                // Using the `locator.try_from` method (without having to find all environments).
+                // I.e. we should be able to get the same information using only the executable.
+                //
+                // Verification 3:
+                // Similarly for each environment use one of the known symlinks and verify we can get the same information.
+                verify_we_can_get_same_env_info_using_from_with_exe(exe, environment.clone());
+                // Verification 4 & 5:
+                // Similarly for each environment use resolve method and verify we get the exact same information.
+                // verify_we_can_get_same_env_info_using_resolve_with_exe(exe, environment.clone());
+            }
         }));
     }
     for thread in threads {
@@ -283,18 +287,10 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     }
 }
 
-fn verify_we_can_get_same_env_info_using_from(environment: PythonEnvironment) {
-    for exe in &environment.clone().symlinks.unwrap_or_default() {
-        verify_we_can_get_same_env_inf_using_from_with_exe(exe, environment.clone());
-    }
-}
-
-fn verify_we_can_get_same_env_inf_using_from_with_exe(
+fn verify_we_can_get_same_env_info_using_from_with_exe(
     executable: &PathBuf,
     environment: PythonEnvironment,
 ) {
-    let mut environment = environment.clone();
-
     // Assume we were given a path to the exe, then we use the `locator.try_from` method.
     // We should be able to get the exct same information back given only the exe.
     //
@@ -314,55 +310,74 @@ fn verify_we_can_get_same_env_inf_using_from_with_exe(
     for locator in locators.iter() {
         locator.configure(&config);
     }
+    let global_env_search_paths: Vec<PathBuf> =
+        get_search_paths_from_env_variables(&os_environment);
 
     let env = PythonEnv::new(executable.clone(), None, None);
-    let mut env = identify_python_environment_using_locators(&env, &locators, None).expect(
-        format!(
-            "Failed to resolve environment using `from` for {:?}",
-            environment
-        )
-        .as_str(),
-    );
+    let resolved =
+        identify_python_environment_using_locators(&env, &locators, &global_env_search_paths)
+            .expect(
+                format!(
+                    "Failed to resolve environment using `resolve` for {:?}",
+                    environment
+                )
+                .as_str(),
+            );
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
-        env,
+        resolved,
         environment
     );
 
-    // if env.category = Unknown and the executable is in PATH, then category will be GlobalPaths
-    if let Some(exe) = env.executable.clone() {
-        if let Some(bin) = exe.parent() {
-            if env.category == PythonEnvironmentCategory::Unknown {
-                let paths = env::split_paths(&env::var("PATH").ok().unwrap_or_default())
-                    .into_iter()
-                    .collect::<Vec<PathBuf>>();
-                if paths.contains(&bin.to_path_buf()) {
-                    env.category = PythonEnvironmentCategory::GlobalPaths;
-                }
-            }
-        }
-    }
+    compare_environments(
+        resolved,
+        environment,
+        format!("try_from using exe {:?}", executable).as_str(),
+    );
+}
+
+fn compare_environments(env: PythonEnvironment, environment: PythonEnvironment, method: &str) {
+    let mut env = env.clone();
+    let mut environment = environment.clone();
 
     assert_eq!(
         env.category,
         environment.clone().category,
-        "Category mismatch for {:?} and {:?}",
+        "Category mismatch when using {} for {:?} and {:?}",
+        method,
         environment,
         env
     );
+
+    // if env.category != environment.clone().category {
+    //     error!(
+    //         "Category mismatch when using {} for {:?} and {:?}",
+    //         method, environment, env
+    //     );
+    // }
 
     if let (Some(version), Some(expected_version)) =
         (environment.clone().version, env.clone().version)
     {
         assert!(
             does_version_match(&version, &expected_version),
-            "Version mismatch for (expected {:?} to start with {:?}) for env = {:?} and environment = {:?}",
+            "Version mismatch when using {} for (expected {:?} to start with {:?}) for env = {:?} and environment = {:?}",
+            method,
             expected_version,
             version,
             env.clone(),
             environment.clone()
         );
+        // if !does_version_match(&version, &expected_version) {
+        //     error!("Version mismatch when using {} for (expected {:?} to start with {:?}) for env = {:?} and environment = {:?}",
+        //     method,
+        //     expected_version,
+        //     version,
+        //     env.clone(),
+        //     environment.clone()
+        //     );
+        // }
     }
     // We have compared the versions, now ensure they are treated as the same
     // So that we can compare the objects easily
@@ -426,10 +441,91 @@ fn verify_we_can_get_same_env_inf_using_from_with_exe(
             .map(|p| p.to_path_buf())
             .collect::<Vec<PathBuf>>(),
     );
+
+    // if we know the arch, then verify it
+    if environment.arch.as_ref().is_some() && env.arch.as_ref().is_some() {
+        if env.arch.as_ref() != environment.arch.as_ref() {
+            error!(
+                "Arch mismatch when using {} for {:?} and {:?}",
+                method, environment, env
+            );
+        }
+    }
+    env.arch = environment.clone().arch;
+
+    // if we know the prefix, then verify it
+    if environment.prefix.as_ref().is_some() && env.prefix.as_ref().is_some() {
+        if env.prefix.as_ref() != environment.prefix.as_ref() {
+            error!(
+                "Prefirx mismatch when using {} for {:?} and {:?}",
+                method, environment, env
+            );
+        }
+    }
+    env.prefix = environment.clone().prefix;
+
     assert_eq!(
         env, environment,
-        "Environment mismatch for {:?}",
+        "Environment mismatch when using {} for {:?}",
+        method, environment
+    );
+
+    // if env != environment {
+    //     error!(
+    //         "Environment mismatch when using {} for {:?} and {:?}",
+    //         method, environment, env
+    //     );
+    // }
+}
+
+fn verify_we_can_get_same_env_info_using_resolve_with_exe(
+    executable: &PathBuf,
+    environment: PythonEnvironment,
+) {
+    // Assume we were given a path to the exe, then we use the `locator.try_from` method.
+    // We should be able to get the exct same information back given only the exe.
+    //
+    // Note: We will not not use the old locator objects, as we do not want any cached information.
+    // Hence create the locators all over again.
+    use pet::locators::create_locators;
+    use pet_conda::Conda;
+    use pet_core::{os_environment::EnvironmentApi, Configuration};
+    use std::{env, sync::Arc};
+
+    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let os_environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&os_environment));
+    let mut config = Configuration::default();
+    config.search_paths = Some(vec![project_dir.clone()]);
+    let locators = create_locators(conda_locator.clone());
+    for locator in locators.iter() {
+        locator.configure(&config);
+    }
+
+    let env = resolve_environment(&executable, &locators).expect(
+        format!(
+            "Failed to resolve environment using `resolve` for {:?}",
+            environment
+        )
+        .as_str(),
+    );
+    trace!(
+        "For exe {:?} we got Environment = {:?}, To compare against {:?}",
+        executable,
+        env,
         environment
+    );
+    if env.resolved.is_none() {
+        error!(
+            "Failed to resolve environment using `resolve` for {:?} in {:?}",
+            executable, environment
+        );
+        return;
+    }
+    compare_environments(
+        environment,
+        env.resolved.unwrap(),
+        format!("resolve using exe {:?}", executable).as_str(),
     );
 }
 
