@@ -233,14 +233,14 @@ jobs:
         id: setupPython312
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.3"
 
       - name: Set Python 3.11 to PATH
         if: startsWith( matrix.feature, 'ci-venv-conda') || startsWith( matrix.feature, 'ci-poetry')
         id: setupPython311
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.11.8"
 
       - name: Python 3.12 Path
         if: startsWith( matrix.feature, 'ci-venv-conda') || startsWith( matrix.feature, 'ci-poetry')
@@ -262,8 +262,8 @@ jobs:
       - name: Create venv and conda
         if: startsWith( matrix.feature, 'ci-venv-conda')
         run: |
-          $PYTHON_3_11_PATH -m venv .venv
-          $PYTHON_3_12_PATH -m venv .venv2
+          %PYTHON_3_11_PATH% -m venv .venv
+          %PYTHON_3_12_PATH% -m venv .venv2
           conda create -n env1 python=3.12 -y
           conda create -n env2 -y
           conda create -p ./.conda1 python=3.12 -y
