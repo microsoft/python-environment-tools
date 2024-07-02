@@ -16,7 +16,7 @@ lazy_static! {
 }
 
 pub fn is_homebrew_python(exe: &Path) -> bool {
-    exe.starts_with("/opt/homebrew/Cellar")
+    exe.starts_with("/opt/homebrew")
         || exe.starts_with("/usr/local/Cellar")
         || exe.starts_with("/home/linuxbrew/.linuxbrew")
 }
@@ -68,7 +68,7 @@ pub fn get_known_symlinks_impl(
     symlink_resolved_python_exe: &Path,
     full_version: &String,
 ) -> Vec<PathBuf> {
-    if symlink_resolved_python_exe.starts_with("/opt/homebrew/Cellar") {
+    if symlink_resolved_python_exe.starts_with("/opt/homebrew") {
         // Real exe - /opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/python3.12
 
         // Known symlinks include
@@ -96,6 +96,12 @@ pub fn get_known_symlinks_impl(
                         PathBuf::from(format!("/opt/homebrew/Frameworks/Python.framework/Versions/Current/bin/python{}", version)),
                         PathBuf::from(format!("/usr/local/opt/python@{}/bin/python3", version)),
                         PathBuf::from(format!("/usr/local/opt/python@{}/bin/python{}", version, version)),
+                        PathBuf::from("/opt/homebrew/opt/python/bin/python3"),
+                        PathBuf::from(format!("/opt/homebrew/opt/python/bin/python{}", version)),
+                        PathBuf::from("/opt/homebrew/opt/python@3/bin/python3"),
+                        PathBuf::from(format!("/opt/homebrew/opt/python@3/bin/python{}", version)),
+                        PathBuf::from(format!("/opt/homebrew/opt/python@{}/bin/python3", version)),
+                        PathBuf::from(format!("/opt/homebrew/opt/python@{}/bin/python{}", version, version)),
                         PathBuf::from("/usr/local/opt/python@3/bin/python3"),
                         PathBuf::from(format!("/usr/local/opt/python@3/bin/python{}", version)),
                         // Check if this symlink is pointing to the same place as the resolved python exe
@@ -212,6 +218,16 @@ pub fn get_known_symlinks_impl(
                             "/home/linuxbrew/.linuxbrew/opt/python@{}/bin/python3",
                             version
                         )),
+                        PathBuf::from(format!(
+                            "/home/linuxbrew/.linuxbrew/opt/python3/bin/python{}",
+                            version
+                        )),
+                        PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python3/bin/python3"),
+                        PathBuf::from(format!(
+                            "/home/linuxbrew/.linuxbrew/opt/python@3/bin/python{}",
+                            version
+                        )),
+                        PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3/bin/python3"),
                         // This is a special folder, if users install python using other means, this file
                         // might get overridden. So we should only add this if this files points to the same place
                         PathBuf::from(format!("/usr/local/bin/python{}", version)),
