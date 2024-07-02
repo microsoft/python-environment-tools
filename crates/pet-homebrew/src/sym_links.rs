@@ -86,7 +86,7 @@ pub fn get_known_symlinks_impl(
                         .contains("Current")
                     {
                         if let Some(resolved) = &resolve_symlink(&symlink_resolved_python_exe)
-                            .or(fs::canonicalize(&symlink_resolved_python_exe).ok())
+                            .or(fs::canonicalize(symlink_resolved_python_exe).ok())
                         {
                             if resolved.starts_with("/opt/homebrew/Cellar") {
                                 symlinks.push(resolved.clone());
@@ -103,7 +103,7 @@ pub fn get_known_symlinks_impl(
                         PathBuf::from(format!("/opt/homebrew/Frameworks/Python.framework/Versions/Current/bin/python{}", version)),
                         PathBuf::from(format!("/usr/local/opt/python@{}/bin/python3", version)),
                         PathBuf::from(format!("/usr/local/opt/python@{}/bin/python{}", version, version)),
-                        PathBuf::from(format!("/usr/local/opt/python@3/bin/python3")),
+                        PathBuf::from("/usr/local/opt/python@3/bin/python3"),
                         PathBuf::from(format!("/usr/local/opt/python@3/bin/python{}", version)),
                         // Check if this symlink is pointing to the same place as the resolved python exe
                         PathBuf::from(format!("/opt/homebrew/opt/python3/bin/python{}", version)),
@@ -151,7 +151,7 @@ pub fn get_known_symlinks_impl(
                             // 3. python 3.11 has sysprefix in /usr/local/opt/python@3.11/Frameworks/Python.framework/Versions/3.11
                             PathBuf::from(format!("/usr/local/opt/python@{}/bin/python3", version)),
                             PathBuf::from(format!("/usr/local/opt/python@{}/bin/python{}", version, version)),
-                            PathBuf::from(format!("/usr/local/opt/python@3/bin/python3")),
+                            PathBuf::from("/usr/local/opt/python@3/bin/python3"),
                             PathBuf::from(format!("/usr/local/opt/python@3/bin/python{}", version)),
                             PathBuf::from(format!(
                                 "/usr/local/Cellar/python@{}/{}/bin/python{}",
