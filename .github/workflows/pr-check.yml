@@ -253,12 +253,12 @@ jobs:
         shell: bash
 
       - name: Python 3.11 Path
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
         run: $PYTHON_3_11_PATH --version
         shell: bash
 
       - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
         run: $PYTHON_3_12_PATH --version
         shell: bash
 
@@ -296,6 +296,14 @@ jobs:
       - name: Version of .venv2
         if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
         run: ./.venv2/bin/python --version
+
+      - name: Version of .venv2
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
+        run: readlink -f ./.venv2/bin/python
+
+      - name: Version of .venv
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
+        run: readlink -f ./.venv/bin/python
 
       # Originally .venv2 is created using .venv, and .venv is 3.11
       # After creating .venv2, we will re-create .venv with 3.12,
