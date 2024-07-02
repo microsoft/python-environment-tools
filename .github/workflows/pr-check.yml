@@ -226,9 +226,17 @@ jobs:
         uses: actions/checkout@v4
 
       # region Windows Store
-      - name: Winget
-        run: winget --help
-        shell: bash
+      - name: Install winget
+        uses: Cyberboss/install-winget@eabb209a7544e2f2ffd1616b6f9efebacc9e54fb
+        # with:
+        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Windows Store Python 3.12
+        run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements
+
+      # - name: Winget
+      #   run: winget --help
+      #   shell: bash
 
       # endregion
 
