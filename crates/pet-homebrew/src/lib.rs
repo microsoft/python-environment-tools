@@ -104,7 +104,7 @@ impl Locator for Homebrew {
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::Homebrew]
     }
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         from(env)
     }
 

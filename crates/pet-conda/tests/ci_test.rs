@@ -82,7 +82,7 @@ fn detect_conda_root_from_path() {
     let conda = Conda::from(&env);
 
     let python_env = PythonEnv::new(exe, Some(conda_dir.clone()), None);
-    let env = conda.from(&python_env).unwrap();
+    let env = conda.try_from(&python_env).unwrap();
 
     assert_eq!(env.manager.is_some(), true);
 
@@ -182,7 +182,7 @@ fn detect_conda_env_from_path() {
     let conda = Conda::from(&env);
 
     let python_env = PythonEnv::new(exe.clone(), Some(prefix.clone()), None);
-    let env = conda.from(&python_env).unwrap();
+    let env = conda.try_from(&python_env).unwrap();
 
     assert_eq!(env.manager.is_some(), true);
 

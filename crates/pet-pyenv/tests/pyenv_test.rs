@@ -436,7 +436,7 @@ fn resolve_pyenv_environment() {
     };
 
     // Resolve regular Python installs in Pyenv
-    let result = locator.from(&PythonEnv::new(
+    let result = locator.try_from(&PythonEnv::new(
         resolve_test_path(&[home.to_str().unwrap(), ".pyenv/versions/3.9.9/bin/python"]),
         Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -448,7 +448,7 @@ fn resolve_pyenv_environment() {
     assert_eq!(result.unwrap(), expected_3_9_9);
 
     // Resolve regular virtual-envs in Pyenv
-    let result = locator.from(&PythonEnv::new(
+    let result = locator.try_from(&PythonEnv::new(
         resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env/bin/python",
@@ -463,7 +463,7 @@ fn resolve_pyenv_environment() {
     assert_eq!(result.unwrap(), expected_virtual_env);
 
     // Should not resolve conda envs in pyenv
-    let result = locator.from(&PythonEnv::new(
+    let result = locator.try_from(&PythonEnv::new(
         resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/anaconda-4.0.0/bin/python",
@@ -478,7 +478,7 @@ fn resolve_pyenv_environment() {
     assert_eq!(result.is_none(), true);
 
     // Should not resolve conda envs using Conda Locator
-    let result = conda.from(&PythonEnv::new(
+    let result = conda.try_from(&PythonEnv::new(
         resolve_test_path(&[
             home.to_str().unwrap(),
             ".pyenv/versions/anaconda-4.0.0/bin/python",

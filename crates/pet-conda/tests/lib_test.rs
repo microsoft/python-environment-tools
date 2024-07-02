@@ -19,7 +19,7 @@ fn find_conda_env_without_manager() {
     let path = resolve_test_path(&["unix", "conda_env_without_manager", "env_python_3"]);
 
     let env = locator
-        .from(&PythonEnv::new(
+        .try_from(&PythonEnv::new(
             path.join("bin").join("python").into(),
             Some(path.clone().into()),
             None,
@@ -70,7 +70,7 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
     fs::write(history_file, history_contents).unwrap();
 
     let env = locator
-        .from(&PythonEnv::new(
+        .try_from(&PythonEnv::new(
             path.join("bin").join("python").into(),
             Some(path.clone().into()),
             None,

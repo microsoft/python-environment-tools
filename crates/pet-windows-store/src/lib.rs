@@ -91,7 +91,7 @@ impl Locator for WindowsStore {
     }
 
     #[cfg(unix)]
-    fn from(&self, _env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, _env: &PythonEnv) -> Option<PythonEnvironment> {
         None
     }
 

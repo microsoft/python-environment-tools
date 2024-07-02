@@ -157,7 +157,7 @@ impl Locator for Poetry {
         vec![PythonEnvironmentCategory::Poetry]
     }
 
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if !is_virtualenv(env) {
             return None;
         }

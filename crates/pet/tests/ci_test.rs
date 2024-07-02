@@ -51,7 +51,7 @@ mod common;
 /// by spawning the Python executable
 /// Verification 2:
 /// For each enviornment, given the executable verify we can get the exact same information
-/// Using the `locators.from` method (without having to find all environments).
+/// Using the `locator.try_from` method (without having to find all environments).
 /// I.e. we should be able to get the same information using only the executable.
 /// Verification 3:
 /// Similarly for each environment use one of the known symlinks and verify we can get the same information.
@@ -96,7 +96,7 @@ fn verify_validity_of_discovered_envs() {
         }));
         // Verification 2:
         // For each enviornment, given the executable verify we can get the exact same information
-        // Using the `locators.from` method (without having to find all environments).
+        // Using the `locator.try_from` method (without having to find all environments).
         // I.e. we should be able to get the same information using only the executable.
         //
         // Verification 3:
@@ -295,7 +295,7 @@ fn verify_we_can_get_same_env_inf_using_from_with_exe(
 ) {
     let mut environment = environment.clone();
 
-    // Assume we were given a path to the exe, then we use the `locator.from` method.
+    // Assume we were given a path to the exe, then we use the `locator.try_from` method.
     // We should be able to get the exct same information back given only the exe.
     //
     // Note: We will not not use the old locator objects, as we do not want any cached information.

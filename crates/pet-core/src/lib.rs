@@ -47,7 +47,7 @@ pub trait Locator: Send + Sync {
     ///
     /// Note: The returned environment could have some missing information.
     /// This is because the `from` will do a best effort to get the environment information without spawning Python.
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment>;
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment>;
     /// Finds all environments specific to this locator.
     fn find(&self, reporter: &dyn Reporter);
 }
