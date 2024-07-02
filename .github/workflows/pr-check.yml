@@ -264,6 +264,14 @@ jobs:
         run: $PYTHON_3_11_PATH -m venv .venv
         shell: bash
 
+      - name: Version of .venv
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
+        run: ./.venv/Scripts/python.exe --version
+
+      - name: Version of .venv
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
+        run: ./.venv/bin/python --version
+
       - name: Create .venv2 (using .venv)
         if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
         run: ./.venv/Scripts/python.exe -m venv .venv2
@@ -272,10 +280,34 @@ jobs:
         if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
         run: ./.venv/bin/python -m venv .venv2
 
+      - name: Version of .venv2
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
+        run: ./.venv2/Scripts/python.exe --version
+
+      - name: Version of .venv2
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
+        run: ./.venv2/bin/python --version
+
       - name: Re-Create .venv (using 3.12)
         if: startsWith( matrix.feature, 'ci-venv')
         run: $PYTHON_3_12_PATH -m venv .venv
         shell: bash
+
+      - name: Version of .venv
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
+        run: ./.venv/Scripts/python.exe --version
+
+      - name: Version of .venv
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
+        run: ./.venv/bin/python --version
+
+      - name: Version of .venv2
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
+        run: ./.venv2/Scripts/python.exe --version
+
+      - name: Version of .venv2
+        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
+        run: ./.venv2/bin/python --version
       # endregion
 
       # region Setup Poetry
