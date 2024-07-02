@@ -201,10 +201,23 @@ pub fn get_known_symlinks_impl(
                     // See previous explanation
                     let mut symlinks = vec![symlink_resolved_python_exe.to_owned()];
                     for possible_symlink in [
+                        PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3"),
                         PathBuf::from(format!("/home/linuxbrew/.linuxbrew/bin/python{}", version)),
+                        PathBuf::from(format!(
+                            "/home/linuxbrew/.linuxbrew/Cellar/python@{}/{}/bin/python{}",
+                            version, full_version, version
+                        )),
+                        PathBuf::from(format!(
+                            "/home/linuxbrew/.linuxbrew/Cellar/python@{}/{}/bin/python3",
+                            version, full_version
+                        )),
                         PathBuf::from(format!(
                             "/home/linuxbrew/.linuxbrew/opt/python@{}/bin/python{}",
                             version, version
+                        )),
+                        PathBuf::from(format!(
+                            "/home/linuxbrew/.linuxbrew/opt/python@{}/bin/python3",
+                            version
                         )),
                         // This is a special folder, if users install python using other means, this file
                         // might get overridden. So we should only add this if this files points to the same place
