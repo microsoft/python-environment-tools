@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{env, path::PathBuf, sync::Once};
+use std::{path::PathBuf, sync::Once};
 
 use common::{does_version_match, resolve_test_path};
 use lazy_static::lazy_static;
-use log::{error, trace, warn};
+use log::{error, trace};
 use pet::{locators::identify_python_environment_using_locators, resolve::resolve_environment};
 use pet_core::{
     arch::Architecture,
@@ -13,7 +13,6 @@ use pet_core::{
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_python_utils::env::PythonEnv;
-use pet_reporter::environment;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -35,7 +34,6 @@ fn setup() {
 
 mod common;
 
-// #[cfg(unix)]
 #[cfg_attr(
     any(
         feature = "ci",
