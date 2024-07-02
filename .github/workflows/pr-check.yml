@@ -235,12 +235,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Python 3.12 Path
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        run: echo $PATH
+        shell: bash
+
       - name: Set Python 3.11 to PATH
         if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
         id: setupPython311
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Python 3.11 Path
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        run: echo $PATH
+        shell: bash
 
       - name: Python 3.12 Path
         if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
@@ -260,6 +270,11 @@ jobs:
       - name: Python 3.12 Path
         if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
         run: $PYTHON_3_12_PATH --version
+        shell: bash
+
+      - name: Python 3.12 Path
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        run: echo $PATH
         shell: bash
 
       # region Setup Venv
