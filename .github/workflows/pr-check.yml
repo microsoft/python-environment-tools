@@ -228,26 +228,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # region Setup Poetry
-      - name: Set Python 3.x to PATH
-        if: startsWith( matrix.feature, 'ci-venv')
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
       - name: Set Python 3.12 to PATH
-        if: startsWith( matrix.feature, 'ci-venv')
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
         id: setupPython312
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Set Python 3.11 to PATH
-        if: startsWith( matrix.feature, 'ci-venv')
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
         id: setupPython311
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      # region Setup Venv
+      - name: Set Python 3.x to PATH
+        if: startsWith( matrix.feature, 'ci-venv')
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
       - name: Python 3.12 Path
         if: startsWith( matrix.feature, 'ci-venv')
@@ -279,20 +279,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-
-      - name: Set Python 3.12 to PATH
-        if: startsWith( matrix.feature, 'ci-poetry')
-        id: setupPython312
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Set Python 3.11 to PATH
-        if: startsWith( matrix.feature, 'ci-poetry')
-        id: setupPython311
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Python 3.12 Path
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
