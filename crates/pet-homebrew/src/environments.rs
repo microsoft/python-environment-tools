@@ -31,8 +31,8 @@ pub fn get_python_info(
         resolved_exe.to_path_buf(),
     ];
     println!(
-        "GET SYMLINKS for {:?} and {:?}",
-        python_exe_from_bin_dir, resolved_exe
+        "GET SYMLINKS for {:?} and {:?} with version {:?}",
+        python_exe_from_bin_dir, resolved_exe, version
     );
     if let Some(version) = &version {
         symlinks.append(&mut get_known_symlinks(resolved_exe, version));

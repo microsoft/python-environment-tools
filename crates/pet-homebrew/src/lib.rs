@@ -13,7 +13,8 @@ use pet_core::{
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::{env::PythonEnv, executable::find_executables};
 use pet_virtualenv::is_virtualenv;
-use std::{path::PathBuf, thread};
+use std::{fs, path::PathBuf, thread};
+use sym_links::is_homebrew_python;
 
 mod env_variables;
 mod environment_locations;
@@ -52,7 +53,17 @@ fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
     // Hence we never end up reporting 3.10 for home brew (as mentioned when you try to resolve the exe it points to existing install, now homebrew).
     let exe = env.executable.clone();
     let exe_file_name = exe.file_name()?;
-    let resolved_file = resolve_symlink(&exe).unwrap_or(exe.clone());
+    let mut resolved_file = resolve_symlink(&exe).unwrap_or(exe.clone());
+
+    // Possible the resolve exe needs to be resolved once again using canonicalize.
+    // Sometimes a symlink points to another symlink, and we need to resolve it to get the real exe.
+    // And for some reason even though they are symlinks, they are not resolved by `resolve_symlink`.
+    if let Some(resolved) = resolve_symlink(&exe).or(fs::canonicalize(&exe).ok()) {
+        if is_homebrew_python(&resolved) {
+            resolved_file = resolved;
+        }
+    }
+
     // Cellar is where the executables will be installed, see below link
     // https://docs.brew.sh/Formula-Cookbook#an-introduction
     // From above link > Homebrew installs formulae to the Cellar at $(brew --cellar)

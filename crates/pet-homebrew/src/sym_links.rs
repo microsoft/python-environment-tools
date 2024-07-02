@@ -15,6 +15,12 @@ lazy_static! {
         Regex::new(r"/python@((\d+\.?)*)/").expect("error parsing Version regex for Homebrew");
 }
 
+pub fn is_homebrew_python(exe: &Path) -> bool {
+    exe.starts_with("/opt/homebrew/Cellar")
+        || exe.starts_with("/usr/local/Cellar")
+        || exe.starts_with("/home/linuxbrew/.linuxbrew")
+}
+
 pub fn get_known_symlinks(
     symlink_resolved_python_exe: &Path,
     full_version: &String,
