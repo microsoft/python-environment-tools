@@ -5,7 +5,10 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
 };
 
@@ -23,12 +26,14 @@ use pet_python_utils::{
 use pet_virtualenv::is_virtualenv;
 
 pub struct LinuxGlobalPython {
+    searched: AtomicBool,
     reported_executables: Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
 }
 
 impl LinuxGlobalPython {
     pub fn new() -> LinuxGlobalPython {
         LinuxGlobalPython {
+            searched: AtomicBool::new(false),
             reported_executables: Arc::new(
                 Mutex::new(HashMap::<PathBuf, PythonEnvironment>::new()),
             ),
@@ -39,6 +44,9 @@ impl LinuxGlobalPython {
         if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
             return;
         }
+        if self.searched.load(Ordering::Relaxed) {
+            return;
+        }
         // Look through the /bin, /usr/bin, /usr/local/bin directories
         thread::scope(|s| {
             for bin in ["/bin", "/usr/bin", "/usr/local/bin"] {
@@ -47,6 +55,7 @@ impl LinuxGlobalPython {
                 });
             }
         });
+        self.searched.store(false, Ordering::Relaxed);
     }
 }
 impl Default for LinuxGlobalPython {
@@ -99,6 +108,7 @@ impl Locator for LinuxGlobalPython {
         if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
             return;
         }
+        self.searched.store(false, Ordering::Relaxed);
         self.reported_executables.lock().unwrap().clear();
         self.find_cached(Some(reporter))
     }

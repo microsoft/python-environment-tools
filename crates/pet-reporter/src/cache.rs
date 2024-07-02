@@ -5,17 +5,22 @@ use crate::environment::get_environment_key;
 use pet_core::{manager::EnvManager, python_environment::PythonEnvironment, reporter::Reporter};
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-pub struct CacheReporter {
+pub trait CacheReporter: Send + Sync {
+    fn was_reported(&self, exe: &Path) -> bool;
+    fn clear(&self);
+}
+
+pub struct CacheReporterImpl {
     reporter: Arc<dyn Reporter>,
     reported_managers: Arc<Mutex<HashMap<PathBuf, EnvManager>>>,
     reported_environments: Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
 }
 
-impl CacheReporter {
+impl CacheReporterImpl {
     pub fn new(reporter: Arc<dyn Reporter>) -> Self {
         Self {
             reporter,
@@ -24,7 +29,20 @@ impl CacheReporter {
         }
     }
 }
-impl Reporter for CacheReporter {
+
+impl CacheReporter for CacheReporterImpl {
+    fn was_reported(&self, exe: &Path) -> bool {
+        self.reported_environments
+            .lock()
+            .unwrap()
+            .contains_key(&exe.to_path_buf())
+    }
+    fn clear(&self) {
+        self.reported_environments.lock().unwrap().clear();
+    }
+}
+
+impl Reporter for CacheReporterImpl {
     fn report_manager(&self, manager: &EnvManager) {
         let mut reported_managers = self.reported_managers.lock().unwrap();
         if !reported_managers.contains_key(&manager.executable) {
@@ -38,6 +56,9 @@ impl Reporter for CacheReporter {
             let mut reported_environments = self.reported_environments.lock().unwrap();
             if !reported_environments.contains_key(&key) {
                 reported_environments.insert(key.clone(), env.clone());
+                for symlink in env.symlinks.clone().unwrap_or_default().into_iter() {
+                    reported_environments.insert(symlink, env.clone());
+                }
                 self.reporter.report_environment(env);
             }
         }

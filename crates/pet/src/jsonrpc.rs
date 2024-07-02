@@ -12,7 +12,11 @@ use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
 };
-use pet_reporter::{cache::CacheReporter, environment::Environment, jsonrpc};
+use pet_reporter::{
+    cache::{CacheReporter, CacheReporterImpl},
+    environment::Environment,
+    jsonrpc,
+};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
@@ -26,7 +30,7 @@ use std::{
 use crate::{find::find_and_report_envs, locators::create_locators};
 
 pub struct Context {
-    reporter: Arc<dyn Reporter>,
+    reporter: Arc<CacheReporterImpl>,
     configuration: RwLock<Configuration>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<Conda>,
@@ -39,7 +43,7 @@ pub fn start_jsonrpc_server() {
     // Hence passed around as Arcs via the context.
     let environment = EnvironmentApi::new();
     let jsonrpc_reporter = Arc::new(jsonrpc::create_reporter());
-    let reporter = Arc::new(CacheReporter::new(jsonrpc_reporter.clone()));
+    let reporter = Arc::new(CacheReporterImpl::new(jsonrpc_reporter.clone()));
     let conda_locator = Arc::new(Conda::from(&environment));
     let context = Context {
         reporter,
@@ -87,6 +91,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
             cfg.conda_executable = request_options.conda_executable;
             drop(cfg);
             let config = context.configuration.read().unwrap().clone();
+            context.reporter.clear();
             for locator in context.locators.iter() {
                 locator.configure(&config);
             }
@@ -159,6 +164,11 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                             &resolved,
                         );
 
+                        // Possible this is the first time we've seen this env.
+                        if let Some(manager) = &resolved.manager {
+                            context.reporter.report_manager(manager);
+                        }
+                        context.reporter.report_environment(&resolved);
                         send_reply(id, Some(ResolveResult::new(&resolved, now.elapsed())));
                     } else {
                         error!(

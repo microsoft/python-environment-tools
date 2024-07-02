@@ -14,6 +14,7 @@ use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
+use pet_reporter::cache::{CacheReporter, CacheReporterImpl};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -33,7 +34,7 @@ pub struct Summary {
 }
 
 pub fn find_and_report_envs(
-    reporter: &dyn Reporter,
+    reporter: &CacheReporterImpl,
     configuration: Configuration,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<dyn CondaLocator>,
@@ -65,6 +66,7 @@ pub fn find_and_report_envs(
                     s.spawn(move || {
                         let start = std::time::Instant::now();
                         locator.find(reporter);
+                        // locator.find(&Box::new(reporter.clone()) as &Box<dyn Reporter>);
                         summary
                             .lock()
                             .unwrap()
@@ -166,7 +168,7 @@ pub fn find_and_report_envs(
 
 fn find_python_environments_in_workspace_folders_recursive(
     paths: Vec<PathBuf>,
-    reporter: &dyn Reporter,
+    reporter: &CacheReporterImpl,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     depth: u32,
     max_depth: u32,
@@ -230,7 +232,7 @@ fn find_python_environments_in_workspace_folders_recursive(
 
 fn find_python_environments(
     paths: Vec<PathBuf>,
-    reporter: &dyn Reporter,
+    reporter: &CacheReporterImpl,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     is_workspace_folder: bool,
     fallback_category: Option<PythonEnvironmentCategory>,
@@ -259,7 +261,7 @@ fn find_python_environments(
 fn find_python_environments_in_paths_with_locators(
     paths: Vec<PathBuf>,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
-    reporter: &dyn Reporter,
+    reporter: &CacheReporterImpl,
     is_workspace_folder: bool,
     fallback_category: Option<PythonEnvironmentCategory>,
 ) {
@@ -274,6 +276,7 @@ fn find_python_environments_in_paths_with_locators(
             // Hence do not just look for files in a bin directory of the path.
             .flat_map(|p| find_executable(p))
             .filter_map(Option::Some)
+            .filter(|p| !reporter.was_reported(p))
             .collect::<Vec<PathBuf>>()
     } else {
         paths
@@ -288,6 +291,7 @@ fn find_python_environments_in_paths_with_locators(
                 }
                 true
             })
+            .filter(|p| !reporter.was_reported(p))
             .collect::<Vec<PathBuf>>()
     };
 
@@ -297,10 +301,13 @@ fn find_python_environments_in_paths_with_locators(
 fn identify_python_executables_using_locators(
     executables: Vec<PathBuf>,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
-    reporter: &dyn Reporter,
+    reporter: &CacheReporterImpl,
     fallback_category: Option<PythonEnvironmentCategory>,
 ) {
     for exe in executables.into_iter() {
+        if reporter.was_reported(&exe) {
+            continue;
+        }
         let executable = exe.clone();
         let env = PythonEnv::new(exe.to_owned(), None, None);
         if let Some(env) =
