@@ -3,6 +3,7 @@
 
 use lazy_static::lazy_static;
 use pet_fs::path::resolve_symlink;
+use pet_python_utils::executable::find_executables;
 use regex::Regex;
 use std::path::{Path, PathBuf};
 
@@ -12,6 +13,49 @@ lazy_static! {
 }
 
 pub fn get_known_symlinks(
+    symlink_resolved_python_exe: &Path,
+    full_version: &String,
+) -> Vec<PathBuf> {
+    let mut symlinks = get_known_symlinks_impl(symlink_resolved_python_exe, full_version);
+
+    // Go through all the exes in all of the above bin directories and verify we have a list of all of them.
+    // They too could be symlinks, e.g. we could have `/opt/homebrew/bin/python3` & also `/opt/homebrew/bin/python`
+    // And possible they are all symlnks to the same exe.
+    let threads = symlinks
+        .iter()
+        .map(|symlink| {
+            let symlink = symlink.clone();
+            let known_symlinks = symlinks.clone();
+            std::thread::spawn(move || {
+                if let Some(bin) = symlink.parent() {
+                    let mut symlinks = vec![];
+                    for possible_symlink in find_executables(bin) {
+                        if let Some(symlink) = resolve_symlink(&possible_symlink) {
+                            if known_symlinks.contains(&symlink) {
+                                symlinks.push(possible_symlink);
+                            }
+                        }
+                    }
+                    symlinks
+                } else {
+                    vec![]
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    let other_symlinks = threads
+        .into_iter()
+        .flat_map(|t| t.join().unwrap())
+        .collect::<Vec<_>>();
+    symlinks.extend(other_symlinks);
+
+    symlinks.sort();
+    symlinks.dedup();
+
+    symlinks
+}
+
+pub fn get_known_symlinks_impl(
     symlink_resolved_python_exe: &Path,
     full_version: &String,
 ) -> Vec<PathBuf> {
