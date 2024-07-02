@@ -232,8 +232,12 @@ jobs:
         #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Windows Store Python 3.12
-        # run: winget install Python.Python.3.12 --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
-        run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
+        # Store App we want to install is `Python 3.12`
+        # Using `winget search "Python 3.12"` we get two ids, one from MS Store and another from winget.
+        # Installing from MS Store fails with an unknown error, lets use the other.
+        # All we're after is installing Python from Windows Store
+        run: winget install Python.Python.3.8 --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
+        # run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
       # - name: Install Windows Store Python 3.12
       #   run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
 
