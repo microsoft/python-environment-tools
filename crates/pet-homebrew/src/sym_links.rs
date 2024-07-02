@@ -5,11 +5,20 @@ use lazy_static::lazy_static;
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::executable::find_executables;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 lazy_static! {
     static ref PYTHON_VERSION: Regex =
         Regex::new(r"/python@((\d+\.?)*)/").expect("error parsing Version regex for Homebrew");
+}
+
+pub fn is_homebrew_python(exe: &Path) -> bool {
+    exe.starts_with("/opt/homebrew/Cellar")
+        || exe.starts_with("/usr/local/Cellar")
+        || exe.starts_with("/home/linuxbrew/.linuxbrew")
 }
 
 pub fn get_known_symlinks(
@@ -85,6 +94,10 @@ pub fn get_known_symlinks_impl(
                         PathBuf::from(format!("/opt/homebrew/Cellar/python@{}/{}/Frameworks/Python.framework/Versions/Current/bin/python{}", version, full_version, version)),
                         PathBuf::from(format!("/opt/homebrew/Frameworks/Python.framework/Versions/{}/bin/python{}", version, version)),
                         PathBuf::from(format!("/opt/homebrew/Frameworks/Python.framework/Versions/Current/bin/python{}", version)),
+                        PathBuf::from(format!("/usr/local/opt/python@{}/bin/python3", version)),
+                        PathBuf::from(format!("/usr/local/opt/python@{}/bin/python{}", version, version)),
+                        PathBuf::from("/usr/local/opt/python@3/bin/python3"),
+                        PathBuf::from(format!("/usr/local/opt/python@3/bin/python{}", version)),
                         // Check if this symlink is pointing to the same place as the resolved python exe
                         PathBuf::from(format!("/opt/homebrew/opt/python3/bin/python{}", version)),
                         // Check if this symlink is pointing to the same place as the resolved python exe
@@ -94,7 +107,11 @@ pub fn get_known_symlinks_impl(
                         ] {
 
                         // Validate the symlinks
-                        if possible_symlink == symlink_resolved_python_exe || resolve_symlink(&possible_symlink).unwrap_or_default() == symlink_resolved_python_exe {
+                        if symlinks.contains(
+                            &resolve_symlink(&possible_symlink)
+                                .or(fs::canonicalize(&possible_symlink).ok())
+                                .unwrap_or_default(),
+                        ) {
                             symlinks.push(possible_symlink);
                         }
                     }
@@ -125,12 +142,10 @@ pub fn get_known_symlinks_impl(
                             // 1. python 3.8 has sysprefix in /usr/local/Cellar/python@3.9/3.9.19/Frameworks/Python.framework/Versions/3.9
                             // 2. python 3.9 has sysprefix in /usr/local/opt/python@3.9/Frameworks/Python.framework/Versions/3.9
                             // 3. python 3.11 has sysprefix in /usr/local/opt/python@3.11/Frameworks/Python.framework/Versions/3.11
-                            // Hence till we know more about it, this path is not included, but left as commented
-                            // So we can add it later if needed & tested
-                            // PathBuf::from(format!(
-                            //     "/usr/local/opt/python@{}/bin/python{}",
-                            //     version, version
-                            // )),
+                            PathBuf::from(format!("/usr/local/opt/python@{}/bin/python3", version)),
+                            PathBuf::from(format!("/usr/local/opt/python@{}/bin/python{}", version, version)),
+                            PathBuf::from("/usr/local/opt/python@3/bin/python3"),
+                            PathBuf::from(format!("/usr/local/opt/python@3/bin/python{}", version)),
                             PathBuf::from(format!(
                                 "/usr/local/Cellar/python@{}/{}/bin/python{}",
                                 version, full_version, version
@@ -149,7 +164,11 @@ pub fn get_known_symlinks_impl(
                         ] {
 
                         // Validate the symlinks
-                        if possible_symlink == symlink_resolved_python_exe || resolve_symlink(&possible_symlink).unwrap_or_default() == symlink_resolved_python_exe {
+                        if symlinks.contains(
+                            &resolve_symlink(&possible_symlink)
+                                // .or(fs::canonicalize(&possible_symlink).ok())
+                                .unwrap_or_default(),
+                        ) {
                             symlinks.push(possible_symlink);
                         }
                     }
@@ -160,7 +179,7 @@ pub fn get_known_symlinks_impl(
             },
             None => vec![],
         }
-    } else if symlink_resolved_python_exe.starts_with("/home/linuxbrew/.linuxbrew/Cellar") {
+    } else if symlink_resolved_python_exe.starts_with("/home/linuxbrew/.linuxbrew") {
         // Real exe - /home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.3/bin/python3.12
 
         // Known symlinks include
@@ -175,10 +194,23 @@ pub fn get_known_symlinks_impl(
                     // See previous explanation
                     let mut symlinks = vec![symlink_resolved_python_exe.to_owned()];
                     for possible_symlink in [
+                        PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3"),
                         PathBuf::from(format!("/home/linuxbrew/.linuxbrew/bin/python{}", version)),
+                        PathBuf::from(format!(
+                            "/home/linuxbrew/.linuxbrew/Cellar/python@{}/{}/bin/python{}",
+                            version, full_version, version
+                        )),
+                        PathBuf::from(format!(
+                            "/home/linuxbrew/.linuxbrew/Cellar/python@{}/{}/bin/python3",
+                            version, full_version
+                        )),
                         PathBuf::from(format!(
                             "/home/linuxbrew/.linuxbrew/opt/python@{}/bin/python{}",
                             version, version
+                        )),
+                        PathBuf::from(format!(
+                            "/home/linuxbrew/.linuxbrew/opt/python@{}/bin/python3",
+                            version
                         )),
                         // This is a special folder, if users install python using other means, this file
                         // might get overridden. So we should only add this if this files points to the same place
@@ -189,10 +221,11 @@ pub fn get_known_symlinks_impl(
                         PathBuf::from("/usr/local/bin/python"),
                     ] {
                         // Validate the symlinks
-                        if possible_symlink == symlink_resolved_python_exe
-                            || resolve_symlink(&possible_symlink).unwrap_or_default()
-                                == symlink_resolved_python_exe
-                        {
+                        if symlinks.contains(
+                            &resolve_symlink(&possible_symlink)
+                                .or(fs::canonicalize(&possible_symlink).ok())
+                                .unwrap_or_default(),
+                        ) {
                             symlinks.push(possible_symlink);
                         }
                     }

@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{env, path::PathBuf, sync::Once};
+use std::{path::PathBuf, sync::Once};
 
 use common::{does_version_match, resolve_test_path};
 use lazy_static::lazy_static;
-use log::{error, trace, warn};
+use log::{error, trace};
 use pet::{locators::identify_python_environment_using_locators, resolve::resolve_environment};
 use pet_core::{
     arch::Architecture,
@@ -13,7 +13,6 @@ use pet_core::{
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_python_utils::env::PythonEnv;
-use pet_reporter::environment;
 use regex::Regex;
 use serde::Deserialize;
 
@@ -35,7 +34,6 @@ fn setup() {
 
 mod common;
 
-// #[cfg(unix)]
 #[cfg_attr(
     any(
         feature = "ci",
@@ -109,7 +107,7 @@ fn verify_validity_of_discovered_envs() {
                 verify_we_can_get_same_env_info_using_from_with_exe(exe, environment.clone());
                 // Verification 4 & 5:
                 // Similarly for each environment use resolve method and verify we get the exact same information.
-                // verify_we_can_get_same_env_info_using_resolve_with_exe(exe, environment.clone());
+                verify_we_can_get_same_env_info_using_resolve_with_exe(exe, environment.clone());
             }
         }));
     }
@@ -337,17 +335,17 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     );
 }
 
-fn compare_environments(env: PythonEnvironment, environment: PythonEnvironment, method: &str) {
-    let mut env = env.clone();
-    let mut environment = environment.clone();
+fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, method: &str) {
+    let mut actual = actual.clone();
+    let mut expected = expected.clone();
 
     assert_eq!(
-        env.category,
-        environment.clone().category,
+        actual.category,
+        expected.clone().category,
         "Category mismatch when using {} for {:?} and {:?}",
         method,
-        environment,
-        env
+        expected,
+        actual
     );
 
     // if env.category != environment.clone().category {
@@ -358,7 +356,7 @@ fn compare_environments(env: PythonEnvironment, environment: PythonEnvironment, 
     // }
 
     if let (Some(version), Some(expected_version)) =
-        (environment.clone().version, env.clone().version)
+        (expected.clone().version, actual.clone().version)
     {
         assert!(
             does_version_match(&version, &expected_version),
@@ -366,8 +364,8 @@ fn compare_environments(env: PythonEnvironment, environment: PythonEnvironment, 
             method,
             expected_version,
             version,
-            env.clone(),
-            environment.clone()
+            actual.clone(),
+            expected.clone()
         );
         // if !does_version_match(&version, &expected_version) {
         //     error!("Version mismatch when using {} for (expected {:?} to start with {:?}) for env = {:?} and environment = {:?}",
@@ -381,31 +379,32 @@ fn compare_environments(env: PythonEnvironment, environment: PythonEnvironment, 
     }
     // We have compared the versions, now ensure they are treated as the same
     // So that we can compare the objects easily
-    env.version = environment.clone().version;
+    actual.version = expected.clone().version;
 
-    if let Some(prefix) = environment.clone().prefix {
-        if env.clone().executable == Some(PathBuf::from("/usr/local/python/current/bin/python"))
+    if let Some(prefix) = expected.clone().prefix {
+        if actual.clone().executable == Some(PathBuf::from("/usr/local/python/current/bin/python"))
             && (prefix.to_str().unwrap() == "/usr/local/python/current"
-                && env.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
+                && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
-                && env.clone().prefix == Some(PathBuf::from("/usr/local/python/current")))
+                && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/current")))
         {
             // known issue https://github.com/microsoft/python-environment-tools/issues/64
-            env.prefix = environment.clone().prefix;
-        } else if env.clone().executable
+            actual.prefix = expected.clone().prefix;
+        } else if actual.clone().executable
             == Some(PathBuf::from("/home/codespace/.python/current/bin/python"))
             && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
-                && env.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
+                && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
-                && env.clone().prefix == Some(PathBuf::from("/home/codespace/.python/current")))
+                && actual.clone().prefix == Some(PathBuf::from("/home/codespace/.python/current")))
         {
             // known issue https://github.com/microsoft/python-environment-tools/issues/64
-            env.prefix = environment.clone().prefix;
+            actual.prefix = expected.clone().prefix;
         }
     }
     // known issue
-    env.symlinks = Some(
-        env.clone()
+    actual.symlinks = Some(
+        actual
+            .clone()
             .symlinks
             .unwrap_or_default()
             .iter()
@@ -422,8 +421,8 @@ fn compare_environments(env: PythonEnvironment, environment: PythonEnvironment, 
             .map(|p| p.to_path_buf())
             .collect::<Vec<PathBuf>>(),
     );
-    environment.symlinks = Some(
-        environment
+    expected.symlinks = Some(
+        expected
             .clone()
             .symlinks
             .unwrap_or_default()
@@ -443,31 +442,31 @@ fn compare_environments(env: PythonEnvironment, environment: PythonEnvironment, 
     );
 
     // if we know the arch, then verify it
-    if environment.arch.as_ref().is_some() && env.arch.as_ref().is_some() {
-        if env.arch.as_ref() != environment.arch.as_ref() {
+    if expected.arch.as_ref().is_some() && actual.arch.as_ref().is_some() {
+        if actual.arch.as_ref() != expected.arch.as_ref() {
             error!(
                 "Arch mismatch when using {} for {:?} and {:?}",
-                method, environment, env
+                method, expected, actual
             );
         }
     }
-    env.arch = environment.clone().arch;
+    actual.arch = expected.clone().arch;
 
     // if we know the prefix, then verify it
-    if environment.prefix.as_ref().is_some() && env.prefix.as_ref().is_some() {
-        if env.prefix.as_ref() != environment.prefix.as_ref() {
+    if expected.prefix.as_ref().is_some() && actual.prefix.as_ref().is_some() {
+        if actual.prefix.as_ref() != expected.prefix.as_ref() {
             error!(
                 "Prefirx mismatch when using {} for {:?} and {:?}",
-                method, environment, env
+                method, expected, actual
             );
         }
     }
-    env.prefix = environment.clone().prefix;
+    actual.prefix = expected.clone().prefix;
 
     assert_eq!(
-        env, environment,
+        actual, expected,
         "Environment mismatch when using {} for {:?}",
-        method, environment
+        method, expected
     );
 
     // if env != environment {
@@ -523,8 +522,8 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
         return;
     }
     compare_environments(
-        environment,
         env.resolved.unwrap(),
+        environment,
         format!("resolve using exe {:?}", executable).as_str(),
     );
 }

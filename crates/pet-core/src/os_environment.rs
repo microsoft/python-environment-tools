@@ -53,7 +53,7 @@ impl Environment for EnvironmentApi {
                     .into_iter()
                     .filter(|p| p.exists())
                     .collect::<Vec<PathBuf>>();
-
+            trace!("Env PATH: {:?}", paths);
             self.global_search_locations
                 .lock()
                 .unwrap()
