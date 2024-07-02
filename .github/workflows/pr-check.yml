@@ -354,9 +354,9 @@ jobs:
         run: time /usr/bin/python3 --version
         shell: bash
 
-      - name: Cargo Fetch
-        run: time /usr/bin/python3 -c "import json, sys; print('093385e9-59f7-4a16-a604-14bf206256fe');print(json.dumps({'version': '.'.join(str(n) for n in sys.version_info), 'sys_prefix': sys.prefix, 'executable': sys.executable, 'is64_bit': sys.maxsize > 2**32}))"
-        shell: bash
+      # - name: Cargo Fetch
+      #   run: time /usr/bin/python3 -c "import json, sys; print('093385e9-59f7-4a16-a604-14bf206256fe');print(json.dumps({'version': '.'.join(str(n) for n in sys.version_info), 'sys_prefix': sys.prefix, 'executable': sys.executable, 'is64_bit': sys.maxsize > 2**32}))"
+      #   shell: bash
 
       - name: Find Environments
         run: cargo run --release --target ${{ matrix.target }} -- find -v
