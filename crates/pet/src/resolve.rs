@@ -5,9 +5,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use log::{trace, warn};
 use pet_core::{
-    arch::Architecture,
-    os_environment::EnvironmentApi,
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder},
+    arch::Architecture, os_environment::EnvironmentApi, python_environment::PythonEnvironment,
     Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
