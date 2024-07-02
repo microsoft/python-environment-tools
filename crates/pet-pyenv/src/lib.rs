@@ -58,7 +58,7 @@ impl Locator for PyEnv {
         ]
     }
 
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if let Some(prefix) = &env.prefix {
             if is_conda_env(prefix) {
                 return None;

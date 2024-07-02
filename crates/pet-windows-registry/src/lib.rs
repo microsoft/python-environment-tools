@@ -69,7 +69,7 @@ impl Locator for WindowsRegistry {
         vec![PythonEnvironmentCategory::WindowsRegistry]
     }
 
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         // Assume we create a virtual env from a python install,
         // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
         // Hence the first part of the condition will be true, but the second part will be false.

@@ -69,7 +69,7 @@ impl Locator for WindowsStore {
     }
 
     #[cfg(windows)]
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         use pet_virtualenv::is_virtualenv;
 
         // Assume we create a virtual env from a python install,
@@ -91,7 +91,7 @@ impl Locator for WindowsStore {
     }
 
     #[cfg(unix)]
-    fn from(&self, _env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, _env: &PythonEnv) -> Option<PythonEnvironment> {
         None
     }
 

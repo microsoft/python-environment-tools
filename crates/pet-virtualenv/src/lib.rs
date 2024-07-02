@@ -78,7 +78,7 @@ impl Locator for VirtualEnv {
         vec![PythonEnvironmentCategory::VirtualEnv]
     }
 
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if is_virtualenv(env) {
             let version = match env.version {
                 Some(ref v) => Some(v.clone()),

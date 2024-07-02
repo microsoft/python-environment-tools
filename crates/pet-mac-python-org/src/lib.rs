@@ -34,7 +34,7 @@ impl Locator for MacPythonOrg {
         vec![PythonEnvironmentCategory::MacPythonOrg]
     }
 
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if std::env::consts::OS != "macos" {
             return None;
         }
@@ -158,7 +158,8 @@ impl Locator for MacPythonOrg {
                 let executable = prefix.join("bin").join("python3");
                 let version = version::from_header_files(&prefix);
 
-                if let Some(env) = self.from(&PythonEnv::new(executable, Some(prefix), version)) {
+                if let Some(env) = self.try_from(&PythonEnv::new(executable, Some(prefix), version))
+                {
                     reporter.report_environment(&env);
                 }
             }

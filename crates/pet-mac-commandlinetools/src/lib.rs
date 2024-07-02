@@ -35,7 +35,7 @@ impl Locator for MacCmdLineTools {
         vec![PythonEnvironmentCategory::MacCommandLineTools]
     }
 
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if std::env::consts::OS != "macos" {
             return None;
         }
@@ -216,7 +216,7 @@ impl Locator for MacCmdLineTools {
                 }
             }
             env.symlinks = Some(symlinks);
-            if let Some(env) = self.from(&env) {
+            if let Some(env) = self.try_from(&env) {
                 _reporter.report_environment(&env);
             }
         }

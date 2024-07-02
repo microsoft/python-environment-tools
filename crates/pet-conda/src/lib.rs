@@ -152,7 +152,7 @@ impl Locator for Conda {
     fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
         vec![PythonEnvironmentCategory::Conda]
     }
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         // Possible we do not have the prefix, but this exe is in the bin directory and its a conda env or root conda install.
         let mut prefix = env.prefix.clone();
         if prefix.is_none() {

@@ -62,7 +62,7 @@ impl Locator for LinuxGlobalPython {
         vec![PythonEnvironmentCategory::LinuxGlobal]
     }
 
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
             return None;
         }

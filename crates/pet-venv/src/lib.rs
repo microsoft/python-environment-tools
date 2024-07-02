@@ -40,7 +40,7 @@ impl Locator for Venv {
         vec![PythonEnvironmentCategory::Venv]
     }
 
-    fn from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+    fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         if is_venv(env) {
             let mut prefix = env.prefix.clone();
             if prefix.is_none() {

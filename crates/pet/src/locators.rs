@@ -86,10 +86,10 @@ pub fn identify_python_environment_using_locators(
     fallback_category: Option<PythonEnvironmentCategory>,
 ) -> Option<PythonEnvironment> {
     let executable = env.executable.clone();
-    if let Some(env) = locators
-        .iter()
-        .fold(None, |e, loc| if e.is_some() { e } else { loc.from(env) })
-    {
+    if let Some(env) = locators.iter().fold(
+        None,
+        |e, loc| if e.is_some() { e } else { loc.try_from(env) },
+    ) {
         return Some(env);
     }
 
@@ -98,9 +98,11 @@ pub fn identify_python_environment_using_locators(
     // We try to get the interpreter info, hoping that the real exe returned might be identifiable.
     if let Some(resolved_env) = ResolvedPythonEnv::from(&executable) {
         let env = resolved_env.to_python_env();
-        if let Some(env) = locators
-            .iter()
-            .fold(None, |e, loc| if e.is_some() { e } else { loc.from(&env) })
+        if let Some(env) =
+            locators.iter().fold(
+                None,
+                |e, loc| if e.is_some() { e } else { loc.try_from(&env) },
+            )
         {
             trace!(
                 "Unknown Env ({:?}) in Path resolved as {:?}",
