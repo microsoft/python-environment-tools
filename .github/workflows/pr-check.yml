@@ -242,6 +242,26 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Python 3.12 Path
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        run: echo "PYTHON_3_12_PATH=${{ steps.setupPython312.outputs.python-path }}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Python 3.11 Path
+        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        run: echo "PYTHON_3_11_PATH=${{ steps.setupPython311.outputs.python-path }}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Python 3.11 Path
+        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+        run: $PYTHON_3_11_PATH --version
+        shell: bash
+
+      - name: Python 3.12 Path
+        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+        run: $PYTHON_3_12_PATH --version
+        shell: bash
+
       # region Setup Venv
       - name: Set Python 3.x to PATH
         if: startsWith( matrix.feature, 'ci-venv')
@@ -249,20 +269,9 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-venv')
-        run: echo "PYTHON_3_12_PATH=${{ steps.setupPython312.outputs.python-path }}" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Python 3.11 Path
-        if: startsWith( matrix.feature, 'ci-venv')
-        run: echo "PYTHON_3_11_PATH=${{ steps.setupPython311.outputs.python-path }}" >> $GITHUB_ENV
-        shell: bash
-
       - name: Create .venv (using 3.11)
         if: startsWith( matrix.feature, 'ci-venv')
         run: $PYTHON_3_11_PATH -m venv .venv
-        shell: bash
 
       - name: Version of .venv
         if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
@@ -288,10 +297,17 @@ jobs:
         if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
         run: ./.venv2/bin/python --version
 
+      # Originally .venv2 is created using .venv, and .venv is 3.11
+      # After creating .venv2, we will re-create .venv with 3.12,
+      # At this point the version of .venv2 will end up being 3.12 as well.
+      - name: Delete .venv
+        if: startsWith( matrix.feature, 'ci-venv')
+        run: rm -rf .venv
+        shell: bash
+
       - name: Re-Create .venv (using 3.12)
         if: startsWith( matrix.feature, 'ci-venv')
         run: $PYTHON_3_12_PATH -m venv .venv
-        shell: bash
 
       - name: Version of .venv
         if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
@@ -316,21 +332,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-
-      - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
-        run: echo "PYTHON_3_12_PATH=${{ steps.setupPython312.outputs.python-path }}" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
-        run: echo $PYTHON_3_12_PATH
-        shell: bash
-
-      - name: Python 3.11 Path
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
-        run: echo "PYTHON_3_11_PATH=${{ steps.setupPython311.outputs.python-path }}" >> $GITHUB_ENV
-        shell: bash
 
       - name: Install Poetry (envs globally)
         if: startsWith( matrix.feature, 'ci-poetry-global')
