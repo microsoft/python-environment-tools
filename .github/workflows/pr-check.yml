@@ -232,7 +232,8 @@ jobs:
         #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Windows Store Python 3.12
-        run: winget install Python.Python.3.12 --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
+        # run: winget install Python.Python.3.12 --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
+        run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
       # - name: Install Windows Store Python 3.12
       #   run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
 
