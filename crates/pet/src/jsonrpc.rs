@@ -82,38 +82,41 @@ impl RefreshResult {
 pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
     match serde_json::from_value::<RequestOptions>(params.clone()) {
         Ok(request_options) => {
-            let mut cfg = context.configuration.write().unwrap();
-            cfg.search_paths = request_options.search_paths;
-            cfg.conda_executable = request_options.conda_executable;
-            drop(cfg);
-            let config = context.configuration.read().unwrap().clone();
-            for locator in context.locators.iter() {
-                locator.configure(&config);
-            }
-            let summary = find_and_report_envs(
-                context.reporter.as_ref(),
-                config,
-                &context.locators,
-                context.conda_locator.clone(),
-            );
-            let summary = summary.lock().unwrap();
-            for locator in summary.find_locators_times.iter() {
-                info!("Locator {} took {:?}", locator.0, locator.1);
-            }
-            info!(
-                "Environments found using locators in {:?}",
-                summary.find_locators_time
-            );
-            info!("Environments in PATH found in {:?}", summary.find_path_time);
-            info!(
-                "Environments in global virtual env paths found in {:?}",
-                summary.find_global_virtual_envs_time
-            );
-            info!(
-                "Environments in custom search paths found in {:?}",
-                summary.find_search_paths_time
-            );
-            send_reply(id, Some(RefreshResult::new(summary.time)));
+            // Start in a new thread, we can have multiple requests.
+            thread::spawn(move || {
+                let mut cfg = context.configuration.write().unwrap();
+                cfg.search_paths = request_options.search_paths;
+                cfg.conda_executable = request_options.conda_executable;
+                drop(cfg);
+                let config = context.configuration.read().unwrap().clone();
+                for locator in context.locators.iter() {
+                    locator.configure(&config);
+                }
+                let summary = find_and_report_envs(
+                    context.reporter.as_ref(),
+                    config,
+                    &context.locators,
+                    context.conda_locator.clone(),
+                );
+                let summary = summary.lock().unwrap();
+                for locator in summary.find_locators_times.iter() {
+                    info!("Locator {} took {:?}", locator.0, locator.1);
+                }
+                info!(
+                    "Environments found using locators in {:?}",
+                    summary.find_locators_time
+                );
+                info!("Environments in PATH found in {:?}", summary.find_path_time);
+                info!(
+                    "Environments in global virtual env paths found in {:?}",
+                    summary.find_global_virtual_envs_time
+                );
+                info!(
+                    "Environments in custom search paths found in {:?}",
+                    summary.find_search_paths_time
+                );
+                send_reply(id, Some(RefreshResult::new(summary.time)));
+            });
         }
         Err(e) => {
             send_reply(id, None::<u128>);
