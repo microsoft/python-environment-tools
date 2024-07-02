@@ -261,9 +261,10 @@ jobs:
 
       - name: Create venv and conda
         if: startsWith( matrix.feature, 'ci-venv-conda')
+        shell: bash
         run: |
-          %PYTHON_3_11_PATH% -m venv .venv
-          %PYTHON_3_12_PATH% -m venv .venv2
+          $PYTHON_3_11_PATH -m venv .venv
+          $PYTHON_3_12_PATH -m venv .venv2
           conda create -n env1 python=3.12 -y
           conda create -n env2 -y
           conda create -p ./.conda1 python=3.12 -y
