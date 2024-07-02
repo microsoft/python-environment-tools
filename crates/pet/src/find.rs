@@ -4,7 +4,6 @@
 use log::{info, trace, warn};
 use pet_conda::CondaLocator;
 use pet_core::os_environment::{Environment, EnvironmentApi};
-use pet_core::python_environment::PythonEnvironmentCategory;
 use pet_core::reporter::Reporter;
 use pet_core::{Configuration, Locator};
 use pet_env_var_path::get_search_paths_from_env_variables;
@@ -97,18 +96,19 @@ pub fn find_and_report_envs(
         s.spawn(|| {
             let start = std::time::Instant::now();
             let environment = EnvironmentApi::new();
-            let search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(&environment);
+            let global_env_search_paths: Vec<PathBuf> =
+                get_search_paths_from_env_variables(&environment);
 
             trace!(
                 "Searching for environments in global folders: {:?}",
-                search_paths
+                global_env_search_paths
             );
             find_python_environments(
-                search_paths,
+                global_env_search_paths.clone(),
                 reporter,
                 locators,
                 false,
-                Some(PythonEnvironmentCategory::GlobalPaths),
+                &global_env_search_paths,
             );
             summary.lock().unwrap().find_path_time = start.elapsed();
         });
@@ -124,13 +124,21 @@ pub fn find_and_report_envs(
                 environment_paths,
             ]
             .concat();
+            let global_env_search_paths: Vec<PathBuf> =
+                get_search_paths_from_env_variables(&environment);
 
             trace!(
                 "Searching for environments in global venv folders: {:?}",
                 search_paths
             );
 
-            find_python_environments(search_paths, reporter, locators, false, None);
+            find_python_environments(
+                search_paths,
+                reporter,
+                locators,
+                false,
+                &global_env_search_paths,
+            );
             summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
         });
         // Step 4: Find in workspace folders too.
@@ -175,7 +183,7 @@ fn find_python_environments_in_workspace_folders_recursive(
         // Find in cwd
         let paths1 = paths.clone();
         s.spawn(|| {
-            find_python_environments(paths1, reporter, locators, true, None);
+            find_python_environments(paths1, reporter, locators, true, &[]);
 
             if depth >= max_depth {
                 return;
@@ -233,7 +241,7 @@ fn find_python_environments(
     reporter: &dyn Reporter,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     is_workspace_folder: bool,
-    fallback_category: Option<PythonEnvironmentCategory>,
+    global_env_search_paths: &[PathBuf],
 ) {
     if paths.is_empty() {
         return;
@@ -249,7 +257,7 @@ fn find_python_environments(
                     &locators,
                     reporter,
                     is_workspace_folder,
-                    fallback_category,
+                    global_env_search_paths,
                 );
             });
         }
@@ -261,7 +269,7 @@ fn find_python_environments_in_paths_with_locators(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     reporter: &dyn Reporter,
     is_workspace_folder: bool,
-    fallback_category: Option<PythonEnvironmentCategory>,
+    global_env_search_paths: &[PathBuf],
 ) {
     let executables = if is_workspace_folder {
         // If we're in a workspace folder, then we only need to look for bin/python or bin/python.exe
@@ -291,20 +299,25 @@ fn find_python_environments_in_paths_with_locators(
             .collect::<Vec<PathBuf>>()
     };
 
-    identify_python_executables_using_locators(executables, locators, reporter, fallback_category);
+    identify_python_executables_using_locators(
+        executables,
+        locators,
+        reporter,
+        global_env_search_paths,
+    );
 }
 
 fn identify_python_executables_using_locators(
     executables: Vec<PathBuf>,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     reporter: &dyn Reporter,
-    fallback_category: Option<PythonEnvironmentCategory>,
+    global_env_search_paths: &[PathBuf],
 ) {
     for exe in executables.into_iter() {
         let executable = exe.clone();
         let env = PythonEnv::new(exe.to_owned(), None, None);
         if let Some(env) =
-            identify_python_environment_using_locators(&env, locators, fallback_category)
+            identify_python_environment_using_locators(&env, locators, global_env_search_paths)
         {
             reporter.report_environment(&env);
             if let Some(manager) = env.manager {
