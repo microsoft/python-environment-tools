@@ -236,8 +236,8 @@ jobs:
         # Using `winget search "Python 3.12"` we get two ids, one from MS Store and another from winget.
         # Installing from MS Store fails with an unknown error, lets use the other.
         # All we're after is installing Python from Windows Store
-        run: winget install Python.Python.3.8 --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
-        # run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
+        # run: winget install Python.Python.3.8 --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
+        run: winget install --id 9NRWMJP3717K --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
       # - name: Install Windows Store Python 3.12
       #   run: winget install 9ncvdn91xzqp --disable-interactivity --accept-source-agreements --accept-package-agreements --verbose
 
