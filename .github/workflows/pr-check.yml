@@ -218,10 +218,10 @@ jobs:
           # - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
           #   os: windows-latest
           #   target: x86_64-pc-windows-msvc
-          - feature: ci-venv # Venv
+          - feature: ci-venv-conda # Venv
             os: windows-latest
             target: x86_64-pc-windows-msvc
-          - feature: ci-venv # Venv
+          - feature: ci-venv-conda # Venv
             os: ubuntu-latest
             target: x86_64-unknown-linux-musl
     steps:
@@ -229,124 +229,45 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set Python 3.12 to PATH
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        if: startsWith( matrix.feature, 'ci-venv-conda') || startsWith( matrix.feature, 'ci-poetry')
         id: setupPython312
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
-        run: echo $PATH
-        shell: bash
-
       - name: Set Python 3.11 to PATH
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        if: startsWith( matrix.feature, 'ci-venv-conda') || startsWith( matrix.feature, 'ci-poetry')
         id: setupPython311
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Python 3.11 Path
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
-        run: echo $PATH
-        shell: bash
-
       - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        if: startsWith( matrix.feature, 'ci-venv-conda') || startsWith( matrix.feature, 'ci-poetry')
         run: echo "PYTHON_3_12_PATH=${{ steps.setupPython312.outputs.python-path }}" >> $GITHUB_ENV
         shell: bash
 
       - name: Python 3.11 Path
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
+        if: startsWith( matrix.feature, 'ci-venv-conda') || startsWith( matrix.feature, 'ci-poetry')
         run: echo "PYTHON_3_11_PATH=${{ steps.setupPython311.outputs.python-path }}" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Python 3.11 Path
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
-        run: $PYTHON_3_11_PATH --version
-        shell: bash
-
-      - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
-        run: $PYTHON_3_12_PATH --version
-        shell: bash
-
-      - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-venv') || startsWith( matrix.feature, 'ci-poetry')
-        run: echo $PATH
         shell: bash
 
       # region Setup Venv
       - name: Set Python 3.x to PATH
-        if: startsWith( matrix.feature, 'ci-venv')
+        if: startsWith( matrix.feature, 'ci-venv-conda')
         uses: actions/setup-python@v5
         with:
           python-version: "3.x"
 
-      - name: Create .venv (using 3.11)
-        if: startsWith( matrix.feature, 'ci-venv')
-        run: $PYTHON_3_11_PATH -m venv .venv
-
-      - name: Version of .venv
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
-        run: ./.venv/Scripts/python.exe --version
-
-      - name: Version of .venv
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
-        run: ./.venv/bin/python --version
-
-      - name: Create .venv2 (using .venv)
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
-        run: ./.venv/Scripts/python.exe -m venv .venv2
-
-      - name: Create .venv2 (using .venv)
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
-        run: ./.venv/bin/python -m venv .venv2
-
-      - name: Version of .venv2
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
-        run: ./.venv2/Scripts/python.exe --version
-
-      - name: Version of .venv2
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
-        run: ./.venv2/bin/python --version
-
-      - name: Version of .venv2
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
-        run: readlink -f ./.venv2/bin/python
-
-      - name: Version of .venv
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
-        run: readlink -f ./.venv/bin/python
-
-      # Originally .venv2 is created using .venv, and .venv is 3.11
-      # After creating .venv2, we will re-create .venv with 3.12,
-      # At this point the version of .venv2 will end up being 3.12 as well.
-      - name: Delete .venv
-        if: startsWith( matrix.feature, 'ci-venv')
-        run: rm -rf .venv
-        shell: bash
-
-      - name: Re-Create .venv (using 3.12)
-        if: startsWith( matrix.feature, 'ci-venv')
-        run: $PYTHON_3_12_PATH -m venv .venv
-
-      - name: Version of .venv
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
-        run: ./.venv/Scripts/python.exe --version
-
-      - name: Version of .venv
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
-        run: ./.venv/bin/python --version
-
-      - name: Version of .venv2
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'windows')
-        run: ./.venv2/Scripts/python.exe --version
-
-      - name: Version of .venv2
-        if: startsWith( matrix.feature, 'ci-venv') && startsWith( matrix.os, 'ubuntu')
-        run: ./.venv2/bin/python --version
+      - name: Create venv and conda
+        if: startsWith( matrix.feature, 'ci-venv-conda')
+        run: |
+          $PYTHON_3_12_PATH -m venv .venv
+          $PYTHON_3_12_PATH -m venv .venv2
+          conda create -n env1 python=3.12 -y
+          conda create -n env2 -y
+          conda create -p ./.conda1 python=3.12 -y
+          conda create -p ./.conda-nopy -y
       # endregion
 
       # region Setup Poetry
