@@ -88,7 +88,7 @@ jobs:
         run: pipenv --version
 
       - name: Create a Pipenv Environment
-        run: pipenv shell
+        run: pipenv install
 
       - name: Install virtualenvwrapper
         # Activation of the script doesn't work on mac for some reason (didn't check why yet)
