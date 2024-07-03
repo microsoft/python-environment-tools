@@ -506,7 +506,7 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
         locator.configure(&config);
     }
 
-    let env = resolve_environment(&executable, &locators).expect(
+    let env = resolve_environment(&executable, &locators, vec![project_dir.clone()]).expect(
         format!(
             "Failed to resolve environment using `resolve` for {:?}",
             environment
