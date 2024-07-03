@@ -70,10 +70,10 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
                 .managers
                 .clone()
                 .into_iter()
-                .map(|(k, v)| (format!("{:?}", k), v))
+                .map(|(k, v)| (format!("{k:?}"), v))
                 .collect::<BTreeMap<String, u16>>()
             {
-                println!("{:<20} : {:?}", k, v);
+                println!("{k:<20} : {v:?}");
             }
             println!()
         }
@@ -83,16 +83,16 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
                 .clone()
                 .iter()
                 .fold(0, |total, b| total + b.1);
-            println!("Environments ({}):", total);
+            println!("Environments ({total}):");
             println!("------------------");
             for (k, v) in summary
                 .environments
                 .clone()
                 .into_iter()
-                .map(|(k, v)| (format!("{:?}", k), v))
+                .map(|(k, v)| (format!("{k:?}"), v))
                 .collect::<BTreeMap<String, u16>>()
             {
-                println!("{:<20} : {:?}", k, v);
+                println!("{k:<20} : {v:?}");
             }
             println!()
         }

@@ -156,8 +156,7 @@ fn check_if_virtualenvwrapper_exists() {
                     .unwrap_or_default()
                     .contains("venv_wrapper_env1")
         ),
-        "Virtualenvwrapper environment not found, found: {:?}",
-        environments
+        "Virtualenvwrapper environment not found, found: {environments:?}"
     );
 }
 
@@ -192,7 +191,7 @@ fn check_if_pipenv_exists() {
             env.category == PythonEnvironmentCategory::Pipenv
                 && env.project == Some(project_dir.clone())
         })
-        .expect(format!("Pipenv environment not found, found {:?}", environments).as_str());
+        .expect(format!("Pipenv environment not found, found {environments:?}").as_str());
 }
 
 #[cfg(unix)]
@@ -236,8 +235,7 @@ fn check_if_pyenv_virtualenv_exists() {
                     .unwrap_or_default()
                     .contains("pyenv-virtualenv-env1")
         ),
-        "pyenv-virtualenv environment not found, found: {:?}",
-        environments
+        "pyenv-virtualenv environment not found, found: {environments:?}"
     );
 }
 
@@ -355,8 +353,7 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     )
     .expect(
         format!(
-            "Failed to resolve environment using `resolve` for {:?}",
-            environment
+            "Failed to resolve environment using `resolve` for {environment:?}"
         )
         .as_str(),
     );
@@ -370,7 +367,7 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     compare_environments(
         resolved,
         environment,
-        format!("try_from using exe {:?}", executable).as_str(),
+        format!("try_from using exe {executable:?}").as_str(),
     );
 }
 
@@ -381,10 +378,7 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
     assert_eq!(
         actual.category,
         expected.clone().category,
-        "Category mismatch when using {} for {:?} and {:?}",
-        method,
-        expected,
-        actual
+        "Category mismatch when using {method} for {expected:?} and {actual:?}"
     );
 
     // if env.category != environment.clone().category {
@@ -504,8 +498,7 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
 
     assert_eq!(
         actual, expected,
-        "Environment mismatch when using {} for {:?}",
-        method, expected
+        "Environment mismatch when using {method} for {expected:?}"
     );
 
     // if env != environment {
@@ -542,8 +535,7 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
 
     let env = resolve_environment(&executable, &locators, vec![project_dir.clone()]).expect(
         format!(
-            "Failed to resolve environment using `resolve` for {:?}",
-            environment
+            "Failed to resolve environment using `resolve` for {environment:?}"
         )
         .as_str(),
     );
@@ -563,7 +555,7 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     compare_environments(
         env.resolved.unwrap(),
         environment,
-        format!("resolve using exe {:?}", executable).as_str(),
+        format!("resolve using exe {executable:?}").as_str(),
     );
 }
 
@@ -619,8 +611,7 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
                     let parent_of_symlink = symlink.parent().unwrap().to_path_buf();
                     if other_bins.contains(&parent_of_symlink) {
                         panic!(
-                            "Python environment {:?} cannot have a symlinks in {:?}",
-                            bin_python, other_bins
+                            "Python environment {bin_python:?} cannot have a symlinks in {other_bins:?}"
                         );
                     }
                 }
@@ -696,7 +687,7 @@ fn get_python_interpreter_info(cli: &Vec<String>) -> InterpreterInfo {
     let output = std::process::Command::new(cli.first().unwrap())
         .args(&cli[1..])
         .output()
-        .expect(format!("Failed to execute command {:?}", cli).as_str());
+        .expect(format!("Failed to execute command {cli:?}").as_str());
     let output = String::from_utf8(output.stdout).unwrap();
     let output = output
         .split_once("503bebe7-c838-4cea-a1bc-0f2963bcb657")

@@ -190,7 +190,7 @@ pub fn generate_env_name(name: &str, cwd: &PathBuf) -> String {
         .chars()
         .take(8)
         .collect::<String>();
-    format!("{}-{}-py", sanitized_name, h_str)
+    format!("{sanitized_name}-{h_str}-py")
 }
 
 #[cfg(test)]

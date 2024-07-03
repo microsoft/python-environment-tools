@@ -183,7 +183,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                     send_error(
                         Some(id),
                         -4,
-                        format!("Failed to resolve env {:?}", executable),
+                        format!("Failed to resolve env {executable:?}"),
                     );
                 }
             });
@@ -193,7 +193,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
             send_error(
                 Some(id),
                 -4,
-                format!("Failed to parse request {:?}: {}", params, e),
+                format!("Failed to parse request {params:?}: {e}"),
             );
         }
     }

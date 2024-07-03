@@ -33,7 +33,7 @@ pub enum PythonEnvironmentCategory {
 }
 impl Ord for PythonEnvironmentCategory {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        format!("{:?}", self).cmp(&format!("{:?}", other))
+        format!("{self:?}").cmp(&format!("{other:?}"))
     }
 }
 impl PartialOrd for PythonEnvironmentCategory {
@@ -140,17 +140,17 @@ impl std::fmt::Display for PythonEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "Environment ({:?})", self.category).unwrap_or_default();
         if let Some(name) = &self.display_name {
-            writeln!(f, "   Display-Name: {}", name).unwrap_or_default();
+            writeln!(f, "   Display-Name: {name}").unwrap_or_default();
         }
         if let Some(name) = &self.name {
-            writeln!(f, "   Name        : {}", name).unwrap_or_default();
+            writeln!(f, "   Name        : {name}").unwrap_or_default();
         }
         if let Some(exe) = &self.executable {
             writeln!(f, "   Executable  : {}", exe.to_str().unwrap_or_default())
                 .unwrap_or_default();
         }
         if let Some(version) = &self.version {
-            writeln!(f, "   Version     : {}", version).unwrap_or_default();
+            writeln!(f, "   Version     : {version}").unwrap_or_default();
         }
         if let Some(prefix) = &self.prefix {
             writeln!(
@@ -167,7 +167,7 @@ impl std::fmt::Display for PythonEnvironment {
             writeln!(f, "   Search Path : {}", search_path.to_str().unwrap()).unwrap_or_default();
         }
         if let Some(arch) = &self.arch {
-            writeln!(f, "   Architecture: {}", arch).unwrap_or_default();
+            writeln!(f, "   Architecture: {arch}").unwrap_or_default();
         }
         if let Some(manager) = &self.manager {
             writeln!(
@@ -190,9 +190,9 @@ impl std::fmt::Display for PythonEnvironment {
             if !symlinks.is_empty() {
                 for (i, symlink) in symlinks.iter().enumerate() {
                     if i == 0 {
-                        writeln!(f, "   Symlinks    : {:?}", symlink).unwrap_or_default();
+                        writeln!(f, "   Symlinks    : {symlink:?}").unwrap_or_default();
                     } else {
-                        writeln!(f, "               : {:?}", symlink).unwrap_or_default();
+                        writeln!(f, "               : {symlink:?}").unwrap_or_default();
                     }
                 }
             }

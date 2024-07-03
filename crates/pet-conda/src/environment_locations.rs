@@ -258,12 +258,12 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         "", // We need to look in `/anaconda3` and `/miniconda3` as well.
     ];
     for directory in directories_to_look_in.iter() {
-        known_paths.push(PathBuf::from(format!("{}/anaconda", directory)));
-        known_paths.push(PathBuf::from(format!("{}/anaconda3", directory)));
-        known_paths.push(PathBuf::from(format!("{}/miniconda", directory)));
-        known_paths.push(PathBuf::from(format!("{}/miniconda3", directory)));
-        known_paths.push(PathBuf::from(format!("{}/miniforge", directory)));
-        known_paths.push(PathBuf::from(format!("{}/miniforge3", directory)));
+        known_paths.push(PathBuf::from(format!("{directory}/anaconda")));
+        known_paths.push(PathBuf::from(format!("{directory}/anaconda3")));
+        known_paths.push(PathBuf::from(format!("{directory}/miniconda")));
+        known_paths.push(PathBuf::from(format!("{directory}/miniconda3")));
+        known_paths.push(PathBuf::from(format!("{directory}/miniforge")));
+        known_paths.push(PathBuf::from(format!("{directory}/miniforge3")));
     }
     if let Some(ref conda_root) = env_vars.conda_root {
         known_paths.push(PathBuf::from(conda_root.clone()));
