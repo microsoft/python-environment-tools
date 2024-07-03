@@ -11,7 +11,7 @@ use pet_core::{
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
 
-use crate::locators::identify_python_environment_using_locators;
+use crate::locators::{identify_and_set_search_path, identify_python_environment_using_locators};
 
 #[derive(Debug)]
 pub struct ResolvedEnvironment {
@@ -22,15 +22,17 @@ pub struct ResolvedEnvironment {
 pub fn resolve_environment(
     executable: &PathBuf,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
+    search_paths: Vec<PathBuf>,
 ) -> Option<ResolvedEnvironment> {
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);
     let environment = EnvironmentApi::new();
     let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(&environment);
 
-    if let Some(env) =
-        identify_python_environment_using_locators(&env, locators, &global_env_search_paths)
+    if let Some(mut env) =
+        identify_python_environment_using_locators(&env, locators, &global_env_search_paths, None)
     {
+        identify_and_set_search_path(&mut env, &search_paths);
         // Ok we got the environment.
         // Now try to resolve this fully, by spawning python.
         if let Some(ref executable) = env.executable {

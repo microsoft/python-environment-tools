@@ -149,11 +149,15 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
     match serde_json::from_value::<ResolveOptions>(params.clone()) {
         Ok(request_options) => {
             let executable = request_options.executable.clone();
+            let search_paths = context.configuration.read().unwrap().clone().search_paths;
+            let search_paths = search_paths.unwrap_or_default();
             // Start in a new thread, we can have multiple resolve requests.
             thread::spawn(move || {
                 let now = SystemTime::now();
                 trace!("Resolving env {:?}", executable);
-                if let Some(result) = resolve_environment(&executable, &context.locators) {
+                if let Some(result) =
+                    resolve_environment(&executable, &context.locators, search_paths)
+                {
                     if let Some(resolved) = result.resolved {
                         // Gather telemetry of this resolved env and see what we got wrong.
                         let _ = report_inaccuracies_identified_after_resolving(

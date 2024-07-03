@@ -140,8 +140,8 @@ impl Locator for Poetry {
     }
     fn configure(&self, config: &Configuration) {
         if let Some(search_paths) = &config.search_paths {
+            self.project_dirs.lock().unwrap().clear();
             if !search_paths.is_empty() {
-                self.project_dirs.lock().unwrap().clear();
                 self.project_dirs
                     .lock()
                     .unwrap()
