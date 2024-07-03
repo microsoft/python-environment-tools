@@ -161,6 +161,40 @@ fn check_if_virtualenvwrapper_exists() {
     );
 }
 
+#[cfg_attr(feature = "ci", test)]
+#[allow(dead_code)]
+fn check_if_pipenv_exists() {
+    use pet::{find::find_and_report_envs, locators::create_locators};
+    use pet_conda::Conda;
+    use pet_core::os_environment::EnvironmentApi;
+    use pet_reporter::test;
+    use std::{env, sync::Arc};
+
+    setup();
+    let reporter = test::create_reporter();
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
+
+    find_and_report_envs(
+        &reporter,
+        Default::default(),
+        &create_locators(conda_locator.clone()),
+        conda_locator,
+    );
+
+    let result = reporter.get_result();
+    let environments = result.environments;
+
+    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    environments
+        .iter()
+        .find(|env| {
+            env.category == PythonEnvironmentCategory::Pipenv
+                && env.project == Some(project_dir.clone())
+        })
+        .expect(format!("Pipenv environment not found, found {:?}", environments).as_str());
+}
+
 #[cfg(unix)]
 #[cfg(target_os = "linux")]
 #[cfg_attr(feature = "ci", test)]
