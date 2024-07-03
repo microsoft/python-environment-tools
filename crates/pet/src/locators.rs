@@ -163,6 +163,12 @@ pub fn identify_and_set_search_path(env: &mut PythonEnvironment, search_path: &V
     if search_path.is_empty() || env.project.is_some() {
         return;
     }
+
+    // All other environments generally need to be found globally,
+    // If we end up with some env thats not found globally, but only found in a special folder for some reason,
+    // then thats a weird situation, either way, when we cache the result it will re-appear (however for all other workspaces as well)
+    // Thats fine for now (if users complain then we'll find out that there's a problem and we can fix it then).
+    // Else no need to try and identify/fix edge cases that may not exist.
     if env.category == PythonEnvironmentCategory::Conda
         || env.category == PythonEnvironmentCategory::Venv
         || env.category == PythonEnvironmentCategory::VirtualEnv
