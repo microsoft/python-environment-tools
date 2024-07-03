@@ -29,7 +29,7 @@ pub fn resolve_environment(
     let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(&environment);
 
     if let Some(env) =
-        identify_python_environment_using_locators(&env, locators, &global_env_search_paths)
+        identify_python_environment_using_locators(&env, locators, &global_env_search_paths, None)
     {
         // Ok we got the environment.
         // Now try to resolve this fully, by spawning python.

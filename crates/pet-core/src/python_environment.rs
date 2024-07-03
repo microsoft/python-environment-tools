@@ -71,6 +71,10 @@ pub struct PythonEnvironment {
     // Some of the known symlinks for the environment.
     // E.g. in the case of Homebrew there are a number of symlinks that are created.
     pub symlinks: Option<Vec<PathBuf>>,
+    /// The folder/path that was searched to find this environment.
+    /// Generally applies to workspace folder, and means that the environment was found in this folder or is related to this folder.
+    /// Similar in meaqning to `project` but is more of a search path.
+    pub search_path: Option<PathBuf>,
 }
 
 impl Ord for PythonEnvironment {
@@ -109,6 +113,7 @@ impl Default for PythonEnvironment {
             project: None,
             arch: None,
             symlinks: None,
+            search_path: None,
         }
     }
 }
@@ -159,6 +164,9 @@ impl std::fmt::Display for PythonEnvironment {
         if let Some(project) = &self.project {
             writeln!(f, "   Project     : {}", project.to_str().unwrap()).unwrap_or_default();
         }
+        if let Some(search_path) = &self.search_path {
+            writeln!(f, "   Search Path : {}", search_path.to_str().unwrap()).unwrap_or_default();
+        }
         if let Some(arch) = &self.arch {
             writeln!(f, "   Architecture: {}", arch).unwrap_or_default();
         }
@@ -208,6 +216,7 @@ pub struct PythonEnvironmentBuilder {
     project: Option<PathBuf>,
     arch: Option<Architecture>,
     symlinks: Option<Vec<PathBuf>>,
+    search_path: Option<PathBuf>,
 }
 
 impl PythonEnvironmentBuilder {
@@ -223,6 +232,7 @@ impl PythonEnvironmentBuilder {
             project: None,
             arch: None,
             symlinks: None,
+            search_path: None,
         }
     }
 
@@ -285,6 +295,11 @@ impl PythonEnvironmentBuilder {
         self
     }
 
+    pub fn search_path(mut self, search_path: Option<PathBuf>) -> Self {
+        self.search_path = search_path;
+        self
+    }
+
     fn update_symlinks_and_exe(&mut self, symlinks: Option<Vec<PathBuf>>) {
         let mut all = vec![];
         if let Some(ref exe) = self.executable {
@@ -337,6 +352,7 @@ impl PythonEnvironmentBuilder {
             manager: self.manager,
             project: self.project,
             arch: self.arch,
+            search_path: self.search_path,
             symlinks,
         }
     }

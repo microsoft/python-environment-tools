@@ -109,6 +109,7 @@ pub fn find_and_report_envs(
                 locators,
                 false,
                 &global_env_search_paths,
+                None,
             );
             summary.lock().unwrap().find_path_time = start.elapsed();
         });
@@ -138,6 +139,7 @@ pub fn find_and_report_envs(
                 locators,
                 false,
                 &global_env_search_paths,
+                None,
             );
             summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
         });
@@ -161,8 +163,6 @@ pub fn find_and_report_envs(
                 search_paths,
                 reporter,
                 locators,
-                0,
-                1,
             );
             summary.lock().unwrap().find_search_paths_time = start.elapsed();
         });
@@ -173,61 +173,50 @@ pub fn find_and_report_envs(
 }
 
 fn find_python_environments_in_workspace_folders_recursive(
-    paths: Vec<PathBuf>,
+    workspace_folders: Vec<PathBuf>,
     reporter: &dyn Reporter,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
-    depth: u32,
-    max_depth: u32,
 ) {
     thread::scope(|s| {
-        // Find in cwd
-        let paths1 = paths.clone();
         s.spawn(|| {
-            find_python_environments(paths1, reporter, locators, true, &[]);
-
-            if depth >= max_depth {
-                return;
-            }
-
             let bin = if cfg!(windows) { "Scripts" } else { "bin" };
-            // If the folder has a bin or scripts, then ignore it, its most likely an env.
-            // I.e. no point looking for python environments in a Python environment.
-            let paths = paths
-                .into_iter()
-                .filter(|p| !p.join(bin).exists())
-                .collect::<Vec<PathBuf>>();
+            for workspace_folder in workspace_folders {
+                find_python_environments_in_paths_with_locators(
+                    vec![
+                        // Possible this is a virtual env
+                        workspace_folder.clone(),
+                        // Optimize for finding these first.
+                        workspace_folder.join(".venv"),
+                        // Optimize for finding these first.
+                        workspace_folder.join(".conda"),
+                    ],
+                    locators,
+                    reporter,
+                    true,
+                    &[],
+                    Some(workspace_folder.clone()),
+                );
 
-            for path in paths {
-                if let Ok(reader) = fs::read_dir(&path) {
-                    let reader = reader
+                if workspace_folder.join(bin).exists() {
+                    // If the folder has a bin or scripts, then ignore it, its most likely an env.
+                    // I.e. no point looking for python environments in a Python environment.
+                    continue;
+                }
+
+                if let Ok(reader) = fs::read_dir(&workspace_folder) {
+                    for folder in reader
                         .filter_map(Result::ok)
                         .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
                         .map(|p| p.path())
-                        .filter(should_search_for_environments_in_path);
-
-                    // Take a batch of 20 items at a time.
-                    let reader = reader.fold(vec![], |f, a| {
-                        let mut f = f;
-                        if f.is_empty() {
-                            f.push(vec![a]);
-                            return f;
-                        }
-                        let last_item = f.last_mut().unwrap();
-                        if last_item.is_empty() || last_item.len() < 20 {
-                            last_item.push(a);
-                            return f;
-                        }
-                        f.push(vec![a]);
-                        f
-                    });
-
-                    for entry in reader {
-                        find_python_environments_in_workspace_folders_recursive(
-                            entry,
+                        .filter(should_search_for_environments_in_path)
+                    {
+                        find_python_environments(
+                            vec![folder],
                             reporter,
                             locators,
-                            depth + 1,
-                            max_depth,
+                            true,
+                            &[],
+                            Some(workspace_folder.clone()),
                         );
                     }
                 }
@@ -242,22 +231,23 @@ fn find_python_environments(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     is_workspace_folder: bool,
     global_env_search_paths: &[PathBuf],
+    search_path: Option<PathBuf>,
 ) {
     if paths.is_empty() {
         return;
     }
     thread::scope(|s| {
-        let chunks = if is_workspace_folder { paths.len() } else { 1 };
-        for item in paths.chunks(chunks) {
-            let lst = item.to_vec().clone();
+        for item in paths {
             let locators = locators.clone();
+            let search_path = search_path.clone();
             s.spawn(move || {
                 find_python_environments_in_paths_with_locators(
-                    lst,
+                    vec![item],
                     &locators,
                     reporter,
                     is_workspace_folder,
                     global_env_search_paths,
+                    search_path,
                 );
             });
         }
@@ -270,41 +260,45 @@ fn find_python_environments_in_paths_with_locators(
     reporter: &dyn Reporter,
     is_workspace_folder: bool,
     global_env_search_paths: &[PathBuf],
+    search_path: Option<PathBuf>,
 ) {
-    let executables = if is_workspace_folder {
-        // If we're in a workspace folder, then we only need to look for bin/python or bin/python.exe
-        // As workspace folders generally have either virtual env or conda env or the like.
-        // They will not have environments that will ONLY have a file like `bin/python3`.
-        // I.e. bin/python will almost always exist.
-        paths
-            .iter()
-            // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
-            // Hence do not just look for files in a bin directory of the path.
-            .flat_map(|p| find_executable(p))
-            .filter_map(Option::Some)
-            .collect::<Vec<PathBuf>>()
-    } else {
-        paths
-            .iter()
-            // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
-            // Hence do not just look for files in a bin directory of the path.
-            .flat_map(find_executables)
-            .filter(|p| {
-                // Exclude python2 on macOS
-                if std::env::consts::OS == "macos" {
-                    return p.to_str().unwrap_or_default() != "/usr/bin/python2";
-                }
-                true
-            })
-            .collect::<Vec<PathBuf>>()
-    };
+    for path in paths {
+        let executables = if is_workspace_folder {
+            // If we're in a workspace folder, then we only need to look for bin/python or bin/python.exe
+            // As workspace folders generally have either virtual env or conda env or the like.
+            // They will not have environments that will ONLY have a file like `bin/python3`.
+            // I.e. bin/python will almost always exist.
 
-    identify_python_executables_using_locators(
-        executables,
-        locators,
-        reporter,
-        global_env_search_paths,
-    );
+            // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
+            // Hence do not just look for files in a bin directory of the path.
+            if let Some(executable) = find_executable(&path) {
+                vec![executable]
+            } else {
+                vec![]
+            }
+        } else {
+            // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
+            // Hence do not just look for files in a bin directory of the path.
+            find_executables(path)
+                .into_iter()
+                .filter(|p| {
+                    // Exclude python2 on macOS
+                    if std::env::consts::OS == "macos" {
+                        return p.to_str().unwrap_or_default() != "/usr/bin/python2";
+                    }
+                    true
+                })
+                .collect::<Vec<PathBuf>>()
+        };
+
+        identify_python_executables_using_locators(
+            executables,
+            locators,
+            reporter,
+            global_env_search_paths,
+            search_path.clone(),
+        );
+    }
 }
 
 fn identify_python_executables_using_locators(
@@ -312,13 +306,17 @@ fn identify_python_executables_using_locators(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     reporter: &dyn Reporter,
     global_env_search_paths: &[PathBuf],
+    search_path: Option<PathBuf>,
 ) {
     for exe in executables.into_iter() {
         let executable = exe.clone();
         let env = PythonEnv::new(exe.to_owned(), None, None);
-        if let Some(env) =
-            identify_python_environment_using_locators(&env, locators, global_env_search_paths)
-        {
+        if let Some(env) = identify_python_environment_using_locators(
+            &env,
+            locators,
+            global_env_search_paths,
+            search_path.clone(),
+        ) {
             reporter.report_environment(&env);
             if let Some(manager) = env.manager {
                 reporter.report_manager(&manager);

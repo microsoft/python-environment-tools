@@ -80,16 +80,24 @@ pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> 
     Arc::new(locators)
 }
 
+/// Identify the Python environment using the locators.
+/// search_path : Generally refers to original folder that was being searched when the env was found.
 pub fn identify_python_environment_using_locators(
     env: &PythonEnv,
     locators: &[Arc<dyn Locator>],
     global_env_search_paths: &[PathBuf],
+    search_path: Option<PathBuf>,
 ) -> Option<PythonEnvironment> {
     let executable = env.executable.clone();
-    if let Some(env) = locators.iter().fold(
-        None,
-        |e, loc| if e.is_some() { e } else { loc.try_from(env) },
-    ) {
+    if let Some(mut env) =
+        locators.iter().fold(
+            None,
+            |e, loc| if e.is_some() { e } else { loc.try_from(env) },
+        )
+    {
+        if env.project.is_none() {
+            env.search_path = search_path;
+        }
         return Some(env);
     }
 
@@ -98,7 +106,7 @@ pub fn identify_python_environment_using_locators(
     // We try to get the interpreter info, hoping that the real exe returned might be identifiable.
     if let Some(resolved_env) = ResolvedPythonEnv::from(&executable) {
         let env = resolved_env.to_python_env();
-        if let Some(env) =
+        if let Some(mut env) =
             locators.iter().fold(
                 None,
                 |e, loc| if e.is_some() { e } else { loc.try_from(&env) },
@@ -109,6 +117,9 @@ pub fn identify_python_environment_using_locators(
                 executable,
                 env.category
             );
+            if env.project.is_none() {
+                env.search_path = search_path;
+            }
             // TODO: Telemetry point.
             // As we had to spawn earlier.
             return Some(env);
@@ -136,7 +147,9 @@ pub fn identify_python_environment_using_locators(
                 "Unknown Env ({:?}) in Path resolved as {:?} and reported as {:?}",
                 executable, resolved_env, fallback_category
             );
-            return Some(create_unknown_env(resolved_env, fallback_category));
+            let mut env = create_unknown_env(resolved_env, fallback_category);
+            env.search_path = search_path;
+            return Some(env);
         }
     }
     None
