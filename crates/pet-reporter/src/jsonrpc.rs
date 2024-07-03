@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::{environment::Environment, manager::Manager};
 use env_logger::Builder;
 use log::{trace, LevelFilter};
 use pet_core::{manager::EnvManager, python_environment::PythonEnvironment, reporter::Reporter};
