@@ -12,7 +12,7 @@ use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
 };
-use pet_reporter::{cache::CacheReporter, environment::Environment, jsonrpc};
+use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
@@ -132,14 +132,14 @@ pub struct ResolveOptions {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ResolveResult {
-    environment: Environment,
+    environment: PythonEnvironment,
     duration: Option<u128>,
 }
 
 impl ResolveResult {
     fn new(env: &PythonEnvironment, duration: Result<Duration, SystemTimeError>) -> ResolveResult {
         ResolveResult {
-            environment: Environment::from(env),
+            environment: env.clone(),
             duration: duration.ok().map(|d| d.as_millis()),
         }
     }

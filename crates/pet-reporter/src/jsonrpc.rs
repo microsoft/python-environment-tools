@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::{environment::Environment, manager::Manager};
 use env_logger::Builder;
 use log::LevelFilter;
 use pet_core::{manager::EnvManager, python_environment::PythonEnvironment, reporter::Reporter};
@@ -12,11 +11,11 @@ pub struct JsonRpcReporter {}
 
 impl Reporter for JsonRpcReporter {
     fn report_manager(&self, manager: &EnvManager) {
-        send_message("manager", Manager::from(manager).into())
+        send_message("manager", manager.into())
     }
 
     fn report_environment(&self, env: &PythonEnvironment) {
-        send_message("environment", Environment::from(env).into())
+        send_message("environment", env.into())
     }
 }
 
