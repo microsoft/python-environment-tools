@@ -4,7 +4,10 @@
 use log::{error, trace};
 use pet_fs::path::norm_case;
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use crate::pyvenv_cfg::PyVenvCfg;
 
@@ -90,6 +93,7 @@ impl ResolvedPythonEnv {
     pub fn from(executable: &Path) -> Option<Self> {
         // Spawn the python exe and get the version, sys.prefix and sys.executable.
         let executable = executable.to_str()?;
+        let start = SystemTime::now();
         trace!("Executing Python: {} -c {}", executable, PYTHON_INFO_CMD);
         let result = std::process::Command::new(executable)
             .args(["-c", PYTHON_INFO_CMD])
@@ -98,8 +102,9 @@ impl ResolvedPythonEnv {
             Ok(output) => {
                 let output = String::from_utf8(output.stdout).unwrap().trim().to_string();
                 trace!(
-                    "Python Execution for {:?} produced an output {:?}",
+                    "Executed Python {:?} in {:?} & produced an output {:?}",
                     executable,
+                    start.elapsed(),
                     output
                 );
                 if let Some((_, output)) = output.split_once(PYTHON_INFO_JSON_SEPARATOR) {

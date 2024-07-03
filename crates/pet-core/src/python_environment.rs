@@ -3,7 +3,6 @@
 
 use log::error;
 use pet_fs::path::norm_case;
-use pet_python_utils::executable::get_shortest_executable;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -317,8 +316,10 @@ impl PythonEnvironmentBuilder {
             Some(all.clone())
         };
         if let Some(executable) = &self.executable {
-            self.executable =
-                Some(get_shortest_executable(&Some(all.clone())).unwrap_or(executable.clone()));
+            self.executable = Some(
+                get_shortest_executable(&self.category, &Some(all.clone()))
+                    .unwrap_or(executable.clone()),
+            );
         }
     }
 
@@ -338,9 +339,9 @@ impl PythonEnvironmentBuilder {
         } else {
             Some(all.clone())
         };
-        let executable = self
-            .executable
-            .map(|executable| get_shortest_executable(&Some(all.clone())).unwrap_or(executable));
+        let executable = self.executable.map(|executable| {
+            get_shortest_executable(&self.category, &Some(all.clone())).unwrap_or(executable)
+        });
 
         PythonEnvironment {
             display_name: self.display_name,
@@ -355,6 +356,43 @@ impl PythonEnvironmentBuilder {
             search_path: self.search_path,
             symlinks,
         }
+    }
+}
+
+// Given a list of executables, return the one with the shortest path.
+// The shortest path is the most likely to be most user friendly.
+fn get_shortest_executable(
+    category: &PythonEnvironmentCategory,
+    exes: &Option<Vec<PathBuf>>,
+) -> Option<PathBuf> {
+    // For windows store, the exe should always be the one in the WindowsApps folder.
+    if *category == PythonEnvironmentCategory::WindowsStore {
+        if let Some(exes) = exes {
+            if let Some(exe) = exes.iter().find(|e| {
+                e.to_string_lossy().contains("AppData")
+                    && e.to_string_lossy().contains("Local")
+                    && e.to_string_lossy().contains("Microsoft")
+                    && e.to_string_lossy().contains("WindowsApps")
+            }) {
+                return Some(exe.clone());
+            }
+        }
+    }
+
+    // Ensure the executable always points to the shorted path.
+    if let Some(mut exes) = exes.clone() {
+        exes.sort_by(|a, b| {
+            a.to_str()
+                .unwrap_or_default()
+                .len()
+                .cmp(&b.to_str().unwrap_or_default().len())
+        });
+        if exes.is_empty() {
+            return None;
+        }
+        Some(exes[0].clone())
+    } else {
+        None
     }
 }
 

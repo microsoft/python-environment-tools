@@ -166,11 +166,12 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                             &resolved,
                         );
 
+                        trace!("Resolved env {:?} as {:?}", executable, resolved);
                         send_reply(id, Some(ResolveResult::new(&resolved, now.elapsed())));
                     } else {
                         error!(
-                            "Failed to resolve env, returning discovered env {:?}",
-                            executable
+                            "Failed to resolve env {:?}, returning discovered env {:?}",
+                            executable, result.discovered
                         );
                         send_reply(
                             id,
