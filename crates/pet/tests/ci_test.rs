@@ -303,7 +303,8 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     let os_environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&os_environment));
     let mut config = Configuration::default();
-    config.search_paths = Some(vec![project_dir.clone()]);
+    let search_paths = vec![project_dir.clone()];
+    config.search_paths = Some(search_paths.clone());
     let locators = create_locators(conda_locator.clone());
     for locator in locators.iter() {
         locator.configure(&config);
@@ -312,15 +313,19 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
         get_search_paths_from_env_variables(&os_environment);
 
     let env = PythonEnv::new(executable.clone(), None, None);
-    let resolved =
-        identify_python_environment_using_locators(&env, &locators, &global_env_search_paths, None)
-            .expect(
-                format!(
-                    "Failed to resolve environment using `resolve` for {:?}",
-                    environment
-                )
-                .as_str(),
-            );
+    let resolved = identify_python_environment_using_locators(
+        &env,
+        &locators,
+        &global_env_search_paths,
+        Some(project_dir.clone()),
+    )
+    .expect(
+        format!(
+            "Failed to resolve environment using `resolve` for {:?}",
+            environment
+        )
+        .as_str(),
+    );
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
