@@ -89,15 +89,18 @@ pub fn identify_python_environment_using_locators(
     search_path: Option<PathBuf>,
 ) -> Option<PythonEnvironment> {
     let executable = env.executable.clone();
+    let search_paths = if let Some(search_path) = search_path {
+        vec![search_path]
+    } else {
+        vec![]
+    };
     if let Some(mut env) =
         locators.iter().fold(
             None,
             |e, loc| if e.is_some() { e } else { loc.try_from(env) },
         )
     {
-        if env.project.is_none() {
-            env.search_path = search_path;
-        }
+        identify_and_set_search_path(&mut env, &search_paths);
         return Some(env);
     }
 
@@ -117,9 +120,7 @@ pub fn identify_python_environment_using_locators(
                 executable,
                 env.category
             );
-            if env.project.is_none() {
-                env.search_path = search_path;
-            }
+            identify_and_set_search_path(&mut env, &search_paths);
             // TODO: Telemetry point.
             // As we had to spawn earlier.
             return Some(env);
@@ -148,11 +149,33 @@ pub fn identify_python_environment_using_locators(
                 executable, resolved_env, fallback_category
             );
             let mut env = create_unknown_env(resolved_env, fallback_category);
-            env.search_path = search_path;
+            identify_and_set_search_path(&mut env, &search_paths);
             return Some(env);
         }
     }
     None
+}
+
+/// Assume we found a .venv environment, generally these are specific to a workspace folder, i.e. they belong in a worksapce folder.
+/// If thats the case then verify this by checking if the workspace folder is a parent of the prefix (.venv folder).
+/// If it is, and there is not project set, then set the search_path to the workspace folder.
+pub fn identify_and_set_search_path(env: &mut PythonEnvironment, search_path: &Vec<PathBuf>) {
+    if search_path.is_empty() || env.project.is_some() {
+        return;
+    }
+    if env.category == PythonEnvironmentCategory::Conda
+        || env.category == PythonEnvironmentCategory::Venv
+        || env.category == PythonEnvironmentCategory::VirtualEnv
+    {
+        if let Some(prefix) = &env.prefix {
+            for path in search_path {
+                if path.starts_with(prefix) {
+                    env.search_path = Some(path.clone());
+                    break;
+                }
+            }
+        }
+    }
 }
 
 fn create_unknown_env(
