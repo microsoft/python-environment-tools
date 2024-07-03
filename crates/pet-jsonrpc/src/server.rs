@@ -84,9 +84,7 @@ impl<C> HandlersKeyedByMethodName<C> {
                 send_error(
                     None,
                     -3,
-                    format!(
-                        "Failed to extract method from JSONRPC payload {message:?}"
-                    ),
+                    format!("Failed to extract method from JSONRPC payload {message:?}"),
                 );
             }
         };
@@ -120,9 +118,7 @@ pub fn start_server<C>(handlers: &HandlersKeyedByMethodName<C>) -> ! {
                                 continue;
                             }
                             Err(err) => {
-                                eprint!(
-                                    "Failed to read exactly {content_length} bytes, {err:?}"
-                                )
+                                eprint!("Failed to read exactly {content_length} bytes, {err:?}")
                             }
                         }
                     }

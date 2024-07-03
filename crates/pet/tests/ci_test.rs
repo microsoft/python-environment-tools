@@ -351,12 +351,7 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
         &global_env_search_paths,
         Some(project_dir.clone()),
     )
-    .expect(
-        format!(
-            "Failed to resolve environment using `resolve` for {environment:?}"
-        )
-        .as_str(),
-    );
+    .expect(format!("Failed to resolve environment using `resolve` for {environment:?}").as_str());
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
@@ -534,10 +529,7 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     }
 
     let env = resolve_environment(&executable, &locators, vec![project_dir.clone()]).expect(
-        format!(
-            "Failed to resolve environment using `resolve` for {environment:?}"
-        )
-        .as_str(),
+        format!("Failed to resolve environment using `resolve` for {environment:?}").as_str(),
     );
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
