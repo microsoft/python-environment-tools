@@ -69,7 +69,7 @@ fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
     // From above link > Homebrew installs formulae to the Cellar at $(brew --cellar)
     // and then symlinks some of the installation into the prefix at $(brew --prefix) (e.g. /opt/homebrew) so that other programs can see what’s going on.
     // Hence look in `Cellar` directory
-    if resolved_file.starts_with("/opt/homebrew/Cellar") {
+    if resolved_file.starts_with("/opt/homebrew") {
         // Symlink  - /opt/homebrew/bin/python3.12
         // Symlink  - /opt/homebrew/opt/python3/bin/python3.12
         // Symlink  - /opt/homebrew/opt/python@3.12/bin/python3.12
