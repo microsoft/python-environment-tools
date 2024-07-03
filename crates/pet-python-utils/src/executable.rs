@@ -112,26 +112,6 @@ fn is_python_executable_name(exe: &Path) -> bool {
     }
 }
 
-// Given a list of executables, return the one with the shortest path.
-// The shortest path is the most likely to be most user friendly.
-pub fn get_shortest_executable(exes: &Option<Vec<PathBuf>>) -> Option<PathBuf> {
-    // Ensure the executable always points to the shorted path.
-    if let Some(mut exes) = exes.clone() {
-        exes.sort_by(|a, b| {
-            a.to_str()
-                .unwrap_or_default()
-                .len()
-                .cmp(&b.to_str().unwrap_or_default().len())
-        });
-        if exes.is_empty() {
-            return None;
-        }
-        Some(exes[0].clone())
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,7 +5,9 @@ use std::{path::PathBuf, sync::Arc};
 
 use log::{trace, warn};
 use pet_core::{
-    arch::Architecture, os_environment::EnvironmentApi, python_environment::PythonEnvironment,
+    arch::Architecture,
+    os_environment::EnvironmentApi,
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder},
     Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
@@ -43,22 +45,32 @@ pub fn resolve_environment(
                     info
                 );
                 let discovered = env.clone();
-                let mut resolved = env.clone();
-                let mut symlinks = resolved.symlinks.clone().unwrap_or_default();
-
+                let mut symlinks = env.symlinks.clone().unwrap_or_default();
                 symlinks.push(info.executable.clone());
                 symlinks.append(&mut info.symlink.clone().unwrap_or_default());
                 symlinks.sort();
                 symlinks.dedup();
 
-                resolved.symlinks = Some(symlinks);
-                resolved.version = Some(info.version);
-                resolved.prefix = Some(info.prefix);
-                resolved.arch = Some(if info.is64_bit {
+                let version = Some(info.version);
+                let prefix = Some(info.prefix);
+                let arch = Some(if info.is64_bit {
                     Architecture::X64
                 } else {
                     Architecture::X86
                 });
+
+                let resolved = PythonEnvironmentBuilder::new(env.category)
+                    .arch(arch)
+                    .display_name(env.display_name)
+                    .executable(Some(info.executable))
+                    .manager(env.manager)
+                    .name(env.name)
+                    .prefix(prefix)
+                    .project(env.project)
+                    .search_path(env.search_path)
+                    .symlinks(Some(symlinks))
+                    .version(version)
+                    .build();
 
                 Some(ResolvedEnvironment {
                     discovered,

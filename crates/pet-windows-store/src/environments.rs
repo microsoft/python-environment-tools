@@ -63,14 +63,15 @@ impl PotentialPython {
                 } else {
                     None
                 })
-                .version(Some(self.version.clone()))
+                // We only have the partial version, no point returning bogus info.
+                // .version(Some(self.version.clone()))
                 .symlinks(Some(vec![
-                    parent.join(format!("python{:?}.exe", self.version)),
+                    parent.join(format!("python{}.exe", self.version)),
                     path.join("python.exe"),
                     path.join("python3.exe"),
-                    path.join(format!("python{:?}.exe", self.version)),
+                    path.join(format!("python{}.exe", self.version)),
                     env_path.join("python.exe"),
-                    env_path.join(format!("python{:?}.exe", self.version)),
+                    env_path.join(format!("python{}.exe", self.version)),
                 ]))
                 .build(),
             )
