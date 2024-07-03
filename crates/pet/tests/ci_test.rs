@@ -313,7 +313,7 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
 
     let env = PythonEnv::new(executable.clone(), None, None);
     let resolved =
-        identify_python_environment_using_locators(&env, &locators, &global_env_search_paths)
+        identify_python_environment_using_locators(&env, &locators, &global_env_search_paths, None)
             .expect(
                 format!(
                     "Failed to resolve environment using `resolve` for {:?}",
