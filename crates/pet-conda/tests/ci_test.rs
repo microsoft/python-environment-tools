@@ -74,7 +74,7 @@ fn detect_conda_root_from_path() {
         python_environment::PythonEnvironmentKind, Locator,
     };
     use pet_python_utils::env::PythonEnv;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     setup();
     let env = Arc::new(EnvironmentApi::new());
@@ -110,7 +110,7 @@ fn detect_new_conda_env() {
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
     use pet_reporter::test::create_reporter;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     setup();
     let env_name = "env_with_python";
@@ -168,7 +168,7 @@ fn detect_conda_env_from_path() {
         python_environment::PythonEnvironmentKind, Locator,
     };
     use pet_python_utils::env::PythonEnv;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     setup();
     let env = Arc::new(EnvironmentApi::new());
@@ -214,7 +214,7 @@ fn detect_new_conda_env_without_python() {
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
     use pet_reporter::test::create_reporter;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     setup();
     let env_name = "env_without_python";
@@ -259,6 +259,8 @@ fn detect_new_conda_env_without_python() {
 #[allow(dead_code)]
 // Detect envs created without Python in a custom directory using the -p flag
 fn detect_new_conda_env_created_with_p_flag_without_python() {
+    use std::sync::Arc;
+
     use common::resolve_test_path;
     use pet_conda::Conda;
     use pet_core::{
@@ -307,6 +309,8 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
 #[allow(dead_code)]
 // Detect envs created Python in a custom directory using the -p flag
 fn detect_new_conda_env_created_with_p_flag_with_python() {
+    use std::sync::Arc;
+
     use common::resolve_test_path;
     use pet_conda::Conda;
     use pet_core::{
