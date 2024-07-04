@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_core::{
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -36,8 +36,8 @@ impl Locator for Venv {
     fn get_name(&self) -> &'static str {
         "Venv"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::Venv]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::Venv]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -58,7 +58,7 @@ impl Locator for Venv {
                 symlinks.append(&mut find_executables(prefix));
             }
             Some(
-                PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Venv)
+                PythonEnvironmentBuilder::new(PythonEnvironmentKind::Venv)
                     .executable(Some(env.executable.clone()))
                     .version(version)
                     .prefix(prefix)

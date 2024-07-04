@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_core::{
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -31,8 +31,8 @@ impl Locator for MacXCode {
     fn get_name(&self) -> &'static str {
         "MacXCode"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::MacCommandLineTools]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::MacCommandLineTools]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -158,7 +158,7 @@ impl Locator for MacXCode {
         }
 
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacXCode)
+            PythonEnvironmentBuilder::new(PythonEnvironmentKind::MacXCode)
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(prefix)

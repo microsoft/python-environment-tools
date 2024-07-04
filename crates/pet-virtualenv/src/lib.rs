@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_core::{
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -74,8 +74,8 @@ impl Locator for VirtualEnv {
     fn get_name(&self) -> &'static str {
         "VirtualEnv"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::VirtualEnv]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::VirtualEnv]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -92,7 +92,7 @@ impl Locator for VirtualEnv {
                 symlinks.append(&mut find_executables(prefix));
             }
             Some(
-                PythonEnvironmentBuilder::new(PythonEnvironmentCategory::VirtualEnv)
+                PythonEnvironmentBuilder::new(PythonEnvironmentKind::VirtualEnv)
                     .executable(Some(env.executable.clone()))
                     .version(version)
                     .prefix(env.prefix.clone())

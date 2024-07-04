@@ -119,12 +119,12 @@ interface Environment {
    */
   executable?: string;
   /**
-   * The type/category of the environment.
+   * The kind of the environment.
    *
    * If an environment is discovered and the kind is not know, then `Unknown` is used.
    * I.e this is never Optional.
    */
-  category:
+  kind:
     | "Conda" // Conda environment
     | "Homebrew" // Homebrew installed Python
     | "Pyenv" // Pyenv installed Python

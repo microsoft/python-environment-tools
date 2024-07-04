@@ -27,7 +27,7 @@ fn verify_python_in_jupyter_contaner() {
         arch::Architecture,
         manager::{EnvManager, EnvManagerType},
         os_environment::EnvironmentApi,
-        python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+        python_environment::{PythonEnvironment, PythonEnvironmentKind},
     };
     use pet_reporter::test;
     use std::{path::PathBuf, sync::Arc};
@@ -49,7 +49,7 @@ fn verify_python_in_jupyter_contaner() {
     let environments = result.environments;
 
     let conda = PythonEnvironment {
-        category: PythonEnvironmentCategory::Conda,
+        kind: PythonEnvironmentKind::Conda,
         name: Some("base".to_string()),
         executable: Some(PathBuf::from("/opt/conda/bin/python")),
         prefix: Some(PathBuf::from("/opt/conda")),
@@ -69,7 +69,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
     let codespace_python = PythonEnvironment {
-        category: PythonEnvironmentCategory::GlobalPaths,
+        kind: PythonEnvironmentKind::GlobalPaths,
         executable: Some(PathBuf::from("/home/codespace/.python/current/bin/python")),
         prefix: Some(PathBuf::from("/usr/local/python/3.10.13")),
         version: Some("3.10.13.final.0".to_string()),
@@ -83,7 +83,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
     let current_python = PythonEnvironment {
-        category: PythonEnvironmentCategory::GlobalPaths,
+        kind: PythonEnvironmentKind::GlobalPaths,
         executable: Some(PathBuf::from("/usr/local/python/current/bin/python")),
         prefix: Some(PathBuf::from("/usr/local/python/3.10.13")),
         version: Some("3.10.13.final.0".to_string()),
@@ -97,7 +97,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
     let usr_bin_python = PythonEnvironment {
-        category: PythonEnvironmentCategory::LinuxGlobal,
+        kind: PythonEnvironmentKind::LinuxGlobal,
         executable: Some(PathBuf::from("/usr/bin/python3")),
         prefix: Some(PathBuf::from("/usr")),
         version: Some("3.8.10.final.0".to_string()),
@@ -110,7 +110,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
     let bin_python = PythonEnvironment {
-        category: PythonEnvironmentCategory::LinuxGlobal,
+        kind: PythonEnvironmentKind::LinuxGlobal,
         executable: Some(PathBuf::from("/bin/python3")),
         prefix: Some(PathBuf::from("/usr")),
         version: Some("3.8.10.final.0".to_string()),
@@ -141,8 +141,8 @@ fn verify_python_in_jupyter_contaner() {
             "Expected exe to be same when comparing {python_env:?} and {env:?}"
         );
         assert_eq!(
-            python_env.category, env.category,
-            "Expected category to be same when comparing {python_env:?} and {env:?}"
+            python_env.kind, env.kind,
+            "Expected kind to be same when comparing {python_env:?} and {env:?}"
         );
         assert_eq!(
             python_env.symlinks, env.symlinks,

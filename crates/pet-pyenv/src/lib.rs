@@ -15,7 +15,7 @@ use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{
     manager::{EnvManager, EnvManagerType},
     os_environment::Environment,
-    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -51,10 +51,10 @@ impl Locator for PyEnv {
     fn get_name(&self) -> &'static str {
         "PyEnv"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![
-            PythonEnvironmentCategory::Pyenv,
-            PythonEnvironmentCategory::PyenvVirtualEnv,
+            PythonEnvironmentKind::Pyenv,
+            PythonEnvironmentKind::PyenvVirtualEnv,
         ]
     }
 

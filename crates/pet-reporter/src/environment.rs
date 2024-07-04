@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use log::error;
-use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentCategory};
+use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use std::path::PathBuf;
 
 pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
@@ -10,7 +10,7 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
         Some(exe.clone())
     } else if let Some(prefix) = &env.prefix {
         // If this is a conda env without Python, then the exe will be prefix/bin/python
-        if env.category == PythonEnvironmentCategory::Conda {
+        if env.kind == PythonEnvironmentKind::Conda {
             Some(prefix.join("bin").join(if cfg!(windows) {
                 "python.exe"
             } else {

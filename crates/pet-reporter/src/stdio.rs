@@ -5,7 +5,7 @@ use env_logger::Builder;
 use log::LevelFilter;
 use pet_core::{
     manager::{EnvManager, EnvManagerType},
-    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
 };
 use serde::{Deserialize, Serialize};
@@ -17,12 +17,12 @@ use std::{
 pub struct StdioReporter {
     print_list: bool,
     managers: Arc<Mutex<HashMap<EnvManagerType, u16>>>,
-    environments: Arc<Mutex<HashMap<PythonEnvironmentCategory, u16>>>,
+    environments: Arc<Mutex<HashMap<PythonEnvironmentKind, u16>>>,
 }
 
 pub struct Summary {
     pub managers: HashMap<EnvManagerType, u16>,
-    pub environments: HashMap<PythonEnvironmentCategory, u16>,
+    pub environments: HashMap<PythonEnvironmentKind, u16>,
 }
 
 impl StdioReporter {
@@ -47,8 +47,8 @@ impl Reporter for StdioReporter {
 
     fn report_environment(&self, env: &PythonEnvironment) {
         let mut environments = self.environments.lock().unwrap();
-        let count = environments.get(&env.category).unwrap_or(&0) + 1;
-        environments.insert(env.category, count);
+        let count = environments.get(&env.kind).unwrap_or(&0) + 1;
+        environments.insert(env.kind, count);
         if self.print_list {
             println!("{env}")
         }

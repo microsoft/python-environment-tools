@@ -8,9 +8,7 @@ mod common;
 fn find_conda_env_without_manager() {
     use common::{create_test_environment, resolve_test_path};
     use pet_conda::Conda;
-    use pet_core::{
-        self, arch::Architecture, python_environment::PythonEnvironmentCategory, Locator,
-    };
+    use pet_core::{self, arch::Architecture, python_environment::PythonEnvironmentKind, Locator};
     use pet_python_utils::env::PythonEnv;
     use std::collections::HashMap;
 
@@ -28,7 +26,7 @@ fn find_conda_env_without_manager() {
 
     assert_eq!(env.prefix, path.clone().into());
     assert_eq!(env.arch, Architecture::X64.into());
-    assert_eq!(env.category, PythonEnvironmentCategory::Conda);
+    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
     assert_eq!(env.executable, path.join("bin").join("python").into());
     assert_eq!(env.version, "3.12.2".to_string().into());
     assert_eq!(env.manager, None);
@@ -40,9 +38,7 @@ fn find_conda_env_without_manager() {
 fn find_conda_env_without_manager_but_detect_manager_from_history() {
     use common::{create_test_environment, resolve_test_path};
     use pet_conda::Conda;
-    use pet_core::{
-        self, arch::Architecture, python_environment::PythonEnvironmentCategory, Locator,
-    };
+    use pet_core::{self, arch::Architecture, python_environment::PythonEnvironmentKind, Locator};
     use pet_python_utils::env::PythonEnv;
     use std::{
         collections::HashMap,
@@ -79,7 +75,7 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
 
     assert_eq!(env.prefix, path.clone().into());
     assert_eq!(env.arch, Architecture::X64.into());
-    assert_eq!(env.category, PythonEnvironmentCategory::Conda);
+    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
     assert_eq!(env.executable, path.join("bin").join("python").into());
     assert_eq!(env.version, "3.12.2".to_string().into());
     assert_eq!(

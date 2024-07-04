@@ -4,7 +4,7 @@
 use env_variables::EnvVariables;
 use pet_core::os_environment::Environment;
 use pet_core::{
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -74,8 +74,8 @@ impl Locator for PipEnv {
     fn get_name(&self) -> &'static str {
         "PipEnv"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::Pipenv]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::Pipenv]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -104,7 +104,7 @@ impl Locator for PipEnv {
             }
         }
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Pipenv)
+            PythonEnvironmentBuilder::new(PythonEnvironmentKind::Pipenv)
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(prefix)

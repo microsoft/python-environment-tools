@@ -6,7 +6,7 @@ use pet_conda::Conda;
 use pet_core::arch::Architecture;
 use pet_core::os_environment::EnvironmentApi;
 use pet_core::python_environment::{
-    PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory,
+    PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind,
 };
 use pet_core::Locator;
 use pet_linux_global_python::LinuxGlobalPython;
@@ -118,7 +118,7 @@ pub fn identify_python_environment_using_locators(
             trace!(
                 "Unknown Env ({:?}) in Path resolved as {:?}",
                 executable,
-                env.category
+                env.kind
             );
             identify_and_set_search_path(&mut env, &search_paths);
             // TODO: Telemetry point.
@@ -128,9 +128,9 @@ pub fn identify_python_environment_using_locators(
             // We have no idea what this is.
             // We have check all of the resolvers.
             // Telemetry point, failed to identify env here.
-            let mut fallback_category = None;
+            let mut fallback_kind = None;
 
-            // If one of the symlinks are in the PATH variable, then we can treat this as a GlobalPath category.
+            // If one of the symlinks are in the PATH variable, then we can treat this as a GlobalPath kind.
             let symlinks = [
                 resolved_env.symlink.clone().unwrap_or_default(),
                 vec![resolved_env.executable.clone(), executable.clone()],
@@ -139,16 +139,16 @@ pub fn identify_python_environment_using_locators(
             for symlink in symlinks {
                 if let Some(bin) = symlink.parent() {
                     if global_env_search_paths.contains(&bin.to_path_buf()) {
-                        fallback_category = Some(PythonEnvironmentCategory::GlobalPaths);
+                        fallback_kind = Some(PythonEnvironmentKind::GlobalPaths);
                         break;
                     }
                 }
             }
             info!(
                 "Unknown Env ({:?}) in Path resolved as {:?} and reported as {:?}",
-                executable, resolved_env, fallback_category
+                executable, resolved_env, fallback_kind
             );
-            let mut env = create_unknown_env(resolved_env, fallback_category);
+            let mut env = create_unknown_env(resolved_env, fallback_kind);
             identify_and_set_search_path(&mut env, &search_paths);
             return Some(env);
         }
@@ -169,9 +169,9 @@ pub fn identify_and_set_search_path(env: &mut PythonEnvironment, search_path: &V
     // then thats a weird situation, either way, when we cache the result it will re-appear (however for all other workspaces as well)
     // Thats fine for now (if users complain then we'll find out that there's a problem and we can fix it then).
     // Else no need to try and identify/fix edge cases that may not exist.
-    if env.category == PythonEnvironmentCategory::Conda
-        || env.category == PythonEnvironmentCategory::Venv
-        || env.category == PythonEnvironmentCategory::VirtualEnv
+    if env.kind == PythonEnvironmentKind::Conda
+        || env.kind == PythonEnvironmentKind::Venv
+        || env.kind == PythonEnvironmentKind::VirtualEnv
     {
         if let Some(prefix) = &env.prefix {
             for path in search_path {
@@ -186,11 +186,11 @@ pub fn identify_and_set_search_path(env: &mut PythonEnvironment, search_path: &V
 
 fn create_unknown_env(
     resolved_env: ResolvedPythonEnv,
-    fallback_category: Option<PythonEnvironmentCategory>,
+    fallback_category: Option<PythonEnvironmentKind>,
 ) -> PythonEnvironment {
     // Find all the python exes in the same bin directory.
 
-    PythonEnvironmentBuilder::new(fallback_category.unwrap_or(PythonEnvironmentCategory::Unknown))
+    PythonEnvironmentBuilder::new(fallback_category.unwrap_or(PythonEnvironmentKind::Unknown))
         .symlinks(find_symlinks(&resolved_env.executable))
         .executable(Some(resolved_env.executable))
         .prefix(Some(resolved_env.prefix))

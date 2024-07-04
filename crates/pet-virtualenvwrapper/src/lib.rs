@@ -5,7 +5,7 @@ use env_variables::EnvVariables;
 use environments::{get_project, is_virtualenvwrapper};
 use pet_core::{
     os_environment::Environment,
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -32,8 +32,8 @@ impl Locator for VirtualEnvWrapper {
     fn get_name(&self) -> &'static str {
         "VirtualEnvWrapper"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::VirtualEnvWrapper]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::VirtualEnvWrapper]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -53,7 +53,7 @@ impl Locator for VirtualEnvWrapper {
         }
 
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::VirtualEnvWrapper)
+            PythonEnvironmentBuilder::new(PythonEnvironmentKind::VirtualEnvWrapper)
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(env.prefix.clone())

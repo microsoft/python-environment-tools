@@ -7,7 +7,7 @@ use pet_conda::{utils::is_conda_env, CondaLocator};
 #[cfg(windows)]
 use pet_core::LocatorResult;
 use pet_core::{
-    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -65,8 +65,8 @@ impl Locator for WindowsRegistry {
     fn get_name(&self) -> &'static str {
         "WindowsRegistry"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::WindowsRegistry]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::WindowsRegistry]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {

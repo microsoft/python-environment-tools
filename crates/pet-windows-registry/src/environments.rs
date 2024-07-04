@@ -7,7 +7,7 @@ use pet_conda::CondaLocator;
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
-    python_environment::{PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironmentBuilder, PythonEnvironmentKind},
     LocatorResult,
 };
 #[cfg(windows)]

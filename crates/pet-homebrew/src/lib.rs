@@ -6,7 +6,7 @@ use environment_locations::get_homebrew_prefix_bin;
 use environments::get_python_info;
 use pet_core::{
     os_environment::Environment,
-    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -112,8 +112,8 @@ impl Locator for Homebrew {
     fn get_name(&self) -> &'static str {
         "Homebrew"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::Homebrew]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::Homebrew]
     }
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         from(env)

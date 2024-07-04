@@ -12,7 +12,7 @@ fn verify_ci_poetry_global() {
     use pet_core::{
         manager::EnvManagerType,
         os_environment::EnvironmentApi,
-        python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+        python_environment::{PythonEnvironment, PythonEnvironmentKind},
         Configuration,
     };
     use pet_reporter::test;
@@ -47,8 +47,7 @@ fn verify_ci_poetry_global() {
     let poetry_envs = environments
         .iter()
         .filter(|e| {
-            e.category == PythonEnvironmentCategory::Poetry
-                && e.project == Some(project_dir.clone())
+            e.kind == PythonEnvironmentKind::Poetry && e.project == Some(project_dir.clone())
         })
         .collect::<Vec<&PythonEnvironment>>();
 
@@ -73,7 +72,7 @@ fn verify_ci_poetry_project() {
     use pet_core::{
         manager::EnvManagerType,
         os_environment::EnvironmentApi,
-        python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+        python_environment::{PythonEnvironment, PythonEnvironmentKind},
         Configuration,
     };
     use pet_reporter::test;
@@ -108,8 +107,7 @@ fn verify_ci_poetry_project() {
     let poetry_envs = environments
         .iter()
         .filter(|e| {
-            e.category == PythonEnvironmentCategory::Poetry
-                && e.project == Some(project_dir.clone())
+            e.kind == PythonEnvironmentKind::Poetry && e.project == Some(project_dir.clone())
         })
         .collect::<Vec<&PythonEnvironment>>();
 

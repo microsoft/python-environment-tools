@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::python_environment::PythonEnvironmentCategory;
+use crate::python_environment::PythonEnvironmentKind;
 
 /// Information about an environment that was discovered to be inaccurate.
 /// If the discovered information is None, then it means that the information was not found.
 /// And we will not report that as an inaccuracy.
 pub struct InaccuratePythonEnvironmentInfo {
-    /// Python Env category
-    pub category: PythonEnvironmentCategory,
+    /// Python Env kind
+    pub kind: PythonEnvironmentKind,
     /// Whether the actual exe is not what we expected.
     pub invalid_executable: Option<bool>,
     /// Whether the actual exe was not even in the list of symlinks that we expected.
@@ -23,7 +23,7 @@ pub struct InaccuratePythonEnvironmentInfo {
 
 impl std::fmt::Display for InaccuratePythonEnvironmentInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "Environment {:?} incorrectly identified", self.category).unwrap_or_default();
+        writeln!(f, "Environment {:?} incorrectly identified", self.kind).unwrap_or_default();
         if self.invalid_executable.unwrap_or_default() {
             writeln!(f, "   Executable is incorrect").unwrap_or_default();
         }

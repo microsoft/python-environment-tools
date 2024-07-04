@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_core::{
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -30,8 +30,8 @@ impl Locator for MacPythonOrg {
     fn get_name(&self) -> &'static str {
         "MacPythonOrg"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::MacPythonOrg]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::MacPythonOrg]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -129,7 +129,7 @@ impl Locator for MacPythonOrg {
         symlinks.dedup();
 
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentCategory::MacPythonOrg)
+            PythonEnvironmentBuilder::new(PythonEnvironmentKind::MacPythonOrg)
                 .executable(Some(executable.clone()))
                 .version(Some(version))
                 .prefix(Some(prefix.to_path_buf()))

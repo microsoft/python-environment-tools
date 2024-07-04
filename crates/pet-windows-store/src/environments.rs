@@ -53,7 +53,7 @@ impl PotentialPython {
 
             Some(
                 PythonEnvironmentBuilder::new(
-                    pet_core::python_environment::PythonEnvironmentCategory::WindowsStore,
+                    pet_core::python_environment::PythonEnvironmentKind::WindowsStore,
                 )
                 .display_name(Some(result.display_name))
                 .executable(Some(exe.clone()))
