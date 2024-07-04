@@ -6,7 +6,7 @@ use environment_locations::list_environments;
 use log::{error, warn};
 use pet_core::{
     os_environment::Environment,
-    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Configuration, Locator, LocatorResult,
 };
@@ -153,8 +153,8 @@ impl Locator for Poetry {
         }
     }
 
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::Poetry]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::Poetry]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {

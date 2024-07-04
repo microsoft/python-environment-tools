@@ -11,7 +11,7 @@ use std::{
 
 use pet_core::{
     arch::Architecture,
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
@@ -58,8 +58,8 @@ impl Locator for LinuxGlobalPython {
     fn get_name(&self) -> &'static str {
         "LinuxGlobalPython"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::LinuxGlobal]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::LinuxGlobal]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -209,7 +209,7 @@ fn get_python_in_bin(env: &PythonEnv, is_64bit: bool) -> Option<PythonEnvironmen
     symlinks.dedup();
 
     Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentCategory::LinuxGlobal)
+        PythonEnvironmentBuilder::new(PythonEnvironmentKind::LinuxGlobal)
             .executable(Some(executable))
             .version(env.version.clone())
             .arch(if is_64bit {

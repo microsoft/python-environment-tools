@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::{arch::Architecture, manager::EnvManager};
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash)]
-pub enum PythonEnvironmentCategory {
+pub enum PythonEnvironmentKind {
     Conda,
     Homebrew,
     Pyenv,           // Relates to Python installations in pyenv that are from Python org.
@@ -28,12 +28,12 @@ pub enum PythonEnvironmentCategory {
     WindowsStore,
     WindowsRegistry,
 }
-impl Ord for PythonEnvironmentCategory {
+impl Ord for PythonEnvironmentKind {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         format!("{self:?}").cmp(&format!("{other:?}"))
     }
 }
-impl PartialOrd for PythonEnvironmentCategory {
+impl PartialOrd for PythonEnvironmentKind {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
@@ -51,7 +51,7 @@ pub struct PythonEnvironment {
     pub name: Option<String>,
     // Python executable, can be empty in the case of conda envs that do not have Python installed in them.
     pub executable: Option<PathBuf>,
-    pub category: PythonEnvironmentCategory,
+    pub kind: PythonEnvironmentKind,
     pub version: Option<String>,
     // SysPrefix for the environment.
     pub prefix: Option<PathBuf>,
@@ -102,7 +102,7 @@ impl Default for PythonEnvironment {
             // Sometimes we might not know the env type.
             // Lets never default these to System/Global or others as thats not true.
             // Not knowing does not mean it is a system env.
-            category: PythonEnvironmentCategory::Unknown,
+            kind: PythonEnvironmentKind::Unknown,
             version: None,
             prefix: None,
             manager: None,
@@ -117,14 +117,14 @@ impl Default for PythonEnvironment {
 impl PythonEnvironment {
     pub fn new(
         executable: Option<PathBuf>,
-        category: PythonEnvironmentCategory,
+        kind: PythonEnvironmentKind,
         prefix: Option<PathBuf>,
         manager: Option<EnvManager>,
         version: Option<String>,
     ) -> Self {
         Self {
             executable,
-            category,
+            kind,
             version,
             prefix,
             manager,
@@ -135,7 +135,7 @@ impl PythonEnvironment {
 
 impl std::fmt::Display for PythonEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "Environment ({:?})", self.category).unwrap_or_default();
+        writeln!(f, "Environment ({:?})", self.kind).unwrap_or_default();
         if let Some(name) = &self.display_name {
             writeln!(f, "   Display-Name: {name}").unwrap_or_default();
         }
@@ -205,7 +205,7 @@ pub struct PythonEnvironmentBuilder {
     display_name: Option<String>,
     name: Option<String>,
     executable: Option<PathBuf>,
-    category: PythonEnvironmentCategory,
+    kind: PythonEnvironmentKind,
     version: Option<String>,
     prefix: Option<PathBuf>,
     manager: Option<EnvManager>,
@@ -216,9 +216,9 @@ pub struct PythonEnvironmentBuilder {
 }
 
 impl PythonEnvironmentBuilder {
-    pub fn new(category: PythonEnvironmentCategory) -> Self {
+    pub fn new(kind: PythonEnvironmentKind) -> Self {
         Self {
-            category,
+            kind,
             display_name: None,
             name: None,
             executable: None,
@@ -314,7 +314,7 @@ impl PythonEnvironmentBuilder {
         };
         if let Some(executable) = &self.executable {
             self.executable = Some(
-                get_shortest_executable(&self.category, &Some(all.clone()))
+                get_shortest_executable(&self.kind, &Some(all.clone()))
                     .unwrap_or(executable.clone()),
             );
         }
@@ -337,14 +337,14 @@ impl PythonEnvironmentBuilder {
             Some(all.clone())
         };
         let executable = self.executable.map(|executable| {
-            get_shortest_executable(&self.category, &Some(all.clone())).unwrap_or(executable)
+            get_shortest_executable(&self.kind, &Some(all.clone())).unwrap_or(executable)
         });
 
         PythonEnvironment {
             display_name: self.display_name,
             name: self.name,
             executable,
-            category: self.category,
+            kind: self.kind,
             version: self.version,
             prefix: self.prefix,
             manager: self.manager,
@@ -359,11 +359,11 @@ impl PythonEnvironmentBuilder {
 // Given a list of executables, return the one with the shortest path.
 // The shortest path is the most likely to be most user friendly.
 fn get_shortest_executable(
-    category: &PythonEnvironmentCategory,
+    kind: &PythonEnvironmentKind,
     exes: &Option<Vec<PathBuf>>,
 ) -> Option<PathBuf> {
     // For windows store, the exe should always be the one in the WindowsApps folder.
-    if *category == PythonEnvironmentCategory::WindowsStore {
+    if *kind == PythonEnvironmentKind::WindowsStore {
         if let Some(exes) = exes {
             if let Some(exe) = exes.iter().find(|e| {
                 e.to_string_lossy().contains("AppData")
@@ -398,7 +398,7 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
         Some(exe.clone())
     } else if let Some(prefix) = &env.prefix {
         // If this is a conda env without Python, then the exe will be prefix/bin/python
-        if env.category == PythonEnvironmentCategory::Conda {
+        if env.kind == PythonEnvironmentKind::Conda {
             Some(prefix.join("bin").join(if cfg!(windows) {
                 "python.exe"
             } else {

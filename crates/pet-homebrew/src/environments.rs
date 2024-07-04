@@ -4,7 +4,7 @@
 use crate::sym_links::get_known_symlinks;
 use lazy_static::lazy_static;
 use pet_core::python_environment::{
-    PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory,
+    PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind,
 };
 use pet_fs::path::resolve_symlink;
 use regex::Regex;
@@ -48,7 +48,7 @@ pub fn get_python_info(
     symlinks.sort();
     symlinks.dedup();
 
-    let env = PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Homebrew)
+    let env = PythonEnvironmentBuilder::new(PythonEnvironmentKind::Homebrew)
         .executable(Some(python_exe_from_bin_dir.to_path_buf()))
         .version(version)
         .prefix(get_prefix(resolved_exe))

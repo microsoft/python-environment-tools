@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use manager::EnvManager;
 use pet_python_utils::env::PythonEnv;
-use python_environment::{PythonEnvironment, PythonEnvironmentCategory};
+use python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use reporter::Reporter;
 
 pub mod arch;
@@ -40,7 +40,7 @@ pub trait Locator: Send + Sync {
         //
     }
     /// Returns a list of supported categories for this locator.
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory>;
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind>;
     /// Given a Python executable, and some optional data like prefix,
     /// this method will attempt to convert it to a PythonEnvironment that can be supported by this particular locator.
     /// If an environment is not supported by this locator, then None is returned.

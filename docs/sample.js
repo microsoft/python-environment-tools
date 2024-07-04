@@ -125,7 +125,7 @@ async function resolve(executable, connection) {
       executable
     );
     console.log(
-      `Resolved (${environment.category}, ${environment.version}) ${environment.executable} in ${duration}ms`
+      `Resolved (${environment.kind}, ${environment.version}) ${environment.executable} in ${duration}ms`
     );
     return environment;
   } catch (ex) {

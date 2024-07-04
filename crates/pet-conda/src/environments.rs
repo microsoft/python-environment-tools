@@ -10,7 +10,7 @@ use log::warn;
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
 };
 use pet_fs::path::{norm_case, resolve_symlink};
 use pet_python_utils::executable::{find_executable, find_executables};
@@ -57,7 +57,7 @@ impl CondaEnvironment {
             }
         }
         // This is a root env.
-        let builder = PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Conda)
+        let builder = PythonEnvironmentBuilder::new(PythonEnvironmentKind::Conda)
             .executable(self.executable.clone())
             .version(self.version.clone())
             .prefix(Some(self.prefix.clone()))

@@ -59,7 +59,7 @@ pub fn resolve_environment(
                     Architecture::X86
                 });
 
-                let resolved = PythonEnvironmentBuilder::new(env.category)
+                let resolved = PythonEnvironmentBuilder::new(env.kind)
                     .arch(arch)
                     .display_name(env.display_name)
                     .executable(Some(info.executable))

@@ -6,7 +6,7 @@ use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
-    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     LocatorResult,
 };
 use pet_python_utils::executable::{find_executable, find_executables};
@@ -101,7 +101,7 @@ pub fn get_generic_python_environment(
     };
 
     Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Pyenv)
+        PythonEnvironmentBuilder::new(PythonEnvironmentKind::Pyenv)
             .executable(Some(executable.to_path_buf()))
             .version(version)
             .prefix(Some(path.to_path_buf()))
@@ -119,7 +119,7 @@ pub fn get_virtual_env_environment(
 ) -> Option<PythonEnvironment> {
     let version = version::from_pyvenv_cfg(path)?;
     Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentCategory::PyenvVirtualEnv)
+        PythonEnvironmentBuilder::new(PythonEnvironmentKind::PyenvVirtualEnv)
             .executable(Some(executable.to_path_buf()))
             .version(Some(version))
             .prefix(Some(path.to_path_buf()))

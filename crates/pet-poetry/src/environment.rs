@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use pet_core::python_environment::{
-    PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentCategory,
+    PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind,
 };
 use pet_python_utils::{executable::find_executables, version};
 
@@ -24,7 +24,7 @@ pub fn create_poetry_env(
     }
     let version = version::from_creator_for_virtual_env(prefix);
     Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentCategory::Poetry)
+        PythonEnvironmentBuilder::new(PythonEnvironmentKind::Poetry)
             .executable(Some(executables[0].clone()))
             .prefix(Some(prefix.clone()))
             .version(version)

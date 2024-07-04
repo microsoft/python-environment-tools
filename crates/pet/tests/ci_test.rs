@@ -9,7 +9,7 @@ use log::{error, trace};
 use pet::{locators::identify_python_environment_using_locators, resolve::resolve_environment};
 use pet_core::{
     arch::Architecture,
-    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentKind},
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_python_utils::env::PythonEnv;
@@ -144,8 +144,9 @@ fn check_if_virtualenvwrapper_exists() {
     let environments = result.environments;
 
     assert!(
-        environments.iter().any(
-            |env| env.category == PythonEnvironmentCategory::VirtualEnvWrapper
+        environments
+            .iter()
+            .any(|env| env.kind == PythonEnvironmentKind::VirtualEnvWrapper
                 && env.executable.is_some()
                 && env.prefix.is_some()
                 && env
@@ -154,8 +155,7 @@ fn check_if_virtualenvwrapper_exists() {
                     .unwrap_or_default()
                     .to_str()
                     .unwrap_or_default()
-                    .contains("venv_wrapper_env1")
-        ),
+                    .contains("venv_wrapper_env1")),
         "Virtualenvwrapper environment not found, found: {environments:?}"
     );
 }
@@ -188,8 +188,7 @@ fn check_if_pipenv_exists() {
     environments
         .iter()
         .find(|env| {
-            env.category == PythonEnvironmentCategory::Pipenv
-                && env.project == Some(project_dir.clone())
+            env.kind == PythonEnvironmentKind::Pipenv && env.project == Some(project_dir.clone())
         })
         .expect(format!("Pipenv environment not found, found {environments:?}").as_str());
 }
@@ -222,8 +221,9 @@ fn check_if_pyenv_virtualenv_exists() {
     let environments = result.environments;
 
     assert!(
-        environments.iter().any(
-            |env| env.category == PythonEnvironmentCategory::PyenvVirtualEnv
+        environments
+            .iter()
+            .any(|env| env.kind == PythonEnvironmentKind::PyenvVirtualEnv
                 && env.executable.is_some()
                 && env.prefix.is_some()
                 && env.manager.is_some()
@@ -233,8 +233,7 @@ fn check_if_pyenv_virtualenv_exists() {
                     .unwrap_or_default()
                     .to_str()
                     .unwrap_or_default()
-                    .contains("pyenv-virtualenv-env1")
-        ),
+                    .contains("pyenv-virtualenv-env1")),
         "pyenv-virtualenv environment not found, found: {environments:?}"
     );
 }
@@ -244,7 +243,7 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     let interpreter_info = get_python_interpreter_info(&run_command);
 
     // Home brew has too many syminks, unfortunately its not easy to test in CI.
-    if environment.category != PythonEnvironmentCategory::Homebrew {
+    if environment.kind != PythonEnvironmentKind::Homebrew {
         let expected_executable = environment.executable.clone().unwrap();
 
         // Ensure the executable is in one of the identified symlinks
@@ -259,7 +258,7 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
         );
     }
     // If this is a conda env, then the manager, prefix and a few things must exist.
-    if environment.category == PythonEnvironmentCategory::Conda {
+    if environment.kind == PythonEnvironmentKind::Conda {
         assert!(environment.manager.is_some());
         assert!(environment.prefix.is_some());
         if environment.executable.is_some() {
@@ -371,12 +370,12 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
     let mut expected = expected.clone();
 
     assert_eq!(
-        actual.category,
-        expected.clone().category,
+        actual.kind,
+        expected.clone().kind,
         "Category mismatch when using {method} for {expected:?} and {actual:?}"
     );
 
-    // if env.category != environment.clone().category {
+    // if env.kind != environment.clone().kind {
     //     error!(
     //         "Category mismatch when using {} for {:?} and {:?}",
     //         method, environment, env
@@ -629,7 +628,7 @@ struct InterpreterInfo {
 }
 
 fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
-    if env.clone().category == PythonEnvironmentCategory::Conda {
+    if env.clone().kind == PythonEnvironmentKind::Conda {
         if env.executable.is_none() {
             panic!("Conda environment without executable");
         }

@@ -9,7 +9,7 @@ use log::{error, warn};
 use manager::CondaManager;
 use pet_core::{
     os_environment::Environment,
-    python_environment::{PythonEnvironment, PythonEnvironmentCategory},
+    python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Locator, LocatorResult,
 };
@@ -149,8 +149,8 @@ impl Locator for Conda {
     fn get_name(&self) -> &'static str {
         "Conda"
     }
-    fn supported_categories(&self) -> Vec<PythonEnvironmentCategory> {
-        vec![PythonEnvironmentCategory::Conda]
+    fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+        vec![PythonEnvironmentKind::Conda]
     }
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         // Possible we do not have the prefix, but this exe is in the bin directory and its a conda env or root conda install.
