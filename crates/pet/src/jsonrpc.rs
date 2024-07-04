@@ -4,10 +4,7 @@
 use log::{error, info, trace};
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
-use pet_core::{
-    os_environment::EnvironmentApi, python_environment::PythonEnvironment, reporter::Reporter,
-    Configuration, Locator,
-};
+use pet_core::{os_environment::EnvironmentApi, reporter::Reporter, Configuration, Locator};
 use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
@@ -20,7 +17,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
     thread,
-    time::{Duration, SystemTime, SystemTimeError},
+    time::{Duration, SystemTime},
 };
 
 use crate::{find::find_and_report_envs, locators::create_locators};
@@ -134,21 +131,6 @@ pub struct ResolveOptions {
     pub executable: PathBuf,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ResolveResult {
-    environment: PythonEnvironment,
-    duration: Option<u128>,
-}
-
-impl ResolveResult {
-    fn new(env: &PythonEnvironment, duration: Result<Duration, SystemTimeError>) -> ResolveResult {
-        ResolveResult {
-            environment: env.clone(),
-            duration: duration.ok().map(|d| d.as_millis()),
-        }
-    }
-}
-
 pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
     match serde_json::from_value::<ResolveOptions>(params.clone()) {
         Ok(request_options) => {
@@ -175,20 +157,20 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                             &resolved,
                         );
 
-                        trace!("Resolved env {:?} as {:?}", executable, resolved);
-                        send_reply(id, Some(ResolveResult::new(&resolved, now.elapsed())));
+                        trace!(
+                            "Resolved env ({:?}) {executable:?} as {resolved:?}",
+                            now.elapsed()
+                        );
+                        send_reply(id, resolved.into());
                     } else {
                         error!(
-                            "Failed to resolve env {:?}, returning discovered env {:?}",
-                            executable, result.discovered
+                            "Failed to resolve env {executable:?}, returning discovered env {:?}",
+                            result.discovered
                         );
-                        send_reply(
-                            id,
-                            Some(ResolveResult::new(&result.discovered, now.elapsed())),
-                        );
+                        send_reply(id, result.discovered.into());
                     }
                 } else {
-                    error!("Failed to resolve env {:?}", executable);
+                    error!("Failed to resolve env {executable:?}");
                     send_error(
                         Some(id),
                         -4,
@@ -198,7 +180,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
             });
         }
         Err(e) => {
-            error!("Failed to parse request {:?}: {}", params, e);
+            error!("Failed to parse request {params:?}: {e}");
             send_error(
                 Some(id),
                 -4,
