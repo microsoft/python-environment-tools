@@ -177,25 +177,24 @@ fn get_registry_pythons_from_key_for_company(
                             .ok()
                             .unwrap_or_default();
 
-                        let env = PythonEnvironmentBuilder::new(
-                            PythonEnvironmentCategory::WindowsRegistry,
-                        )
-                        .display_name(Some(display_name))
-                        .executable(Some(executable.clone()))
-                        .version(if version.is_empty() {
-                            None
-                        } else {
-                            Some(version)
-                        })
-                        .prefix(env_path)
-                        .arch(if architecture.contains("32") {
-                            Some(Architecture::X86)
-                        } else if architecture.contains("64") {
-                            Some(Architecture::X64)
-                        } else {
-                            None
-                        })
-                        .build();
+                        let env =
+                            PythonEnvironmentBuilder::new(PythonEnvironmentKind::WindowsRegistry)
+                                .display_name(Some(display_name))
+                                .executable(Some(executable.clone()))
+                                .version(if version.is_empty() {
+                                    None
+                                } else {
+                                    Some(version)
+                                })
+                                .prefix(env_path)
+                                .arch(if architecture.contains("32") {
+                                    Some(Architecture::X86)
+                                } else if architecture.contains("64") {
+                                    Some(Architecture::X64)
+                                } else {
+                                    None
+                                })
+                                .build();
                         // env.company = Some(company.to_string());
                         // env.company_display_name = company_display_name.clone();
                         environments.push(env);
