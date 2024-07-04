@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use log::{info, trace, warn};
+use log::{trace, warn};
 use pet_conda::CondaLocator;
 use pet_core::os_environment::{Environment, EnvironmentApi};
 use pet_core::reporter::Reporter;
@@ -45,7 +45,6 @@ pub fn find_and_report_envs(
         find_global_virtual_envs_time: Duration::from_secs(0),
         find_search_paths_time: Duration::from_secs(0),
     }));
-    info!("Started Refreshing Environments");
     let start = std::time::Instant::now();
 
     // From settings
