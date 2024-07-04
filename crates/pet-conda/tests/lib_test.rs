@@ -43,6 +43,7 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
     use std::{
         collections::HashMap,
         fs::{self},
+        sync::Arc,
     };
 
     let environment = Arc::new(create_test_environment(HashMap::new(), None, vec![], None));
