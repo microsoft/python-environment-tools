@@ -91,11 +91,8 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
                 .into_iter()
                 .map(|(k, v)| {
                     (
-                        format!(
-                            "{}",
-                            k.map(|v| format!("{:?}", v))
-                                .unwrap_or("Unknown".to_string())
-                        ),
+                        k.map(|v| format!("{:?}", v))
+                            .unwrap_or("Unknown".to_string()),
                         v,
                     )
                 })
