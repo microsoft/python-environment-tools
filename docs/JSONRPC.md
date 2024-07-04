@@ -192,7 +192,7 @@ interface Manager {
   /**
    * The type of the Manager.
    */
-  tool?: "conda" | "poetry" | "pyenv";
+  tool: "conda" | "poetry" | "pyenv";
   /**
    * The version of the manager/tool.
    * In the case of conda, this is the version of conda.
