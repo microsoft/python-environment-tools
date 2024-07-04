@@ -136,7 +136,7 @@ fn check_if_virtualenvwrapper_exists() {
 
     setup();
     let reporter = test::create_reporter();
-    let environment = EnvironmentApi::new();
+    let environment = Arc::new(EnvironmentApi::new());
     let conda_locator = Arc::new(Conda::from(environment.clone()));
 
     find_and_report_envs(
