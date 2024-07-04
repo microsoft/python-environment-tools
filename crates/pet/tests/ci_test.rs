@@ -144,9 +144,8 @@ fn check_if_virtualenvwrapper_exists() {
     let environments = result.environments;
 
     assert!(
-        environments
-            .iter()
-            .any(|env| env.kind == PythonEnvironmentKind::VirtualEnvWrapper
+        environments.iter().any(
+            |env| env.kind == Some(PythonEnvironmentKind::VirtualEnvWrapper)
                 && env.executable.is_some()
                 && env.prefix.is_some()
                 && env
@@ -155,7 +154,8 @@ fn check_if_virtualenvwrapper_exists() {
                     .unwrap_or_default()
                     .to_str()
                     .unwrap_or_default()
-                    .contains("venv_wrapper_env1")),
+                    .contains("venv_wrapper_env1")
+        ),
         "Virtualenvwrapper environment not found, found: {environments:?}"
     );
 }
@@ -188,7 +188,8 @@ fn check_if_pipenv_exists() {
     environments
         .iter()
         .find(|env| {
-            env.kind == PythonEnvironmentKind::Pipenv && env.project == Some(project_dir.clone())
+            env.kind == Some(PythonEnvironmentKind::Pipenv)
+                && env.project == Some(project_dir.clone())
         })
         .expect(format!("Pipenv environment not found, found {environments:?}").as_str());
 }
@@ -221,9 +222,8 @@ fn check_if_pyenv_virtualenv_exists() {
     let environments = result.environments;
 
     assert!(
-        environments
-            .iter()
-            .any(|env| env.kind == PythonEnvironmentKind::PyenvVirtualEnv
+        environments.iter().any(
+            |env| env.kind == Some(PythonEnvironmentKind::PyenvVirtualEnv)
                 && env.executable.is_some()
                 && env.prefix.is_some()
                 && env.manager.is_some()
@@ -233,7 +233,8 @@ fn check_if_pyenv_virtualenv_exists() {
                     .unwrap_or_default()
                     .to_str()
                     .unwrap_or_default()
-                    .contains("pyenv-virtualenv-env1")),
+                    .contains("pyenv-virtualenv-env1")
+        ),
         "pyenv-virtualenv environment not found, found: {environments:?}"
     );
 }
@@ -243,7 +244,7 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     let interpreter_info = get_python_interpreter_info(&run_command);
 
     // Home brew has too many syminks, unfortunately its not easy to test in CI.
-    if environment.kind != PythonEnvironmentKind::Homebrew {
+    if environment.kind != Some(PythonEnvironmentKind::Homebrew) {
         let expected_executable = environment.executable.clone().unwrap();
 
         // Ensure the executable is in one of the identified symlinks
@@ -258,7 +259,7 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
         );
     }
     // If this is a conda env, then the manager, prefix and a few things must exist.
-    if environment.kind == PythonEnvironmentKind::Conda {
+    if environment.kind == Some(PythonEnvironmentKind::Conda) {
         assert!(environment.manager.is_some());
         assert!(environment.prefix.is_some());
         if environment.executable.is_some() {
@@ -628,7 +629,7 @@ struct InterpreterInfo {
 }
 
 fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
-    if env.clone().kind == PythonEnvironmentKind::Conda {
+    if env.clone().kind == Some(PythonEnvironmentKind::Conda) {
         if env.executable.is_none() {
             panic!("Conda environment without executable");
         }

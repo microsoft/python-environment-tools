@@ -17,12 +17,12 @@ use std::{
 pub struct StdioReporter {
     print_list: bool,
     managers: Arc<Mutex<HashMap<EnvManagerType, u16>>>,
-    environments: Arc<Mutex<HashMap<PythonEnvironmentKind, u16>>>,
+    environments: Arc<Mutex<HashMap<Option<PythonEnvironmentKind>, u16>>>,
 }
 
 pub struct Summary {
     pub managers: HashMap<EnvManagerType, u16>,
-    pub environments: HashMap<PythonEnvironmentKind, u16>,
+    pub environments: HashMap<Option<PythonEnvironmentKind>, u16>,
 }
 
 impl StdioReporter {

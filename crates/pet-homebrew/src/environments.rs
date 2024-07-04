@@ -48,7 +48,7 @@ pub fn get_python_info(
     symlinks.sort();
     symlinks.dedup();
 
-    let env = PythonEnvironmentBuilder::new(PythonEnvironmentKind::Homebrew)
+    let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Homebrew))
         .executable(Some(python_exe_from_bin_dir.to_path_buf()))
         .version(version)
         .prefix(get_prefix(resolved_exe))

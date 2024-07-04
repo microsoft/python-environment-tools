@@ -158,7 +158,7 @@ impl Locator for MacXCode {
         }
 
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentKind::MacXCode)
+            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::MacXCode))
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(prefix)

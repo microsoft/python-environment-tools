@@ -54,7 +54,7 @@ fn detect_conda_root() {
         .unwrap();
     assert_eq!(env.prefix, conda_dir.clone().into());
     assert_eq!(env.name, Some("base".into()));
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable, Some(conda_dir.join("bin").join("python")));
     assert_eq!(env.version, Some(get_version(&info.python_version)));
 
@@ -93,7 +93,7 @@ fn detect_conda_root_from_path() {
 
     assert_eq!(env.prefix, conda_dir.clone().into());
     assert_eq!(env.name, Some("base".into()));
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable, Some(conda_dir.join("bin").join("python")));
     assert_eq!(env.version, Some(get_version(&info.python_version)));
 }
@@ -144,7 +144,7 @@ fn detect_new_conda_env() {
     let prefix = conda_dir.clone().join("envs").join(env_name);
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, Some(env_name.into()));
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable, prefix.join("bin").join("python").into());
     assert!(
         env.version.clone().unwrap_or_default().starts_with("3.10"),
@@ -193,7 +193,7 @@ fn detect_conda_env_from_path() {
 
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, Some(env_name.into()));
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable, exe.clone().into());
     assert!(
         env.version.clone().unwrap_or_default().starts_with("3.10"),
@@ -245,7 +245,7 @@ fn detect_new_conda_env_without_python() {
     let prefix = conda_dir.clone().join("envs").join(env_name);
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, Some(env_name.into()));
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable.is_none(), true);
     assert_eq!(env.version.is_none(), true);
 
@@ -293,7 +293,7 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
 
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, None);
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable.is_none(), true);
     assert_eq!(env.version.is_none(), true);
 
@@ -345,7 +345,7 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
 
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, None);
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable, exe.into());
     assert!(
         env.version.clone().unwrap_or_default().starts_with("3.10"),

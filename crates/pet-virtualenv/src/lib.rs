@@ -92,7 +92,7 @@ impl Locator for VirtualEnv {
                 symlinks.append(&mut find_executables(prefix));
             }
             Some(
-                PythonEnvironmentBuilder::new(PythonEnvironmentKind::VirtualEnv)
+                PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::VirtualEnv))
                     .executable(Some(env.executable.clone()))
                     .version(version)
                     .prefix(env.prefix.clone())

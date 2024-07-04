@@ -57,7 +57,7 @@ impl CondaEnvironment {
             }
         }
         // This is a root env.
-        let builder = PythonEnvironmentBuilder::new(PythonEnvironmentKind::Conda)
+        let builder = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Conda))
             .executable(self.executable.clone())
             .version(self.version.clone())
             .prefix(Some(self.prefix.clone()))

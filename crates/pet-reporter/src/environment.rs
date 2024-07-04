@@ -10,7 +10,7 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
         Some(exe.clone())
     } else if let Some(prefix) = &env.prefix {
         // If this is a conda env without Python, then the exe will be prefix/bin/python
-        if env.kind == PythonEnvironmentKind::Conda {
+        if env.kind == Some(PythonEnvironmentKind::Conda) {
             Some(prefix.join("bin").join(if cfg!(windows) {
                 "python.exe"
             } else {

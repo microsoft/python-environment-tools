@@ -101,7 +101,7 @@ pub fn get_generic_python_environment(
     };
 
     Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentKind::Pyenv)
+        PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Pyenv))
             .executable(Some(executable.to_path_buf()))
             .version(version)
             .prefix(Some(path.to_path_buf()))
@@ -119,7 +119,7 @@ pub fn get_virtual_env_environment(
 ) -> Option<PythonEnvironment> {
     let version = version::from_pyvenv_cfg(path)?;
     Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentKind::PyenvVirtualEnv)
+        PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::PyenvVirtualEnv))
             .executable(Some(executable.to_path_buf()))
             .version(Some(version))
             .prefix(Some(path.to_path_buf()))

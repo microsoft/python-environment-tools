@@ -53,7 +53,7 @@ impl Locator for VirtualEnvWrapper {
         }
 
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentKind::VirtualEnvWrapper)
+            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::VirtualEnvWrapper))
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(env.prefix.clone())

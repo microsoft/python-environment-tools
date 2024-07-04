@@ -209,7 +209,7 @@ fn get_python_in_bin(env: &PythonEnv, is_64bit: bool) -> Option<PythonEnvironmen
     symlinks.dedup();
 
     Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentKind::LinuxGlobal)
+        PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::LinuxGlobal))
             .executable(Some(executable))
             .version(env.version.clone())
             .arch(if is_64bit {
