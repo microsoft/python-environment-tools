@@ -39,7 +39,7 @@ pub fn create_locators(
         #[cfg(windows)]
         use pet_windows_store::WindowsStore;
         #[cfg(windows)]
-        locators.push(Arc::new(WindowsStore::from(environment.clone())));
+        locators.push(Arc::new(WindowsStore::from(os_environment.clone())));
         #[cfg(windows)]
         locators.push(Arc::new(WindowsRegistry::from(conda_locator.clone())))
     }
