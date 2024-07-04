@@ -137,13 +137,14 @@ fn check_if_virtualenvwrapper_exists() {
     setup();
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&environment));
+    let conda_locator = Arc::new(Conda::from(environment.clone()));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone()),
+        &create_locators(conda_locator.clone(), environment.clone()),
         conda_locator,
+        environment.clone(),
     );
 
     let result = reporter.get_result();
@@ -215,14 +216,15 @@ fn check_if_pyenv_virtualenv_exists() {
 
     setup();
     let reporter = test::create_reporter();
-    let environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&environment));
+    let environment = Arc::new(EnvironmentApi::new());
+    let conda_locator = Arc::new(Conda::from(environment.clone()));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone()),
+        &create_locators(conda_locator.clone(), environment.clone()),
         conda_locator,
+        environment.clone(),
     );
 
     let result = reporter.get_result();
@@ -576,12 +578,12 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
     setup();
     let reporter = test::create_reporter();
     let environment = Arc::new(EnvironmentApi::new());
-    let conda_locator = Arc::new(Conda::from(&environment));
+    let conda_locator = Arc::new(Conda::from(environment.clone()));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone()),
+        &create_locators(conda_locator.clone(), environment.clone()),
         conda_locator,
         environment,
     );

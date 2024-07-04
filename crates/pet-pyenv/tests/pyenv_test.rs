@@ -14,15 +14,15 @@ fn does_not_find_any_pyenv_envs() {
     use pet_reporter::test::create_reporter;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-    let environment = create_test_environment(
+    let environment = Arc::new(create_test_environment(
         HashMap::new(),
         Some(PathBuf::from("SOME_BOGUS_HOME_DIR")),
         vec![],
         None,
-    );
+    ));
 
-    let conda = Arc::new(Conda::from(&environment));
-    let locator = PyEnv::from(&environment, conda);
+    let conda = Arc::new(Conda::from(environment.clone()));
+    let locator = PyEnv::from(environment.clone(), conda);
     let reporter = create_reporter();
     locator.find(&reporter);
     let result = reporter.get_result();
@@ -58,15 +58,15 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
         "bin",
     ]);
     let pyenv_exe = resolve_test_path(&[homebrew_bin.to_str().unwrap(), "pyenv"]);
-    let environment = create_test_environment(
+    let environment = Arc::new(create_test_environment(
         HashMap::new(),
         Some(home.clone()),
         vec![PathBuf::from(homebrew_bin)],
         None,
-    );
+    ));
 
-    let conda = Arc::new(Conda::from(&environment));
-    let locator = PyEnv::from(&environment, conda);
+    let conda = Arc::new(Conda::from(environment.clone()));
+    let locator = PyEnv::from(environment.clone(), conda);
     let reporter = create_reporter();
     locator.find(&reporter);
     let result = reporter.get_result();
@@ -114,15 +114,15 @@ fn find_pyenv_envs() {
     ]);
     let conda_exe = conda_dir.join("bin").join("conda");
 
-    let environment = create_test_environment(
+    let environment = Arc::new(create_test_environment(
         HashMap::new(),
         Some(home.clone()),
         vec![PathBuf::from(homebrew_bin)],
         None,
-    );
+    ));
 
-    let conda = Arc::new(Conda::from(&environment));
-    let locator = PyEnv::from(&environment, conda);
+    let conda = Arc::new(Conda::from(environment.clone()));
+    let locator = PyEnv::from(environment.clone(), conda);
     let reporter = create_reporter();
     locator.find(&reporter);
     let mut result = reporter.get_result();
@@ -381,11 +381,15 @@ fn resolve_pyenv_environment() {
     let homebrew_bin = resolve_test_path(&["unix", "pyenv", "home", "opt", "homebrew", "bin"]);
     let pyenv_exe = resolve_test_path(&[homebrew_bin.to_str().unwrap(), "pyenv"]);
 
-    let environment =
-        create_test_environment(HashMap::new(), Some(home.clone()), vec![homebrew_bin], None);
+    let environment = Arc::new(create_test_environment(
+        HashMap::new(),
+        Some(home.clone()),
+        vec![homebrew_bin],
+        None,
+    ));
 
-    let conda = Arc::new(Conda::from(&environment));
-    let locator = PyEnv::from(&environment, conda.clone());
+    let conda = Arc::new(Conda::from(environment.clone()));
+    let locator = PyEnv::from(environment.clone(), conda.clone());
     // let mut result = locator.find().unwrap();
 
     let expected_manager = EnvManager {
