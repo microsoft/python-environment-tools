@@ -8,8 +8,7 @@ use std::path::PathBuf;
 
 use crate::{arch::Architecture, manager::EnvManager};
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[derive(Debug, Hash)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum PythonEnvironmentCategory {
     Conda,
     Homebrew,
@@ -18,7 +17,6 @@ pub enum PythonEnvironmentCategory {
     PyenvVirtualEnv, // Pyenv virtualenvs.
     Pipenv,
     Poetry,
-    System,
     MacPythonOrg,
     MacCommandLineTools,
     LinuxGlobal,
