@@ -58,11 +58,11 @@ impl<C> HandlersKeyedByMethodName<C> {
                     if let Some(handler) = self.requests.get(method) {
                         handler(self.context.clone(), id as u32, message["params"].clone());
                     } else {
-                        eprint!("Failed to find handler for method: {}", method);
+                        eprint!("Failed to find handler for method: {method}");
                         send_error(
                             Some(id as u32),
                             -1,
-                            format!("Failed to find handler for request {}", method),
+                            format!("Failed to find handler for request {method}"),
                         );
                     }
                 } else {
@@ -70,24 +70,21 @@ impl<C> HandlersKeyedByMethodName<C> {
                     if let Some(handler) = self.notifications.get(method) {
                         handler(self.context.clone(), message["params"].clone());
                     } else {
-                        eprint!("Failed to find handler for method: {}", method);
+                        eprint!("Failed to find handler for method: {method}");
                         send_error(
                             None,
                             -2,
-                            format!("Failed to find handler for notification {}", method),
+                            format!("Failed to find handler for notification {method}"),
                         );
                     }
                 }
             }
             None => {
-                eprint!("Failed to get method from message: {}", message);
+                eprint!("Failed to get method from message: {message}");
                 send_error(
                     None,
                     -3,
-                    format!(
-                        "Failed to extract method from JSONRPC payload {:?}",
-                        message
-                    ),
+                    format!("Failed to extract method from JSONRPC payload {message:?}"),
                 );
             }
         };
@@ -115,20 +112,17 @@ pub fn start_server<C>(handlers: &HandlersKeyedByMethodName<C>) -> ! {
                                 match serde_json::from_str(&request) {
                                     Ok(request) => handlers.handle_request(request),
                                     Err(err) => {
-                                        eprint!("Failed to parse LINE: {}, {:?}", request, err)
+                                        eprint!("Failed to parse LINE: {request}, {err:?}")
                                     }
                                 }
                                 continue;
                             }
                             Err(err) => {
-                                eprint!(
-                                    "Failed to read exactly {} bytes, {:?}",
-                                    content_length, err
-                                )
+                                eprint!("Failed to read exactly {content_length} bytes, {err:?}")
                             }
                         }
                     }
-                    Err(err) => eprint!("Failed to get content length from {}, {:?}", input, err),
+                    Err(err) => eprint!("Failed to get content length from {input}, {err:?}"),
                 };
             }
             Err(error) => eprint!("Error in reading a line from stdin: {error}"),
@@ -152,8 +146,7 @@ fn get_content_length(line: &str) -> Result<usize, String> {
         }
     } else {
         Err(format!(
-            "String 'Content-Length' not found in input => {}",
-            line
+            "String 'Content-Length' not found in input => {line}"
         ))
     }
 }

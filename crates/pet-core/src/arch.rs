@@ -12,7 +12,7 @@ pub enum Architecture {
 
 impl Ord for Architecture {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        format!("{:?}", self).cmp(&format!("{:?}", other))
+        format!("{self:?}").cmp(&format!("{other:?}"))
     }
 }
 impl PartialOrd for Architecture {

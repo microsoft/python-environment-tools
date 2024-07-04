@@ -15,7 +15,7 @@ pub enum EnvManagerType {
 
 impl Ord for EnvManagerType {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        format!("{:?}", self).cmp(&format!("{:?}", other))
+        format!("{self:?}").cmp(&format!("{other:?}"))
     }
 }
 impl PartialOrd for EnvManagerType {
@@ -72,7 +72,7 @@ impl std::fmt::Display for EnvManager {
         )
         .unwrap_or_default();
         if let Some(version) = &self.version {
-            writeln!(f, "   Version     : {}", version).unwrap_or_default();
+            writeln!(f, "   Version     : {version}").unwrap_or_default();
         }
         Ok(())
     }

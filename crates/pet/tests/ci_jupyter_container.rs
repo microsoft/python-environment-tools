@@ -138,38 +138,31 @@ fn verify_python_in_jupyter_contaner() {
             .expect(format!("Expected to find python environment {:?}", env.executable).as_str());
         assert_eq!(
             python_env.executable, env.executable,
-            "Expected exe to be same when comparing {:?} and {:?}",
-            python_env, env
+            "Expected exe to be same when comparing {python_env:?} and {env:?}"
         );
         assert_eq!(
             python_env.category, env.category,
-            "Expected category to be same when comparing {:?} and {:?}",
-            python_env, env
+            "Expected category to be same when comparing {python_env:?} and {env:?}"
         );
         assert_eq!(
             python_env.symlinks, env.symlinks,
-            "Expected symlinks to be same when comparing {:?} and {:?}",
-            python_env, env
+            "Expected symlinks to be same when comparing {python_env:?} and {env:?}"
         );
         assert_eq!(
             python_env.manager, env.manager,
-            "Expected manager to be same when comparing {:?} and {:?}",
-            python_env, env
+            "Expected manager to be same when comparing {python_env:?} and {env:?}"
         );
         assert_eq!(
             python_env.name, env.name,
-            "Expected name to be same when comparing {:?} and {:?}",
-            python_env, env
+            "Expected name to be same when comparing {python_env:?} and {env:?}"
         );
         assert_eq!(
             python_env.version, env.version,
-            "Expected version to be same when comparing {:?} and {:?}",
-            python_env, env
+            "Expected version to be same when comparing {python_env:?} and {env:?}"
         );
         assert_eq!(
             python_env.arch, env.arch,
-            "Expected arch to be same when comparing {:?} and {:?}",
-            python_env, env
+            "Expected arch to be same when comparing {python_env:?} and {env:?}"
         );
 
         // known issue https://github.com/microsoft/python-environment-tools/issues/64

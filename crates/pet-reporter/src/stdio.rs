@@ -41,7 +41,7 @@ impl Reporter for StdioReporter {
         let count = managers.get(&manager.tool).unwrap_or(&0) + 1;
         managers.insert(manager.tool, count);
         if self.print_list {
-            println!("{}", manager)
+            println!("{manager}")
         }
     }
 
@@ -50,7 +50,7 @@ impl Reporter for StdioReporter {
         let count = environments.get(&env.category).unwrap_or(&0) + 1;
         environments.insert(env.category, count);
         if self.print_list {
-            println!("{}", env)
+            println!("{env}")
         }
     }
 }

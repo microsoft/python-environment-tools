@@ -83,8 +83,7 @@ impl Locator for MacXCode {
         let xcode_folder_name = exe_str.split('/').nth(2).unwrap_or_default();
 
         let bin = PathBuf::from(format!(
-            "/Applications/{}/Contents/Developer/usr/bin",
-            xcode_folder_name
+            "/Applications/{xcode_folder_name}/Contents/Developer/usr/bin"
         ));
         let exe = bin.join("python3");
         if let Some(symlink) = resolve_symlink(&exe) {
