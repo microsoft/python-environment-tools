@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use log::{info, trace, warn};
+use log::{trace, warn};
 use pet_conda::CondaLocator;
 use pet_core::os_environment::{Environment, EnvironmentApi};
 use pet_core::reporter::Reporter;
@@ -45,12 +45,11 @@ pub fn find_and_report_envs(
         find_global_virtual_envs_time: Duration::from_secs(0),
         find_search_paths_time: Duration::from_secs(0),
     }));
-    info!("Started Refreshing Environments");
     let start = std::time::Instant::now();
 
     // From settings
-    let environment_paths = configuration.environment_paths.unwrap_or_default();
-    let search_paths = configuration.search_paths.unwrap_or_default();
+    let environment_directories = configuration.environment_directories.unwrap_or_default();
+    let project_directories = configuration.project_directories.unwrap_or_default();
     let conda_executable = configuration.conda_executable;
     thread::scope(|s| {
         // 1. Find using known global locators.
@@ -123,7 +122,7 @@ pub fn find_and_report_envs(
                     environment.get_env_var("XDG_DATA_HOME".into()),
                     environment.get_user_home(),
                 ),
-                environment_paths,
+                environment_directories,
             ]
             .concat();
             let global_env_search_paths: Vec<PathBuf> =
@@ -152,16 +151,16 @@ pub fn find_and_report_envs(
         // & users can have a lot of workspace folders and can have a large number fo files/directories
         // that could the discovery.
         s.spawn(|| {
-            if search_paths.is_empty() {
+            if project_directories.is_empty() {
                 return;
             }
             trace!(
                 "Searching for environments in custom folders: {:?}",
-                search_paths
+                project_directories
             );
             let start = std::time::Instant::now();
             find_python_environments_in_workspace_folders_recursive(
-                search_paths,
+                project_directories,
                 reporter,
                 locators,
             );

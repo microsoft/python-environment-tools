@@ -27,7 +27,7 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
 
     let mut config = Configuration::default();
     if let Ok(cwd) = env::current_dir() {
-        config.search_paths = Some(vec![cwd]);
+        config.project_directories = Some(vec![cwd]);
     }
     let locators = create_locators(conda_locator.clone());
     for locator in locators.iter() {

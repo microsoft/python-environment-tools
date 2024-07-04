@@ -29,7 +29,7 @@ pub mod manager;
 mod pyproject_toml;
 
 pub struct Poetry {
-    pub project_dirs: Arc<Mutex<Vec<PathBuf>>>,
+    pub project_directories: Arc<Mutex<Vec<PathBuf>>>,
     pub env_vars: EnvVariables,
     pub poetry_executable: Arc<Mutex<Option<PathBuf>>>,
     searched: AtomicBool,
@@ -41,7 +41,7 @@ impl Poetry {
         Poetry {
             searched: AtomicBool::new(false),
             search_result: Arc::new(Mutex::new(None)),
-            project_dirs: Arc::new(Mutex::new(vec![])),
+            project_directories: Arc::new(Mutex::new(vec![])),
             env_vars: EnvVariables::from(environment),
             poetry_executable: Arc::new(Mutex::new(None)),
         }
@@ -57,7 +57,7 @@ impl Poetry {
 
         let environments_using_spawn = environment_locations_spawn::list_environments(
             &manager.executable,
-            self.project_dirs.lock().unwrap().clone(),
+            self.project_directories.lock().unwrap().clone(),
             &manager,
         )
         .iter()
@@ -108,7 +108,7 @@ impl Poetry {
         if let Some(manager) = &manager {
             result.managers.push(manager.to_manager());
         }
-        if let Ok(values) = self.project_dirs.lock() {
+        if let Ok(values) = self.project_directories.lock() {
             let project_dirs = values.clone();
             drop(values);
             let envs = list_environments(&self.env_vars, &project_dirs.clone(), manager)
@@ -139,13 +139,13 @@ impl Locator for Poetry {
         "Poetry"
     }
     fn configure(&self, config: &Configuration) {
-        if let Some(search_paths) = &config.search_paths {
-            self.project_dirs.lock().unwrap().clear();
-            if !search_paths.is_empty() {
-                self.project_dirs
+        if let Some(project_directories) = &config.project_directories {
+            self.project_directories.lock().unwrap().clear();
+            if !project_directories.is_empty() {
+                self.project_directories
                     .lock()
                     .unwrap()
-                    .extend(search_paths.clone());
+                    .extend(project_directories.clone());
             }
         }
         if let Some(exe) = &config.poetry_executable {

@@ -24,13 +24,13 @@ pub struct LocatorResult {
 #[derive(Debug, Default, Clone)]
 pub struct Configuration {
     /// These are paths like workspace folders, where we can look for environments.
-    pub search_paths: Option<Vec<PathBuf>>,
+    pub project_directories: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
     pub poetry_executable: Option<PathBuf>,
     /// Custom locations where environments can be found.
     /// These are different from search_paths, as these are specific directories where environments are expected.
-    /// search_paths on the other hand can be any directory such as a workspace folder, where envs might never exist.
-    pub environment_paths: Option<Vec<PathBuf>>,
+    /// environment_directories on the other hand can be any directory such as a workspace folder, where envs might never exist.
+    pub environment_directories: Option<Vec<PathBuf>>,
 }
 
 pub trait Locator: Send + Sync {

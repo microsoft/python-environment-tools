@@ -16,3 +16,6 @@ target/
 .venv/
 tmp/
 temp/
+docs/node_modules/
+docs/package.json
+docs/package-lock.json
