@@ -37,7 +37,7 @@ pub struct Poetry {
 }
 
 impl Poetry {
-    pub fn new(environment: &dyn Environment) -> Self {
+    pub fn new(environment: Arc<dyn Environment>) -> Self {
         Poetry {
             searched: AtomicBool::new(false),
             search_result: Arc::new(Mutex::new(None)),
@@ -46,7 +46,7 @@ impl Poetry {
             poetry_executable: Arc::new(Mutex::new(None)),
         }
     }
-    pub fn from(environment: &dyn Environment) -> impl Locator {
+    pub fn from(environment: Arc<dyn Environment>) -> impl Locator {
         Poetry::new(environment)
     }
     pub fn find_with_executable(&self) -> Option<()> {

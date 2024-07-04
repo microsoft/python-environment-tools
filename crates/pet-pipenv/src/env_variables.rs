@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+use std::sync::Arc;
+
 use pet_core::os_environment::Environment;
 
 #[derive(Debug, Clone)]
@@ -13,7 +15,7 @@ pub struct EnvVariables {
 }
 
 impl EnvVariables {
-    pub fn from(env: &dyn Environment) -> Self {
+    pub fn from(env: Arc<dyn Environment>) -> Self {
         EnvVariables {
             pipenv_max_depth: env
                 .get_env_var("PIPENV_MAX_DEPTH".to_string())

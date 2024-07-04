@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::sync::Arc;
+
 use env_variables::EnvVariables;
 use environments::{get_project, is_virtualenvwrapper};
 use pet_core::{
@@ -21,7 +23,7 @@ pub struct VirtualEnvWrapper {
 }
 
 impl VirtualEnvWrapper {
-    pub fn from(environment: &dyn Environment) -> VirtualEnvWrapper {
+    pub fn from(environment: Arc<dyn Environment>) -> VirtualEnvWrapper {
         VirtualEnvWrapper {
             env_vars: EnvVariables::from(environment),
         }

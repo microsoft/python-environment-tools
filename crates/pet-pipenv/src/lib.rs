@@ -13,6 +13,7 @@ use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
 use std::path::Path;
+use std::sync::Arc;
 use std::{fs, path::PathBuf};
 
 mod env_variables;
@@ -64,7 +65,7 @@ pub struct PipEnv {
 }
 
 impl PipEnv {
-    pub fn from(environment: &dyn Environment) -> PipEnv {
+    pub fn from(environment: Arc<dyn Environment>) -> PipEnv {
         PipEnv {
             env_vars: EnvVariables::from(environment),
         }

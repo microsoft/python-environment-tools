@@ -4,7 +4,11 @@
 use log::{error, info, trace};
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
-use pet_core::{os_environment::EnvironmentApi, reporter::Reporter, Configuration, Locator};
+use pet_core::{
+    os_environment::{Environment, EnvironmentApi},
+    reporter::Reporter,
+    Configuration, Locator,
+};
 use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
@@ -27,6 +31,7 @@ pub struct Context {
     configuration: RwLock<Configuration>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<Conda>,
+    os_environment: Arc<dyn Environment>,
 }
 
 pub fn start_jsonrpc_server() {
@@ -34,15 +39,16 @@ pub fn start_jsonrpc_server() {
 
     // These are globals for the the lifetime of the server.
     // Hence passed around as Arcs via the context.
-    let environment = EnvironmentApi::new();
+    let environment = Arc::new(EnvironmentApi::new());
     let jsonrpc_reporter = Arc::new(jsonrpc::create_reporter());
     let reporter = Arc::new(CacheReporter::new(jsonrpc_reporter.clone()));
-    let conda_locator = Arc::new(Conda::from(&environment));
+    let conda_locator = Arc::new(Conda::from(environment.clone()));
     let context = Context {
         reporter,
-        locators: create_locators(conda_locator.clone()),
+        locators: create_locators(conda_locator.clone(), environment.clone()),
         conda_locator,
         configuration: RwLock::new(Configuration::default()),
+        os_environment: environment,
     };
 
     let mut handlers = HandlersKeyedByMethodName::new(Arc::new(context));
@@ -97,6 +103,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     config,
                     &context.locators,
                     context.conda_locator.clone(),
+                    context.os_environment.clone(),
                 );
                 let summary = summary.lock().unwrap();
                 for locator in summary.find_locators_times.iter() {
@@ -143,11 +150,12 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                 .project_directories;
             let search_paths = search_paths.unwrap_or_default();
             // Start in a new thread, we can have multiple resolve requests.
+            let environment = context.os_environment.clone();
             thread::spawn(move || {
                 let now = SystemTime::now();
                 trace!("Resolving env {:?}", executable);
                 if let Some(result) =
-                    resolve_environment(&executable, &context.locators, search_paths)
+                    resolve_environment(&executable, &context.locators, search_paths, environment)
                 {
                     if let Some(resolved) = result.resolved {
                         // Gather telemetry of this resolved env and see what we got wrong.

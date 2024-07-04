@@ -68,17 +68,23 @@ fn verify_validity_of_discovered_envs() {
 
     let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = test::create_reporter();
-    let environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&environment));
+    let environment = Arc::new(EnvironmentApi::new());
+    let conda_locator = Arc::new(Conda::from(environment.clone()));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), environment.clone());
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
     // Find all environments on this machine.
-    find_and_report_envs(&reporter, Default::default(), &locators, conda_locator);
+    find_and_report_envs(
+        &reporter,
+        Default::default(),
+        &locators,
+        conda_locator,
+        environment,
+    );
     let result = reporter.get_result();
 
     let environments = result.environments;
@@ -171,14 +177,15 @@ fn check_if_pipenv_exists() {
 
     setup();
     let reporter = test::create_reporter();
-    let environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&environment));
+    let environment = Arc::new(EnvironmentApi::new());
+    let conda_locator = Arc::new(Conda::from(environment.clone()));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone()),
+        &create_locators(conda_locator.clone(), environment.clone()),
         conda_locator,
+        environment,
     );
 
     let result = reporter.get_result();
@@ -332,17 +339,16 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     use std::{env, sync::Arc};
 
     let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
-    let os_environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&os_environment));
+    let os_environment = Arc::new(EnvironmentApi::new());
+    let conda_locator = Arc::new(Conda::from(os_environment.clone()));
     let mut config = Configuration::default();
     let search_paths = vec![project_dir.clone()];
     config.project_directories = Some(search_paths.clone());
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), os_environment.clone());
     for locator in locators.iter() {
         locator.configure(&config);
     }
-    let global_env_search_paths: Vec<PathBuf> =
-        get_search_paths_from_env_variables(&os_environment);
+    let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(os_environment);
 
     let env = PythonEnv::new(executable.clone(), None, None);
     let resolved = identify_python_environment_using_locators(
@@ -519,18 +525,22 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     use std::{env, sync::Arc};
 
     let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
-    let os_environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&os_environment));
+    let os_environment = Arc::new(EnvironmentApi::new());
+    let conda_locator = Arc::new(Conda::from(os_environment.clone()));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), os_environment.clone());
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
-    let env = resolve_environment(&executable, &locators, vec![project_dir.clone()]).expect(
-        format!("Failed to resolve environment using `resolve` for {environment:?}").as_str(),
-    );
+    let env = resolve_environment(
+        &executable,
+        &locators,
+        vec![project_dir.clone()],
+        os_environment,
+    )
+    .expect(format!("Failed to resolve environment using `resolve` for {environment:?}").as_str());
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
@@ -565,7 +575,7 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
 
     setup();
     let reporter = test::create_reporter();
-    let environment = EnvironmentApi::new();
+    let environment = Arc::new(EnvironmentApi::new());
     let conda_locator = Arc::new(Conda::from(&environment));
 
     find_and_report_envs(
@@ -573,6 +583,7 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
         Default::default(),
         &create_locators(conda_locator.clone()),
         conda_locator,
+        environment,
     );
 
     let result = reporter.get_result();

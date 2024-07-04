@@ -2,9 +2,9 @@
 // Licensed under the MIT License.
 
 use pet_core::os_environment::Environment;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
-pub fn get_search_paths_from_env_variables(environment: &dyn Environment) -> Vec<PathBuf> {
+pub fn get_search_paths_from_env_variables(environment: Arc<dyn Environment>) -> Vec<PathBuf> {
     // Exclude files from this folder, as they would have been discovered elsewhere (widows_store)
     // Also the exe is merely a pointer to another file.
     if let Some(home) = environment.get_user_home() {

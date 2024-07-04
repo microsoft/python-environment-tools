@@ -3,7 +3,7 @@
 
 use log::{trace, warn};
 use pet_conda::CondaLocator;
-use pet_core::os_environment::{Environment, EnvironmentApi};
+use pet_core::os_environment::Environment;
 use pet_core::reporter::Reporter;
 use pet_core::{Configuration, Locator};
 use pet_env_var_path::get_search_paths_from_env_variables;
@@ -36,6 +36,7 @@ pub fn find_and_report_envs(
     configuration: Configuration,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<dyn CondaLocator>,
+    os_environment: Arc<dyn Environment>,
 ) -> Arc<Mutex<Summary>> {
     let summary = Arc::new(Mutex::new(Summary {
         time: Duration::from_secs(0),
@@ -53,6 +54,7 @@ pub fn find_and_report_envs(
     let conda_executable = configuration.conda_executable;
     thread::scope(|s| {
         // 1. Find using known global locators.
+        let os_env = os_environment.clone();
         s.spawn(|| {
             // Find in all the finders
             let start = std::time::Instant::now();
@@ -86,17 +88,15 @@ pub fn find_and_report_envs(
             // & see if we can find more environments by spawning poetry.
             // But we will not wait for this to complete.
             thread::spawn(move || {
-                let env = EnvironmentApi::new();
-                Poetry::new(&env).find_with_executable();
+                Poetry::new(os_env).find_with_executable();
                 Some(())
             });
         });
         // Step 2: Search in PATH variable
+        let os_env = os_environment.clone();
         s.spawn(|| {
             let start = std::time::Instant::now();
-            let environment = EnvironmentApi::new();
-            let global_env_search_paths: Vec<PathBuf> =
-                get_search_paths_from_env_variables(&environment);
+            let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(os_env);
 
             trace!(
                 "Searching for environments in global folders: {:?}",
@@ -113,20 +113,19 @@ pub fn find_and_report_envs(
             summary.lock().unwrap().find_path_time = start.elapsed();
         });
         // Step 3: Search in some global locations for virtual envs.
+        let os_env = os_environment.clone();
         s.spawn(|| {
             let start = std::time::Instant::now();
-            let environment = EnvironmentApi::new();
             let search_paths: Vec<PathBuf> = [
                 list_global_virtual_envs_paths(
-                    environment.get_env_var("WORKON_HOME".into()),
-                    environment.get_env_var("XDG_DATA_HOME".into()),
-                    environment.get_user_home(),
+                    os_env.get_env_var("WORKON_HOME".into()),
+                    os_env.get_env_var("XDG_DATA_HOME".into()),
+                    os_env.get_user_home(),
                 ),
                 environment_directories,
             ]
             .concat();
-            let global_env_search_paths: Vec<PathBuf> =
-                get_search_paths_from_env_variables(&environment);
+            let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(os_env);
 
             trace!(
                 "Searching for environments in global venv folders: {:?}",

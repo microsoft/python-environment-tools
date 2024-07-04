@@ -44,7 +44,7 @@ pub struct Conda {
 }
 
 impl Conda {
-    pub fn from(env: &dyn Environment) -> Conda {
+    pub fn from(env: Arc<dyn Environment>) -> Conda {
         Conda {
             env_dirs: Arc::new(Mutex::new(vec![])),
             environments: Arc::new(Mutex::new(HashMap::new())),

@@ -20,16 +20,22 @@ fn verify_ci_poetry_global() {
 
     let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = test::create_reporter();
-    let environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&environment));
+    let environment = Arc::new(EnvironmentApi::new());
+    let conda_locator = Arc::new(Conda::from(environment.clone()));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), environment.clone());
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
-    find_and_report_envs(&reporter, Default::default(), &locators, conda_locator);
+    find_and_report_envs(
+        &reporter,
+        Default::default(),
+        &locators,
+        conda_locator,
+        environment,
+    );
 
     let result = reporter.get_result();
 
@@ -80,16 +86,22 @@ fn verify_ci_poetry_project() {
 
     let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = test::create_reporter();
-    let environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&environment));
+    let environment = Arc::new(EnvironmentApi::new());
+    let conda_locator = Arc::new(Conda::from(environment.clone()));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), environment.clone());
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
-    find_and_report_envs(&reporter, Default::default(), &locators, conda_locator);
+    find_and_report_envs(
+        &reporter,
+        Default::default(),
+        &locators,
+        conda_locator,
+        environment,
+    );
 
     let result = reporter.get_result();
 

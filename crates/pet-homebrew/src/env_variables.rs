@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_core::os_environment::Environment;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Debug, Clone)]
 // NOTE: Do not implement Default trait, as we do not want to ever forget to set the values.
@@ -20,7 +20,7 @@ pub struct EnvVariables {
 }
 
 impl EnvVariables {
-    pub fn from(env: &dyn Environment) -> Self {
+    pub fn from(env: Arc<dyn Environment>) -> Self {
         EnvVariables {
             home: env.get_user_home(),
             root: env.get_root(),
