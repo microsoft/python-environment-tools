@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use crate::{arch::Architecture, manager::EnvManager};
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 #[derive(Debug, Hash)]
 pub enum PythonEnvironmentCategory {
     Conda,

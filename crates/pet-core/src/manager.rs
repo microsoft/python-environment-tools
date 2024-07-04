@@ -4,9 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[derive(Debug, Hash)]
+#[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum EnvManagerType {
     Conda,
     Poetry,
