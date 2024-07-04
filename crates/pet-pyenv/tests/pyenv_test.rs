@@ -156,7 +156,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/3.9.9/bin/python",
         ])),
-        kind: PythonEnvironmentKind::Pyenv,
+        kind: Some(PythonEnvironmentKind::Pyenv),
         version: Some("3.9.9".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -178,7 +178,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env/bin/python",
         ])),
-        kind: PythonEnvironmentKind::PyenvVirtualEnv,
+        kind: Some(PythonEnvironmentKind::PyenvVirtualEnv),
         version: Some("3.10.13".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -200,7 +200,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/3.12.1/bin/python",
         ])),
-        kind: PythonEnvironmentKind::Pyenv,
+        kind: Some(PythonEnvironmentKind::Pyenv),
         version: Some("3.12.1".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -222,7 +222,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/3.13-dev/bin/python",
         ])),
-        kind: PythonEnvironmentKind::Pyenv,
+        kind: Some(PythonEnvironmentKind::Pyenv),
         version: Some("3.13-dev".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -244,7 +244,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/3.12.1a3/bin/python",
         ])),
-        kind: PythonEnvironmentKind::Pyenv,
+        kind: Some(PythonEnvironmentKind::Pyenv),
         version: Some("3.12.1a3".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -266,7 +266,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/nogil-3.9.10-1/bin/python",
         ])),
-        kind: PythonEnvironmentKind::Pyenv,
+        kind: Some(PythonEnvironmentKind::Pyenv),
         version: Some("3.9.10".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -288,7 +288,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/pypy3.9-7.3.15/bin/python",
         ])),
-        kind: PythonEnvironmentKind::Pyenv,
+        kind: Some(PythonEnvironmentKind::Pyenv),
         version: Some("3.9.18".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -308,7 +308,7 @@ fn find_pyenv_envs() {
         project: None,
         name: Some("base".to_string()),
         executable: Some(conda_dir.join("bin").join("python")),
-        kind: PythonEnvironmentKind::Conda,
+        kind: Some(PythonEnvironmentKind::Conda),
         version: Some("3.11.5".to_string()),
         prefix: Some(conda_dir.clone()),
         manager: Some(expected_conda_manager.clone()),
@@ -321,7 +321,7 @@ fn find_pyenv_envs() {
         project: None,
         name: Some("one".to_string()),
         executable: Some(conda_dir.join("envs").join("one").join("python")),
-        kind: PythonEnvironmentKind::Conda,
+        kind: Some(PythonEnvironmentKind::Conda),
         version: Some("3.11.1".to_string()),
         prefix: Some(conda_dir.join("envs").join("one")),
         manager: Some(expected_conda_manager.clone()),
@@ -334,7 +334,7 @@ fn find_pyenv_envs() {
         project: None,
         name: Some("two".to_string()),
         executable: Some(conda_dir.join("envs").join("two").join("python")),
-        kind: PythonEnvironmentKind::Conda,
+        kind: Some(PythonEnvironmentKind::Conda),
         version: Some("3.11.1".to_string()),
         prefix: Some(conda_dir.join("envs").join("two")),
         manager: Some(expected_conda_manager.clone()),
@@ -401,7 +401,7 @@ fn resolve_pyenv_environment() {
         project: None,
         name: None,
         executable: Some(executable.clone()),
-        kind: PythonEnvironmentKind::Pyenv,
+        kind: Some(PythonEnvironmentKind::Pyenv),
         version: Some("3.9.9".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -420,7 +420,7 @@ fn resolve_pyenv_environment() {
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env/bin/python",
         ])),
-        kind: PythonEnvironmentKind::PyenvVirtualEnv,
+        kind: Some(PythonEnvironmentKind::PyenvVirtualEnv),
         version: Some("3.10.13".to_string()),
         prefix: Some(resolve_test_path(&[
             home.to_str().unwrap(),
@@ -491,5 +491,5 @@ fn resolve_pyenv_environment() {
     ));
 
     assert_eq!(result.is_some(), true);
-    assert_eq!(result.unwrap().kind, PythonEnvironmentKind::Conda);
+    assert_eq!(result.unwrap().kind, Some(PythonEnvironmentKind::Conda));
 }

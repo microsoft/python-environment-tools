@@ -52,9 +52,9 @@ impl PotentialPython {
             let env_path = norm_case(PathBuf::from(result.env_path));
 
             Some(
-                PythonEnvironmentBuilder::new(
+                PythonEnvironmentBuilder::new(Some(
                     pet_core::python_environment::PythonEnvironmentKind::WindowsStore,
-                )
+                ))
                 .display_name(Some(result.display_name))
                 .executable(Some(exe.clone()))
                 .prefix(Some(env_path.clone()))

@@ -8,7 +8,7 @@ use crate::python_environment::PythonEnvironmentKind;
 /// And we will not report that as an inaccuracy.
 pub struct InaccuratePythonEnvironmentInfo {
     /// Python Env kind
-    pub kind: PythonEnvironmentKind,
+    pub kind: Option<PythonEnvironmentKind>,
     /// Whether the actual exe is not what we expected.
     pub invalid_executable: Option<bool>,
     /// Whether the actual exe was not even in the list of symlinks that we expected.

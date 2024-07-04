@@ -58,7 +58,7 @@ impl Locator for Venv {
                 symlinks.append(&mut find_executables(prefix));
             }
             Some(
-                PythonEnvironmentBuilder::new(PythonEnvironmentKind::Venv)
+                PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
                     .executable(Some(env.executable.clone()))
                     .version(version)
                     .prefix(prefix)

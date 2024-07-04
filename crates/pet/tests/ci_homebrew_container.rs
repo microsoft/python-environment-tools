@@ -31,7 +31,7 @@ fn verify_python_in_homebrew_contaner() {
     let environments = result.environments;
 
     let python3_12 = PythonEnvironment {
-        kind: PythonEnvironmentKind::Homebrew,
+        kind: Some(PythonEnvironmentKind::Homebrew),
         executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3")),
         version: Some("3.12.4".to_string()), // This can change on CI, so we don't check it
         symlinks: Some(vec![
@@ -49,7 +49,7 @@ fn verify_python_in_homebrew_contaner() {
         ..Default::default()
     };
     let python3_11 = PythonEnvironment {
-        kind: PythonEnvironmentKind::Homebrew,
+        kind: Some(PythonEnvironmentKind::Homebrew),
         executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.11")),
         version: Some("3.11.9".to_string()), // This can change on CI, so we don't check it
         symlinks: Some(vec![

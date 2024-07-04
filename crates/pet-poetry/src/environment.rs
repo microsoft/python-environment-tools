@@ -24,7 +24,7 @@ pub fn create_poetry_env(
     }
     let version = version::from_creator_for_virtual_env(prefix);
     Some(
-        PythonEnvironmentBuilder::new(PythonEnvironmentKind::Poetry)
+        PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Poetry))
             .executable(Some(executables[0].clone()))
             .prefix(Some(prefix.clone()))
             .version(version)

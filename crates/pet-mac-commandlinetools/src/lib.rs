@@ -171,7 +171,7 @@ impl Locator for MacCmdLineTools {
         }
 
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentKind::MacCommandLineTools)
+            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::MacCommandLineTools))
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(prefix)

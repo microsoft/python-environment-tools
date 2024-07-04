@@ -49,7 +49,7 @@ fn verify_python_in_jupyter_contaner() {
     let environments = result.environments;
 
     let conda = PythonEnvironment {
-        kind: PythonEnvironmentKind::Conda,
+        kind: Some(PythonEnvironmentKind::Conda),
         name: Some("base".to_string()),
         executable: Some(PathBuf::from("/opt/conda/bin/python")),
         prefix: Some(PathBuf::from("/opt/conda")),
@@ -69,7 +69,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
     let codespace_python = PythonEnvironment {
-        kind: PythonEnvironmentKind::GlobalPaths,
+        kind: Some(PythonEnvironmentKind::GlobalPaths),
         executable: Some(PathBuf::from("/home/codespace/.python/current/bin/python")),
         prefix: Some(PathBuf::from("/usr/local/python/3.10.13")),
         version: Some("3.10.13.final.0".to_string()),
@@ -83,7 +83,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
     let current_python = PythonEnvironment {
-        kind: PythonEnvironmentKind::GlobalPaths,
+        kind: Some(PythonEnvironmentKind::GlobalPaths),
         executable: Some(PathBuf::from("/usr/local/python/current/bin/python")),
         prefix: Some(PathBuf::from("/usr/local/python/3.10.13")),
         version: Some("3.10.13.final.0".to_string()),
@@ -97,7 +97,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
     let usr_bin_python = PythonEnvironment {
-        kind: PythonEnvironmentKind::LinuxGlobal,
+        kind: Some(PythonEnvironmentKind::LinuxGlobal),
         executable: Some(PathBuf::from("/usr/bin/python3")),
         prefix: Some(PathBuf::from("/usr")),
         version: Some("3.8.10.final.0".to_string()),
@@ -110,7 +110,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
     let bin_python = PythonEnvironment {
-        kind: PythonEnvironmentKind::LinuxGlobal,
+        kind: Some(PythonEnvironmentKind::LinuxGlobal),
         executable: Some(PathBuf::from("/bin/python3")),
         prefix: Some(PathBuf::from("/usr")),
         version: Some("3.8.10.final.0".to_string()),

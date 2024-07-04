@@ -104,7 +104,7 @@ impl Locator for PipEnv {
             }
         }
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentKind::Pipenv)
+            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Pipenv))
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(prefix)

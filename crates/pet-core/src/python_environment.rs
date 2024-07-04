@@ -41,7 +41,7 @@ impl PartialOrd for PythonEnvironmentKind {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 // Python environment.
 // Any item that has information is known to be accurate, if an item is missing it is unknown.
 pub struct PythonEnvironment {
@@ -51,7 +51,7 @@ pub struct PythonEnvironment {
     pub name: Option<String>,
     // Python executable, can be empty in the case of conda envs that do not have Python installed in them.
     pub executable: Option<PathBuf>,
-    pub kind: PythonEnvironmentKind,
+    pub kind: Option<PythonEnvironmentKind>,
     pub version: Option<String>,
     // SysPrefix for the environment.
     pub prefix: Option<PathBuf>,
@@ -93,31 +93,10 @@ impl PartialOrd for PythonEnvironment {
     }
 }
 
-impl Default for PythonEnvironment {
-    fn default() -> Self {
-        Self {
-            display_name: None,
-            name: None,
-            executable: None,
-            // Sometimes we might not know the env type.
-            // Lets never default these to System/Global or others as thats not true.
-            // Not knowing does not mean it is a system env.
-            kind: PythonEnvironmentKind::Unknown,
-            version: None,
-            prefix: None,
-            manager: None,
-            project: None,
-            arch: None,
-            symlinks: None,
-            search_path: None,
-        }
-    }
-}
-
 impl PythonEnvironment {
     pub fn new(
         executable: Option<PathBuf>,
-        kind: PythonEnvironmentKind,
+        kind: Option<PythonEnvironmentKind>,
         prefix: Option<PathBuf>,
         manager: Option<EnvManager>,
         version: Option<String>,
@@ -205,7 +184,7 @@ pub struct PythonEnvironmentBuilder {
     display_name: Option<String>,
     name: Option<String>,
     executable: Option<PathBuf>,
-    kind: PythonEnvironmentKind,
+    kind: Option<PythonEnvironmentKind>,
     version: Option<String>,
     prefix: Option<PathBuf>,
     manager: Option<EnvManager>,
@@ -216,7 +195,7 @@ pub struct PythonEnvironmentBuilder {
 }
 
 impl PythonEnvironmentBuilder {
-    pub fn new(kind: PythonEnvironmentKind) -> Self {
+    pub fn new(kind: Option<PythonEnvironmentKind>) -> Self {
         Self {
             kind,
             display_name: None,
@@ -359,11 +338,11 @@ impl PythonEnvironmentBuilder {
 // Given a list of executables, return the one with the shortest path.
 // The shortest path is the most likely to be most user friendly.
 fn get_shortest_executable(
-    kind: &PythonEnvironmentKind,
+    kind: &Option<PythonEnvironmentKind>,
     exes: &Option<Vec<PathBuf>>,
 ) -> Option<PathBuf> {
     // For windows store, the exe should always be the one in the WindowsApps folder.
-    if *kind == PythonEnvironmentKind::WindowsStore {
+    if *kind == Some(PythonEnvironmentKind::WindowsStore) {
         if let Some(exes) = exes {
             if let Some(exe) = exes.iter().find(|e| {
                 e.to_string_lossy().contains("AppData")
@@ -398,7 +377,7 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
         Some(exe.clone())
     } else if let Some(prefix) = &env.prefix {
         // If this is a conda env without Python, then the exe will be prefix/bin/python
-        if env.kind == PythonEnvironmentKind::Conda {
+        if env.kind == Some(PythonEnvironmentKind::Conda) {
             Some(prefix.join("bin").join(if cfg!(windows) {
                 "python.exe"
             } else {

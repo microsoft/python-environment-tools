@@ -129,7 +129,7 @@ impl Locator for MacPythonOrg {
         symlinks.dedup();
 
         Some(
-            PythonEnvironmentBuilder::new(PythonEnvironmentKind::MacPythonOrg)
+            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::MacPythonOrg))
                 .executable(Some(executable.clone()))
                 .version(Some(version))
                 .prefix(Some(prefix.to_path_buf()))

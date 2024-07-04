@@ -26,7 +26,7 @@ fn find_conda_env_without_manager() {
 
     assert_eq!(env.prefix, path.clone().into());
     assert_eq!(env.arch, Architecture::X64.into());
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable, path.join("bin").join("python").into());
     assert_eq!(env.version, "3.12.2".to_string().into());
     assert_eq!(env.manager, None);
@@ -75,7 +75,7 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
 
     assert_eq!(env.prefix, path.clone().into());
     assert_eq!(env.arch, Architecture::X64.into());
-    assert_eq!(env.kind, PythonEnvironmentKind::Conda);
+    assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
     assert_eq!(env.executable, path.join("bin").join("python").into());
     assert_eq!(env.version, "3.12.2".to_string().into());
     assert_eq!(

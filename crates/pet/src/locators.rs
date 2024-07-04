@@ -169,9 +169,9 @@ pub fn identify_and_set_search_path(env: &mut PythonEnvironment, search_path: &V
     // then thats a weird situation, either way, when we cache the result it will re-appear (however for all other workspaces as well)
     // Thats fine for now (if users complain then we'll find out that there's a problem and we can fix it then).
     // Else no need to try and identify/fix edge cases that may not exist.
-    if env.kind == PythonEnvironmentKind::Conda
-        || env.kind == PythonEnvironmentKind::Venv
-        || env.kind == PythonEnvironmentKind::VirtualEnv
+    if env.kind == Some(PythonEnvironmentKind::Conda)
+        || env.kind == Some(PythonEnvironmentKind::Venv)
+        || env.kind == Some(PythonEnvironmentKind::VirtualEnv)
     {
         if let Some(prefix) = &env.prefix {
             for path in search_path {
@@ -190,7 +190,7 @@ fn create_unknown_env(
 ) -> PythonEnvironment {
     // Find all the python exes in the same bin directory.
 
-    PythonEnvironmentBuilder::new(fallback_category.unwrap_or(PythonEnvironmentKind::Unknown))
+    PythonEnvironmentBuilder::new(fallback_category)
         .symlinks(find_symlinks(&resolved_env.executable))
         .executable(Some(resolved_env.executable))
         .prefix(Some(resolved_env.prefix))
