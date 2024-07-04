@@ -57,13 +57,13 @@ pub fn start_jsonrpc_server() {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RequestOptions {
     /// These are paths like workspace folders, where we can look for environments.
-    pub search_paths: Option<Vec<PathBuf>>,
+    pub project_directories: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
     pub poetry_executable: Option<PathBuf>,
     /// Custom locations where environments can be found.
     /// These are different from search_paths, as these are specific directories where environments are expected.
     /// search_paths on the other hand can be any directory such as a workspace folder, where envs might never exist.
-    pub environment_paths: Option<Vec<PathBuf>>,
+    pub environment_directories: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -85,8 +85,11 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 let mut cfg = context.configuration.write().unwrap();
-                cfg.search_paths = request_options.search_paths;
+                cfg.project_directories = request_options.project_directories;
                 cfg.conda_executable = request_options.conda_executable;
+                cfg.environment_directories = request_options.environment_directories;
+                cfg.poetry_executable = request_options.poetry_executable;
+                trace!("Start refreshing environments, config: {:?}", cfg);
                 drop(cfg);
                 let config = context.configuration.read().unwrap().clone();
                 for locator in context.locators.iter() {
@@ -115,6 +118,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     "Environments in custom search paths found in {:?}",
                     summary.find_search_paths_time
                 );
+                trace!("Finished refreshing environments in {:?}", summary.time);
                 send_reply(id, Some(RefreshResult::new(summary.time)));
             });
         }
@@ -149,7 +153,12 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
     match serde_json::from_value::<ResolveOptions>(params.clone()) {
         Ok(request_options) => {
             let executable = request_options.executable.clone();
-            let search_paths = context.configuration.read().unwrap().clone().search_paths;
+            let search_paths = context
+                .configuration
+                .read()
+                .unwrap()
+                .clone()
+                .project_directories;
             let search_paths = search_paths.unwrap_or_default();
             // Start in a new thread, we can have multiple resolve requests.
             thread::spawn(move || {

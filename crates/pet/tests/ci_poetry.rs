@@ -23,7 +23,7 @@ fn verify_ci_poetry_global() {
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let mut config = Configuration::default();
-    config.search_paths = Some(vec![project_dir.clone()]);
+    config.project_directories = Some(vec![project_dir.clone()]);
     let locators = create_locators(conda_locator.clone());
     for locator in locators.iter() {
         locator.configure(&config);
@@ -84,7 +84,7 @@ fn verify_ci_poetry_project() {
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let mut config = Configuration::default();
-    config.search_paths = Some(vec![project_dir.clone()]);
+    config.project_directories = Some(vec![project_dir.clone()]);
     let locators = create_locators(conda_locator.clone());
     for locator in locators.iter() {
         locator.configure(&config);
