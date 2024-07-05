@@ -78,12 +78,7 @@ fn verify_validity_of_discovered_envs() {
     }
 
     // Find all environments on this machine.
-    find_and_report_envs(
-        &reporter,
-        Default::default(),
-        &locators,
-        &environment,
-    );
+    find_and_report_envs(&reporter, Default::default(), &locators, &environment);
     let result = reporter.get_result();
 
     let environments = result.environments;
