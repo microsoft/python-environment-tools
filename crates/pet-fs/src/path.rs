@@ -1,7 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::{Path, PathBuf};
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 // Similar to fs::canonicalize, but ignores UNC paths and returns the path as is (for windows).
 // Usefulfor windows to ensure we have the paths in the right casing.
@@ -63,5 +66,26 @@ pub fn resolve_symlink<T: AsRef<Path>>(exe: &T) -> Option<PathBuf> {
         }
     } else {
         None
+    }
+}
+
+pub fn expand_path(path: PathBuf) -> PathBuf {
+    if path.starts_with("~") {
+        if let Some(ref home) = get_user_home() {
+            if let Ok(path) = path.strip_prefix("~") {
+                return home.join(path);
+            } else {
+                return path;
+            }
+        }
+    }
+    path
+}
+
+fn get_user_home() -> Option<PathBuf> {
+    let home = env::var("HOME").or_else(|_| env::var("USERPROFILE"));
+    match home {
+        Ok(home) => Some(norm_case(PathBuf::from(home))),
+        Err(_) => None,
     }
 }

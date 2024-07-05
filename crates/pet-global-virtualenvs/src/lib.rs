@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_conda::utils::is_conda_env;
-use pet_fs::path::norm_case;
+use pet_fs::path::{expand_path, norm_case};
 use std::{fs, path::PathBuf};
 
 fn get_global_virtualenv_dirs(
@@ -13,16 +13,9 @@ fn get_global_virtualenv_dirs(
     let mut venv_dirs: Vec<PathBuf> = vec![];
 
     if let Some(work_on_home) = work_on_home_env_var {
-        let work_on_home = norm_case(PathBuf::from(work_on_home));
+        let work_on_home = norm_case(expand_path(PathBuf::from(work_on_home)));
         if work_on_home.exists() {
             venv_dirs.push(work_on_home);
-        } else if let Some(home) = &user_home {
-            if let Ok(work_on_home) = work_on_home.strip_prefix("~") {
-                let work_on_home = home.join(work_on_home);
-                if work_on_home.exists() {
-                    venv_dirs.push(work_on_home);
-                }
-            }
         }
     }
 

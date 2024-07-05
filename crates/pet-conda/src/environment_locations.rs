@@ -7,7 +7,7 @@ use crate::{
     utils::{is_conda_env, is_conda_install},
 };
 use log::trace;
-use pet_fs::path::norm_case;
+use pet_fs::path::{expand_path, norm_case};
 use pet_python_utils::platform_dirs::Platformdirs;
 use std::{
     fs,
@@ -101,17 +101,8 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
         // Expland variables in some of these
         // https://docs.conda.io/projects/conda/en/4.13.x/user-guide/configuration/use-condarc.html#expansion-of-environment-variables
         if let Some(conda_envs_path) = &env_vars.conda_envs_path {
-            let conda_envs_path = PathBuf::from(conda_envs_path.clone());
-            if conda_envs_path.starts_with("~") {
-                if let Ok(conda_envs_path) = conda_envs_path.strip_prefix("~") {
-                    let conda_envs_path = home.join(conda_envs_path);
-                    known_conda_paths.push(conda_envs_path);
-                } else {
-                    known_conda_paths.push(conda_envs_path);
-                }
-            } else {
-                known_conda_paths.push(conda_envs_path);
-            }
+            let conda_envs_path = expand_path(PathBuf::from(conda_envs_path.clone()));
+            known_conda_paths.push(conda_envs_path);
         }
 
         for path in known_conda_paths {
@@ -183,6 +174,17 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
                     .collect(),
             );
         }
+    } else {
+        // The dir could already be the `envs` directory.
+        if let Ok(entries) = fs::read_dir(conda_dir) {
+            envs.append(
+                &mut entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter(|p| is_conda_env(p))
+                    .collect(),
+            );
+        }
     }
 
     envs.sort();
@@ -222,6 +224,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
             known_paths.push(Path::new(&env_variable).join("anaconda3"));
             known_paths.push(Path::new(&env_variable).join("miniconda3"));
             known_paths.push(Path::new(&env_variable).join("miniforge3"));
+            known_paths.push(Path::new(&env_variable).join("micromamba"));
         }
     }
     if !home_drive.is_empty() {
@@ -231,12 +234,13 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(Path::new(&home_drive).join("anaconda3"));
         known_paths.push(Path::new(&home_drive).join("miniconda"));
         known_paths.push(Path::new(&home_drive).join("miniforge3"));
+        known_paths.push(Path::new(&home_drive).join("micromamba"));
     }
     if let Some(ref conda_root) = env_vars.conda_root {
-        known_paths.push(PathBuf::from(conda_root.clone()));
+        known_paths.push(expand_path(PathBuf::from(conda_root.clone())));
     }
     if let Some(ref conda_prefix) = env_vars.conda_prefix {
-        known_paths.push(PathBuf::from(conda_prefix.clone()));
+        known_paths.push(expand_path(PathBuf::from(conda_prefix.clone())));
     }
     if let Some(ref conda) = env_vars.conda {
         known_paths.push(PathBuf::from(conda));
@@ -245,6 +249,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(home.clone().join("anaconda3"));
         known_paths.push(home.clone().join("miniconda3"));
         known_paths.push(home.clone().join("miniforge3"));
+        known_paths.push(home.clone().join("micromamba"));
         // E.g. C:\Users\user name\.conda where we have `envs`` under this directory.
         known_paths.push(home.join(".conda"));
         // E.g. C:\Users\user name\AppData\Local\conda\conda\envs
@@ -273,12 +278,13 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
 #[cfg(unix)]
 pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
     let mut known_paths = vec![];
+    let home_value = env_vars.clone().home.unwrap_or_default();
     let directories_to_look_in = [
         "/opt",
         "/usr/share",
         "/usr/local",
         "/usr",
-        "/home",
+        home_value.to_str().unwrap_or_default(),
         "", // We need to look in `/anaconda3` and `/miniconda3` as well.
     ];
     for directory in directories_to_look_in.iter() {
@@ -288,15 +294,16 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(PathBuf::from(format!("{directory}/miniconda3")));
         known_paths.push(PathBuf::from(format!("{directory}/miniforge")));
         known_paths.push(PathBuf::from(format!("{directory}/miniforge3")));
+        known_paths.push(PathBuf::from(format!("{directory}/micromamba")));
     }
     if let Some(ref conda_root) = env_vars.conda_root {
-        known_paths.push(PathBuf::from(conda_root.clone()));
+        known_paths.push(expand_path(PathBuf::from(conda_root.clone())));
     }
     if let Some(ref conda_prefix) = env_vars.conda_prefix {
-        known_paths.push(PathBuf::from(conda_prefix.clone()));
+        known_paths.push(expand_path(PathBuf::from(conda_prefix.clone())));
     }
     if let Some(ref conda) = env_vars.conda {
-        known_paths.push(PathBuf::from(conda));
+        known_paths.push(expand_path(PathBuf::from(conda)));
     }
     if let Some(ref home) = env_vars.home {
         known_paths.push(home.clone().join("anaconda"));
@@ -304,6 +311,7 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(home.clone().join("miniconda"));
         known_paths.push(home.clone().join("miniconda3"));
         known_paths.push(home.clone().join("miniforge3"));
+        known_paths.push(home.clone().join("micromamba"));
         known_paths.push(home.join(".conda"));
     }
     known_paths.sort();

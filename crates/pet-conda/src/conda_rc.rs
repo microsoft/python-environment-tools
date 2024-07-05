@@ -3,6 +3,7 @@
 
 use crate::env_variables::EnvVariables;
 use log::trace;
+use pet_fs::path::expand_path;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -177,7 +178,7 @@ fn get_conda_conda_rc_from_path(conda_rc: &PathBuf) -> Option<Condarc> {
 fn parse_conda_rc(conda_rc: &Path) -> Option<Condarc> {
     let reader = fs::read_to_string(conda_rc).ok()?;
     trace!("Possible conda_rc: {:?}", conda_rc);
-    if let Some(cfg) = parse_conda_rc_contents(&reader, None) {
+    if let Some(cfg) = parse_conda_rc_contents(&reader) {
         Some(Condarc {
             env_dirs: cfg.env_dirs,
             files: vec![conda_rc.to_path_buf()],
@@ -190,7 +191,7 @@ fn parse_conda_rc(conda_rc: &Path) -> Option<Condarc> {
     }
 }
 
-fn parse_conda_rc_contents(contents: &str, home: Option<PathBuf>) -> Option<Condarc> {
+fn parse_conda_rc_contents(contents: &str) -> Option<Condarc> {
     let mut env_dirs = vec![];
 
     if let Ok(docs) = YamlLoader::load_from_str(contents) {
@@ -210,19 +211,7 @@ fn parse_conda_rc_contents(contents: &str, home: Option<PathBuf>) -> Option<Cond
                 if item_str.is_empty() {
                     continue;
                 }
-                let item = PathBuf::from(item_str.trim());
-                if item.starts_with("~") {
-                    if let Some(ref home) = home {
-                        if let Ok(item) = item.strip_prefix("~") {
-                            let item = home.join(item);
-                            env_dirs.push(item);
-                        } else {
-                            env_dirs.push(item);
-                        }
-                    }
-                } else {
-                    env_dirs.push(item);
-                }
+                env_dirs.push(expand_path(PathBuf::from(item_str.trim())));
             }
         }
         if let Some(items) = doc["envs_path"].as_vec() {
@@ -231,19 +220,7 @@ fn parse_conda_rc_contents(contents: &str, home: Option<PathBuf>) -> Option<Cond
                 if item_str.is_empty() {
                     continue;
                 }
-                let item = PathBuf::from(item_str.trim());
-                if item.starts_with("~") {
-                    if let Some(ref home) = home {
-                        if let Ok(item) = item.strip_prefix("~") {
-                            let item = home.join(item);
-                            env_dirs.push(item);
-                        } else {
-                            env_dirs.push(item);
-                        }
-                    }
-                } else {
-                    env_dirs.push(item);
-                }
+                env_dirs.push(expand_path(PathBuf::from(item_str.trim())));
             }
         }
     }
@@ -273,16 +250,13 @@ envs_path:
 "#;
 
         assert_eq!(
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
-                .unwrap()
-                .env_dirs,
+            parse_conda_rc_contents(&cfg).unwrap().env_dirs,
             [
-                "/Users/username/dev/envs",
-                "/opt/conda/envs",
-                "/opt/somep lace/envs",
-                "/Users/username2/dev/envs2"
+                PathBuf::from("/Users/username/dev/envs"),
+                PathBuf::from("/opt/conda/envs"),
+                PathBuf::from("/opt/somep lace/envs"),
+                expand_path(PathBuf::from("~/dev/envs2"))
             ]
-            .map(PathBuf::from)
         );
 
         let cfg = r#"
