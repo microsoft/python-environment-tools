@@ -35,7 +35,7 @@ fn verify_python_in_jupyter_contaner() {
     setup();
 
     let reporter = test::create_reporter();
-    let environment = Arc::new(EnvironmentApi::new());
+    let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
 
     find_and_report_envs(
