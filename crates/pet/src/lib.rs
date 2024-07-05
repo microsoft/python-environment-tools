@@ -34,7 +34,7 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
         locator.configure(&config);
     }
 
-    let summary = find_and_report_envs(&reporter, config, &locators, conda_locator, &environment);
+    let summary = find_and_report_envs(&reporter, config, &locators, &environment);
 
     if print_summary {
         let summary = summary.lock().unwrap();

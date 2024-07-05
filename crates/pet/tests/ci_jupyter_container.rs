@@ -42,7 +42,6 @@ fn verify_python_in_jupyter_contaner() {
         &reporter,
         Default::default(),
         &create_locators(conda_locator.clone(), &environment),
-        conda_locator,
         &environment,
     );
     let result = reporter.get_result();

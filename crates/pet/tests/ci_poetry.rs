@@ -29,13 +29,7 @@ fn verify_ci_poetry_global() {
         locator.configure(&config);
     }
 
-    find_and_report_envs(
-        &reporter,
-        Default::default(),
-        &locators,
-        conda_locator,
-        &environment,
-    );
+    find_and_report_envs(&reporter, Default::default(), &locators, &environment);
 
     let result = reporter.get_result();
 
@@ -95,13 +89,7 @@ fn verify_ci_poetry_project() {
         locator.configure(&config);
     }
 
-    find_and_report_envs(
-        &reporter,
-        Default::default(),
-        &locators,
-        conda_locator,
-        &environment,
-    );
+    find_and_report_envs(&reporter, Default::default(), &locators, &environment);
 
     let result = reporter.get_result();
 
