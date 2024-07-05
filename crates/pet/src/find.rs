@@ -36,7 +36,7 @@ pub fn find_and_report_envs(
     configuration: Configuration,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<dyn CondaLocator>,
-    os_environment: &dyn Environment,
+    environment: &dyn Environment,
 ) -> Arc<Mutex<Summary>> {
     let summary = Arc::new(Mutex::new(Summary {
         time: Duration::from_secs(0),
@@ -96,7 +96,7 @@ pub fn find_and_report_envs(
         s.spawn(|| {
             let start = std::time::Instant::now();
             let global_env_search_paths: Vec<PathBuf> =
-                get_search_paths_from_env_variables(os_environment);
+                get_search_paths_from_env_variables(environment);
 
             trace!(
                 "Searching for environments in global folders: {:?}",
@@ -118,15 +118,15 @@ pub fn find_and_report_envs(
             let start = std::time::Instant::now();
             let search_paths: Vec<PathBuf> = [
                 list_global_virtual_envs_paths(
-                    os_environment.get_env_var("WORKON_HOME".into()),
-                    os_environment.get_env_var("XDG_DATA_HOME".into()),
-                    os_environment.get_user_home(),
+                    environment.get_env_var("WORKON_HOME".into()),
+                    environment.get_env_var("XDG_DATA_HOME".into()),
+                    environment.get_user_home(),
                 ),
                 environment_directories,
             ]
             .concat();
             let global_env_search_paths: Vec<PathBuf> =
-                get_search_paths_from_env_variables(os_environment);
+                get_search_paths_from_env_variables(environment);
 
             trace!(
                 "Searching for environments in global venv folders: {:?}",
