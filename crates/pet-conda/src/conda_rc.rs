@@ -326,35 +326,17 @@ channels:
 channel_priority: strict
 "#;
 
-        println!(
-            "Hello {:?}",
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))),
+        assert!(
+            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
+                .unwrap()
+                .env_dirs
+                .is_empty(),
         );
-        println!(
-            "Hello {:?}",
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))),
+        assert!(
+            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
+                .unwrap()
+                .files
+                .is_empty(),
         );
-        println!(
-            "Hello {:?}",
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))),
-        );
-        println!(
-            "Hello {:?}",
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))),
-        );
-        println!(
-            "Hello {:?}",
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))),
-        );
-        println!(
-            "Hello {:?}",
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))),
-        );
-        println!(
-            "Hello {:?}",
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))),
-        );
-
-        assert!(parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))).is_none(),);
     }
 }
