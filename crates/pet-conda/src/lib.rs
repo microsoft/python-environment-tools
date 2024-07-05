@@ -3,7 +3,7 @@
 
 use conda_info::CondaInfo;
 use env_variables::EnvVariables;
-use environment_locations::{get_conda_environment_paths, get_conda_envs_from_environment_txt, get_environments};
+use environment_locations::{get_conda_environment_paths, get_environments};
 use environments::{get_conda_environment_info, CondaEnvironment};
 use log::{error, warn};
 use manager::CondaManager;
@@ -44,7 +44,7 @@ pub struct Conda {
 }
 
 impl Conda {
-    pub fn from(env: Arc<dyn Environment>) -> Conda {
+    pub fn from(env: &dyn Environment) -> Conda {
         Conda {
             env_dirs: Arc::new(Mutex::new(vec![])),
             environments: Arc::new(Mutex::new(HashMap::new())),
@@ -224,12 +224,6 @@ impl Locator for Conda {
         let additional_paths = self.env_dirs.lock().unwrap().clone();
         thread::scope(|s| {
             // 1. Get a list of all know conda environments file paths
-            get_conda_envs_from_environment_txt(env_vars).con
-            get_conda_environment_paths_from_conda_rc(env_vars).con
-            get_conda_environment_paths_from_known_paths(env_vars).con
-            get_conda_environment_paths_from_additional_paths(additional_env_dirs).con
-            get_known_conda_install_locations(env_vars).con
-
             let possible_conda_envs = get_conda_environment_paths(&env_vars, &additional_paths);
             for path in possible_conda_envs {
                 s.spawn(move || {

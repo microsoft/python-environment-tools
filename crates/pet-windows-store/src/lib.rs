@@ -30,7 +30,7 @@ pub struct WindowsStore {
 }
 
 impl WindowsStore {
-    pub fn from(environment: Arc<dyn Environment>) -> WindowsStore {
+    pub fn from(environment: &dyn Environment) -> WindowsStore {
         WindowsStore {
             searched: AtomicBool::new(false),
             env_vars: EnvVariables::from(environment),

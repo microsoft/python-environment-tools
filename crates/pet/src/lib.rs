@@ -22,19 +22,19 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
 
     let stdio_reporter = Arc::new(stdio::create_reporter(print_list));
     let reporter = CacheReporter::new(stdio_reporter.clone());
-    let environment = Arc::new(EnvironmentApi::new());
-    let conda_locator = Arc::new(Conda::from(environment.clone()));
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
 
     let mut config = Configuration::default();
     if let Ok(cwd) = env::current_dir() {
         config.project_directories = Some(vec![cwd]);
     }
-    let locators = create_locators(conda_locator.clone(), environment.clone());
+    let locators = create_locators(conda_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
-    let summary = find_and_report_envs(&reporter, config, &locators, conda_locator, environment);
+    let summary = find_and_report_envs(&reporter, config, &locators, conda_locator, &environment);
 
     if print_summary {
         let summary = summary.lock().unwrap();

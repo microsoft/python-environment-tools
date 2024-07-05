@@ -18,6 +18,7 @@ use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
 use std::{
+    ops::Deref,
     path::PathBuf,
     sync::{Arc, RwLock},
     thread,
@@ -39,16 +40,16 @@ pub fn start_jsonrpc_server() {
 
     // These are globals for the the lifetime of the server.
     // Hence passed around as Arcs via the context.
-    let environment = Arc::new(EnvironmentApi::new());
+    let environment = EnvironmentApi::new();
     let jsonrpc_reporter = Arc::new(jsonrpc::create_reporter());
     let reporter = Arc::new(CacheReporter::new(jsonrpc_reporter.clone()));
-    let conda_locator = Arc::new(Conda::from(environment.clone()));
+    let conda_locator = Arc::new(Conda::from(&environment));
     let context = Context {
         reporter,
-        locators: create_locators(conda_locator.clone(), environment.clone()),
+        locators: create_locators(conda_locator.clone(), &environment),
         conda_locator,
         configuration: RwLock::new(Configuration::default()),
-        os_environment: environment,
+        os_environment: Arc::new(environment),
     };
 
     let mut handlers = HandlersKeyedByMethodName::new(Arc::new(context));
@@ -103,7 +104,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     config,
                     &context.locators,
                     context.conda_locator.clone(),
-                    context.os_environment.clone(),
+                    context.os_environment.deref(),
                 );
                 let summary = summary.lock().unwrap();
                 for locator in summary.find_locators_times.iter() {
@@ -154,9 +155,12 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
             thread::spawn(move || {
                 let now = SystemTime::now();
                 trace!("Resolving env {:?}", executable);
-                if let Some(result) =
-                    resolve_environment(&executable, &context.locators, search_paths, environment)
-                {
+                if let Some(result) = resolve_environment(
+                    &executable,
+                    &context.locators,
+                    search_paths,
+                    environment.deref(),
+                ) {
                     if let Some(resolved) = result.resolved {
                         // Gather telemetry of this resolved env and see what we got wrong.
                         let _ = report_inaccuracies_identified_after_resolving(

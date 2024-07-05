@@ -350,7 +350,8 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     for locator in locators.iter() {
         locator.configure(&config);
     }
-    let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(os_environment);
+    let global_env_search_paths: Vec<PathBuf> =
+        get_search_paths_from_env_variables(&os_environment);
 
     let env = PythonEnv::new(executable.clone(), None, None);
     let resolved = identify_python_environment_using_locators(

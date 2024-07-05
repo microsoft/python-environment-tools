@@ -35,7 +35,7 @@ pub struct PyEnv {
 
 impl PyEnv {
     pub fn from(
-        environment: Arc<dyn Environment>,
+        environment: &dyn Environment,
         conda_locator: Arc<dyn CondaLocator>,
     ) -> impl Locator {
         PyEnv {

@@ -25,7 +25,7 @@ pub fn resolve_environment(
     executable: &PathBuf,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     search_paths: Vec<PathBuf>,
-    os_environment: Arc<dyn Environment>,
+    os_environment: &dyn Environment,
 ) -> Option<ResolvedEnvironment> {
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);

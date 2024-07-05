@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 pub fn create_locators(
     conda_locator: Arc<Conda>,
-    os_environment: Arc<dyn Environment>,
+    os_environment: &dyn Environment,
 ) -> Arc<Vec<Arc<dyn Locator>>> {
     // NOTE: The order of the items matter.
 
@@ -39,21 +39,18 @@ pub fn create_locators(
         #[cfg(windows)]
         use pet_windows_store::WindowsStore;
         #[cfg(windows)]
-        locators.push(Arc::new(WindowsStore::from(os_environment.clone())));
+        locators.push(Arc::new(WindowsStore::from(os_environment)));
         #[cfg(windows)]
         locators.push(Arc::new(WindowsRegistry::from(conda_locator.clone())))
     }
     // 3. Pyenv Python
-    locators.push(Arc::new(PyEnv::from(
-        os_environment.clone(),
-        conda_locator.clone(),
-    )));
+    locators.push(Arc::new(PyEnv::from(os_environment, conda_locator.clone())));
     // 4. Homebrew Python
     if cfg!(unix) {
         #[cfg(unix)]
         use pet_homebrew::Homebrew;
         #[cfg(unix)]
-        let homebrew_locator = Homebrew::from(os_environment.clone());
+        let homebrew_locator = Homebrew::from(os_environment);
         #[cfg(unix)]
         locators.push(Arc::new(homebrew_locator));
     }
@@ -62,9 +59,9 @@ pub fn create_locators(
     // 6. Support for Virtual Envs
     // The order of these matter.
     // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
-    locators.push(Arc::new(Poetry::from(os_environment.clone())));
-    locators.push(Arc::new(PipEnv::from(os_environment.clone())));
-    locators.push(Arc::new(VirtualEnvWrapper::from(os_environment.clone())));
+    locators.push(Arc::new(Poetry::from(os_environment)));
+    locators.push(Arc::new(PipEnv::from(os_environment)));
+    locators.push(Arc::new(VirtualEnvWrapper::from(os_environment)));
     locators.push(Arc::new(Venv::new()));
     // VirtualEnv is the most generic, hence should be the last.
     locators.push(Arc::new(VirtualEnv::new()));

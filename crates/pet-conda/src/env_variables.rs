@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use pet_core::os_environment::Environment;
 
@@ -26,7 +26,7 @@ pub struct EnvVariables {
 }
 
 impl EnvVariables {
-    pub fn from(env: Arc<dyn Environment>) -> Self {
+    pub fn from(env: &dyn Environment) -> Self {
         EnvVariables {
             home: env.get_user_home(),
             root: env.get_root(),

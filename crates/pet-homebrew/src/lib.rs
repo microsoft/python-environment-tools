@@ -13,7 +13,7 @@ use pet_core::{
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::{env::PythonEnv, executable::find_executables};
 use pet_virtualenv::is_virtualenv;
-use std::{fs, path::PathBuf, sync::Arc, thread};
+use std::{fs, path::PathBuf, thread};
 use sym_links::is_homebrew_python;
 
 mod env_variables;
@@ -26,7 +26,7 @@ pub struct Homebrew {
 }
 
 impl Homebrew {
-    pub fn from(environment: Arc<dyn Environment>) -> Homebrew {
+    pub fn from(environment: &dyn Environment) -> Homebrew {
         Homebrew {
             environment: EnvVariables::from(environment),
         }
