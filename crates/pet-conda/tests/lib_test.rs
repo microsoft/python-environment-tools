@@ -10,10 +10,10 @@ fn find_conda_env_without_manager() {
     use pet_conda::Conda;
     use pet_core::{self, arch::Architecture, python_environment::PythonEnvironmentKind, Locator};
     use pet_python_utils::env::PythonEnv;
-    use std::{collections::HashMap, sync::Arc};
+    use std::collections::HashMap;
 
-    let environment = Arc::new(create_test_environment(HashMap::new(), None, vec![], None));
-    let locator = Conda::from(environment.clone());
+    let environment = create_test_environment(HashMap::new(), None, vec![], None);
+    let locator = Conda::from(&environment);
     let path = resolve_test_path(&["unix", "conda_env_without_manager", "env_python_3"]);
 
     let env = locator
@@ -43,11 +43,10 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
     use std::{
         collections::HashMap,
         fs::{self},
-        sync::Arc,
     };
 
-    let environment = Arc::new(create_test_environment(HashMap::new(), None, vec![], None));
-    let locator = Conda::from(environment);
+    let environment = create_test_environment(HashMap::new(), None, vec![], None);
+    let locator = Conda::from(&environment);
     let path = resolve_test_path(&[
         "unix",
         "conda_env_without_manager_but_found_in_history",

@@ -17,15 +17,15 @@ fn verify_python_in_homebrew_contaner() {
     use std::{path::PathBuf, sync::Arc};
 
     let reporter = test::create_reporter();
-    let environment = Arc::new(EnvironmentApi::new());
-    let conda_locator = Arc::new(Conda::from(environment.clone()));
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone(), environment.clone()),
+        &create_locators(conda_locator.clone(), &environment),
         conda_locator,
-        environment,
+        &environment,
     );
     let result = reporter.get_result();
 

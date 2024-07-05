@@ -86,11 +86,11 @@ fn verify_ci_poetry_project() {
 
     let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = test::create_reporter();
-    let environment = Arc::new(EnvironmentApi::new());
-    let conda_locator = Arc::new(Conda::from(environment.clone()));
+    let environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone(), environment.clone());
+    let locators = create_locators(conda_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
@@ -100,7 +100,7 @@ fn verify_ci_poetry_project() {
         Default::default(),
         &locators,
         conda_locator,
-        environment,
+        &environment,
     );
 
     let result = reporter.get_result();
