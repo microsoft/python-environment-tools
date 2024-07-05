@@ -3,14 +3,15 @@
 
 use crate::env_variables::EnvVariables;
 use log::trace;
-use pet_fs::path::norm_case;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+use yaml_rust2::YamlLoader;
 
 #[derive(Debug)]
 pub struct Condarc {
+    pub files: Vec<PathBuf>,
     pub env_dirs: Vec<PathBuf>,
 }
 
@@ -112,24 +113,28 @@ static SUPPORTED_EXTENSIONS: &[&str] = &["yaml", "yml"];
  */
 fn get_conda_conda_rc(env_vars: &EnvVariables) -> Option<Condarc> {
     let mut env_dirs = vec![];
+    let mut files = vec![];
     for conda_rc in get_conda_rc_search_paths(env_vars).into_iter() {
         if let Some(ref mut cfg) = get_conda_conda_rc_from_path(&conda_rc) {
             env_dirs.append(&mut cfg.env_dirs);
+            files.append(&mut cfg.files);
         }
     }
 
-    if env_dirs.is_empty() {
+    if env_dirs.is_empty() && files.is_empty() {
         None
     } else {
-        Some(Condarc { env_dirs })
+        Some(Condarc { env_dirs, files })
     }
 }
 
 fn get_conda_conda_rc_from_path(conda_rc: &PathBuf) -> Option<Condarc> {
     let mut env_dirs = vec![];
+    let mut files = vec![];
     if conda_rc.is_file() {
         if let Some(ref mut cfg) = parse_conda_rc(conda_rc) {
             env_dirs.append(&mut cfg.env_dirs);
+            files.push(conda_rc.clone());
         }
     } else if conda_rc.is_dir() {
         // There can be different types of conda rc files in the directory.
@@ -155,48 +160,172 @@ fn get_conda_conda_rc_from_path(conda_rc: &PathBuf) -> Option<Condarc> {
                 {
                     if let Some(ref mut cfg) = parse_conda_rc(&path) {
                         env_dirs.append(&mut cfg.env_dirs);
+                        files.push(path);
                     }
                 }
             }
         }
     }
 
-    if env_dirs.is_empty() {
+    if env_dirs.is_empty() && files.is_empty() {
         None
     } else {
-        Some(Condarc { env_dirs })
+        Some(Condarc { env_dirs, files })
     }
 }
 
 fn parse_conda_rc(conda_rc: &Path) -> Option<Condarc> {
     let reader = fs::read_to_string(conda_rc).ok()?;
     trace!("Possible conda_rc: {:?}", conda_rc);
-    parse_conda_rc_contents(&reader)
+    if let Some(cfg) = parse_conda_rc_contents(&reader, None) {
+        Some(Condarc {
+            env_dirs: cfg.env_dirs,
+            files: vec![conda_rc.to_path_buf()],
+        })
+    } else {
+        Some(Condarc {
+            env_dirs: vec![],
+            files: vec![conda_rc.to_path_buf()],
+        })
+    }
 }
 
-fn parse_conda_rc_contents(contents: &str) -> Option<Condarc> {
-    let mut start_consuming_values = false;
+fn parse_conda_rc_contents(contents: &str, home: Option<PathBuf>) -> Option<Condarc> {
     let mut env_dirs = vec![];
-    for line in contents.lines() {
-        if line.starts_with("envs_dirs:") && !start_consuming_values {
-            start_consuming_values = true;
-            continue;
+
+    if let Ok(docs) = YamlLoader::load_from_str(contents) {
+        if docs.is_empty() {
+            return Some(Condarc {
+                env_dirs: vec![],
+                files: vec![],
+            });
         }
-        if line.starts_with("envs_path:") && !start_consuming_values {
-            start_consuming_values = true;
-            continue;
-        }
-        if start_consuming_values {
-            if line.trim().starts_with('-') {
-                if let Some(env_dir) = line.split_once('-').map(|x| x.1) {
-                    // Directories in conda-rc are where `envs` are stored.
-                    env_dirs.push(norm_case(&PathBuf::from(env_dir.trim()).join("envs")));
+        let doc = &docs[0];
+        // Expland variables in some of these
+        // https://docs.conda.io/projects/conda/en/4.13.x/user-guide/configuration/use-condarc.html#expansion-of-environment-variables
+
+        if let Some(items) = doc["envs_dirs"].as_vec() {
+            for item in items {
+                let item_str = item.as_str().unwrap().to_string();
+                if item_str.is_empty() {
+                    continue;
                 }
-                continue;
-            } else {
-                start_consuming_values = false;
+                let item = PathBuf::from(item_str.trim());
+                if item.starts_with("~") {
+                    if let Some(ref home) = home {
+                        if let Ok(item) = item.strip_prefix("~") {
+                            let item = home.join(item);
+                            env_dirs.push(item);
+                        } else {
+                            env_dirs.push(item);
+                        }
+                    }
+                } else {
+                    env_dirs.push(item);
+                }
+            }
+        }
+        if let Some(items) = doc["envs_path"].as_vec() {
+            for item in items {
+                let item_str = item.as_str().unwrap().to_string();
+                if item_str.is_empty() {
+                    continue;
+                }
+                let item = PathBuf::from(item_str.trim());
+                if item.starts_with("~") {
+                    if let Some(ref home) = home {
+                        if let Ok(item) = item.strip_prefix("~") {
+                            let item = home.join(item);
+                            env_dirs.push(item);
+                        } else {
+                            env_dirs.push(item);
+                        }
+                    }
+                } else {
+                    env_dirs.push(item);
+                }
             }
         }
     }
-    Some(Condarc { env_dirs })
+    Some(Condarc {
+        env_dirs,
+        files: vec![],
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_conda_rc() {
+        let cfg = r#"
+channels:
+  - conda-forge
+  - nodefaults
+channel_priority: strict
+envs_dirs:
+  - /Users/username/dev/envs # Testing 1,2,3
+  - /opt/conda/envs
+envs_path:
+  - /opt/somep lace/envs
+  - ~/dev/envs2 # Testing 1,2,3
+"#;
+
+        assert_eq!(
+            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
+                .unwrap()
+                .env_dirs,
+            [
+                "/Users/username/dev/envs",
+                "/opt/conda/envs",
+                "/opt/somep lace/envs",
+                "/Users/username2/dev/envs2"
+            ]
+            .map(PathBuf::from)
+        );
+
+        let cfg = r#"
+channels:
+  - conda-forge
+  - nodefaults
+channel_priority: strict
+envs_dirs:
+  - /Users/username/dev/envs # Testing 1,2,3
+  - /opt/conda/envs
+"#;
+
+        assert_eq!(
+            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
+                .unwrap()
+                .env_dirs,
+            ["/Users/username/dev/envs", "/opt/conda/envs",].map(PathBuf::from)
+        );
+
+        let cfg = r#"
+channels:
+  - conda-forge
+  - nodefaults
+channel_priority: strict
+envs_path:
+  - /opt/somep lace/envs
+  - ~/dev/envs2 # Testing 1,2,3
+"#;
+
+        assert_eq!(
+            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
+                .unwrap()
+                .env_dirs,
+            ["/opt/somep lace/envs", "/Users/username2/dev/envs2"].map(PathBuf::from)
+        );
+
+        let cfg = r#"
+channels:
+  - conda-forge
+  - nodefaults
+channel_priority: strict
+"#;
+
+        assert!(parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2"))).is_none(),);
+    }
 }

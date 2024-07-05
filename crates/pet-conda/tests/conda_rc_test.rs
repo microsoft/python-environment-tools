@@ -36,8 +36,8 @@ fn finds_conda_rc() {
     assert_eq!(
         conda_rc.env_dirs,
         vec![
-            PathBuf::from("/Users/donjayamanne/temp/sample-conda-envs-folder2/envs"),
-            PathBuf::from("/Users/donjayamanne/temp/sample-conda-envs-folder/envs")
+            PathBuf::from("/Users/donjayamanne/temp/sample-conda-envs-folder2"),
+            PathBuf::from("/Users/donjayamanne/temp/sample-conda-envs-folder")
         ]
     );
 }
@@ -67,13 +67,12 @@ fn finds_conda_rc_from_conda_root_env_variable() {
 
     let conda_rc = Condarc::from(&env).unwrap();
 
-    assert_eq!(
-        conda_rc.env_dirs,
-        vec![
-            PathBuf::from("/Users/donjayamanne/sample-conda-envs-folder2-from_conda_root/envs"),
-            PathBuf::from("/Users/donjayamanne/sample-conda-envs-folder-from_conda_root/envs")
-        ]
-    );
+    assert!(conda_rc.env_dirs.contains(&PathBuf::from(
+        "/Users/donjayamanne/sample-conda-envs-folder2-from_conda_root"
+    )));
+    assert!(conda_rc.env_dirs.contains(&PathBuf::from(
+        "/Users/donjayamanne/sample-conda-envs-folder-from_conda_root"
+    )));
 }
 
 #[cfg(unix)]
@@ -90,11 +89,10 @@ fn finds_conda_rc_from_root() {
 
     let conda_rc = Condarc::from(&env).unwrap();
 
-    assert_eq!(
-        conda_rc.env_dirs,
-        vec![
-            PathBuf::from("/Users/donjayamanne/root-folder2/envs"),
-            PathBuf::from("/Users/donjayamanne/root-folder/envs")
-        ]
-    );
+    assert!(conda_rc
+        .env_dirs
+        .contains(&PathBuf::from("/Users/donjayamanne/root-folder2")));
+    assert!(conda_rc
+        .env_dirs
+        .contains(&PathBuf::from("/Users/donjayamanne/root-folder")));
 }

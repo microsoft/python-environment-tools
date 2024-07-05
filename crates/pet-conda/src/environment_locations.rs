@@ -8,11 +8,14 @@ use crate::{
 };
 use log::trace;
 use pet_fs::path::norm_case;
+use pet_python_utils::platform_dirs::Platformdirs;
 use std::{
     fs,
     path::{Path, PathBuf},
     thread,
 };
+
+const APP_NAME: &str = "conda";
 
 pub fn get_conda_environment_paths(
     env_vars: &EnvVariables,
@@ -76,18 +79,43 @@ fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<Pat
 fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
     let mut env_paths: Vec<PathBuf> = vec![];
     if let Some(ref home) = env_vars.home {
-        let known_conda_paths = [
-            PathBuf::from(".conda").join("envs"),
-            PathBuf::from("AppData")
-                .join("Local")
-                .join("conda")
-                .join("conda")
-                .join("envs"),
-        ];
+        let mut known_conda_paths = vec![
+            PathBuf::from(".conda/envs"),
+            PathBuf::from("/opt/conda/envs"),
+            PathBuf::from("C:/Anaconda/envs"),
+            PathBuf::from("AppData/Local/conda/envs"),
+            PathBuf::from("AppData/Local/conda/conda/envs"),
+            // https://docs.conda.io/projects/conda/en/22.11.x/user-guide/configuration/use-condarc.html
+            PathBuf::from("envs"),
+            PathBuf::from("my-envs"),
+        ]
+        .into_iter()
+        .map(|p| home.join(p))
+        .collect::<Vec<PathBuf>>();
+
+        // https://github.com/conda/conda/blob/d88fc157818cd5542029e116dcf4ec427512be82/conda/base/context.py#L143
+        if let Some(user_data_dir) = Platformdirs::new(APP_NAME.into(), false).user_data_dir() {
+            known_conda_paths.push(user_data_dir.join("envs"));
+        }
+
+        // Expland variables in some of these
+        // https://docs.conda.io/projects/conda/en/4.13.x/user-guide/configuration/use-condarc.html#expansion-of-environment-variables
+        if let Some(conda_envs_path) = &env_vars.conda_envs_path {
+            let conda_envs_path = PathBuf::from(conda_envs_path.clone());
+            if conda_envs_path.starts_with("~") {
+                if let Ok(conda_envs_path) = conda_envs_path.strip_prefix("~") {
+                    let conda_envs_path = home.join(conda_envs_path);
+                    known_conda_paths.push(conda_envs_path);
+                } else {
+                    known_conda_paths.push(conda_envs_path);
+                }
+            } else {
+                known_conda_paths.push(conda_envs_path);
+            }
+        }
+
         for path in known_conda_paths {
-            // We prefix with home only for testing purposes.
-            let full_path = home.join(path);
-            if let Ok(entries) = fs::read_dir(full_path) {
+            if let Ok(entries) = fs::read_dir(path) {
                 for entry in entries.filter_map(Result::ok) {
                     let path = entry.path();
                     if path.is_dir() {
