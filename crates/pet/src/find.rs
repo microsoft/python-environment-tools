@@ -54,7 +54,6 @@ pub fn find_and_report_envs(
     let conda_executable = configuration.conda_executable;
     thread::scope(|s| {
         // 1. Find using known global locators.
-        // let os_env = os_environment.clone();
         s.spawn(|| {
             // Find in all the finders
             let start = std::time::Instant::now();
@@ -113,7 +112,6 @@ pub fn find_and_report_envs(
             summary.lock().unwrap().find_path_time = start.elapsed();
         });
         // Step 3: Search in some global locations for virtual envs.
-        // let os_env = os_environment.clone();
         s.spawn(|| {
             let start = std::time::Instant::now();
             let search_paths: Vec<PathBuf> = [
