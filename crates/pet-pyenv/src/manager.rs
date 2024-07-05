@@ -41,11 +41,11 @@ fn get_pyenv_info(environment: &EnvVariables) -> PyEnvInfo {
     };
     if let Some(dir) = get_pyenv_dir(environment) {
         let versions = dir.join("versions");
-        if fs::metadata(&versions).is_ok() {
+        if versions.exists() {
             pyenv.versions = Some(versions);
         }
         let exe = dir.join("bin").join("pyenv");
-        if fs::metadata(&exe).is_ok() {
+        if exe.exists() {
             pyenv.exe = Some(exe);
         }
     }
@@ -57,13 +57,13 @@ fn get_pyenv_info(environment: &EnvVariables) -> PyEnvInfo {
         if let Some(path) = get_home_pyenv_dir(environment) {
             if pyenv.exe.is_none() {
                 let exe = path.join("bin").join("pyenv");
-                if fs::metadata(&exe).is_ok() {
+                if exe.exists() {
                     pyenv.exe = Some(exe);
                 }
             }
             if pyenv.versions.is_none() {
                 let versions = path.join("versions");
-                if fs::metadata(&versions).is_ok() {
+                if versions.exists() {
                     pyenv.versions = Some(versions);
                 }
             }

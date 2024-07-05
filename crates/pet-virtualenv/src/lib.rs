@@ -8,7 +8,6 @@ use pet_core::{
 };
 use pet_python_utils::version;
 use pet_python_utils::{env::PythonEnv, executable::find_executables};
-use std::fs;
 
 pub fn is_virtualenv(env: &PythonEnv) -> bool {
     if env.prefix.is_none() {
@@ -31,9 +30,7 @@ pub fn is_virtualenv(env: &PythonEnv) -> bool {
         // const directory = path.dirname(interpreterPath);
         // const files = await fsapi.readdir(directory);
         // const regex = /^activate(\.([A-z]|\d)+)?$/i;
-        if fs::metadata(bin.join("activate")).is_ok()
-            || fs::metadata(bin.join("activate.bat")).is_ok()
-        {
+        if bin.join("activate").exists() || bin.join("activate.bat").exists() {
             return true;
         }
 

@@ -3,7 +3,7 @@
 
 use crate::env_variables::EnvVariables;
 use pet_fs::path::norm_case;
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 #[cfg(windows)]
 pub fn get_home_pyenv_dir(env_vars: &EnvVariables) -> Option<PathBuf> {
@@ -24,10 +24,8 @@ pub fn get_binary_from_known_paths(env_vars: &EnvVariables) -> Option<PathBuf> {
         } else {
             known_path.join("pyenv")
         };
-        if let Ok(metadata) = fs::metadata(&exe) {
-            if metadata.is_file() {
-                return Some(norm_case(exe));
-            }
+        if exe.is_file() {
+            return Some(norm_case(exe));
         }
     }
     None

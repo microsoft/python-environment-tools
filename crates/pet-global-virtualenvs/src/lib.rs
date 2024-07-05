@@ -14,12 +14,12 @@ fn get_global_virtualenv_dirs(
 
     if let Some(work_on_home) = work_on_home_env_var {
         let work_on_home = norm_case(PathBuf::from(work_on_home));
-        if fs::metadata(&work_on_home).is_ok() {
+        if work_on_home.exists() {
             venv_dirs.push(work_on_home);
         } else if let Some(home) = &user_home {
             if let Ok(work_on_home) = work_on_home.strip_prefix("~") {
                 let work_on_home = home.join(work_on_home);
-                if fs::metadata(&work_on_home).is_ok() {
+                if work_on_home.exists() {
                     venv_dirs.push(work_on_home);
                 }
             }
@@ -28,7 +28,7 @@ fn get_global_virtualenv_dirs(
 
     // Used by pipenv (https://github.com/pypa/pipenv/blob/main/pipenv/utils/shell.py#L184)
     if let Some(xdg_data_home) = xdg_data_home.map(|d| PathBuf::from(d).join("virtualenvs")) {
-        if fs::metadata(&xdg_data_home).is_ok() {
+        if xdg_data_home.exists() {
             venv_dirs.push(xdg_data_home);
         }
     }
@@ -41,7 +41,7 @@ fn get_global_virtualenv_dirs(
             PathBuf::from(".local").join("share").join("virtualenvs"), // Used by pipenv (https://github.com/pypa/pipenv/blob/main/pipenv/utils/shell.py#L184)
         ] {
             let venv_dir = home.join(dir);
-            if fs::metadata(&venv_dir).is_ok() {
+            if venv_dir.exists() {
                 venv_dirs.push(venv_dir);
             }
         }
@@ -49,11 +49,11 @@ fn get_global_virtualenv_dirs(
             // https://virtualenvwrapper.readthedocs.io/en/latest/index.html
             // Default recommended location for virtualenvwrapper
             let envs = PathBuf::from("Envs");
-            if fs::metadata(&envs).is_ok() {
+            if envs.exists() {
                 venv_dirs.push(envs);
             }
             let envs = PathBuf::from("envs");
-            if fs::metadata(&envs).is_ok() {
+            if envs.exists() {
                 venv_dirs.push(envs);
             }
         }

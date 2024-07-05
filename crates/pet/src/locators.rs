@@ -4,7 +4,7 @@
 use log::{info, trace};
 use pet_conda::Conda;
 use pet_core::arch::Architecture;
-use pet_core::os_environment::EnvironmentApi;
+use pet_core::os_environment::Environment;
 use pet_core::python_environment::{
     PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind,
 };
@@ -23,9 +23,11 @@ use pet_virtualenvwrapper::VirtualEnvWrapper;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> {
+pub fn create_locators(
+    conda_locator: Arc<Conda>,
+    environment: &dyn Environment,
+) -> Arc<Vec<Arc<dyn Locator>>> {
     // NOTE: The order of the items matter.
-    let environment = EnvironmentApi::new();
 
     let mut locators: Vec<Arc<dyn Locator>> = vec![];
 
@@ -37,18 +39,18 @@ pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> 
         #[cfg(windows)]
         use pet_windows_store::WindowsStore;
         #[cfg(windows)]
-        locators.push(Arc::new(WindowsStore::from(&environment)));
+        locators.push(Arc::new(WindowsStore::from(environment)));
         #[cfg(windows)]
         locators.push(Arc::new(WindowsRegistry::from(conda_locator.clone())))
     }
     // 3. Pyenv Python
-    locators.push(Arc::new(PyEnv::from(&environment, conda_locator.clone())));
+    locators.push(Arc::new(PyEnv::from(environment, conda_locator.clone())));
     // 4. Homebrew Python
     if cfg!(unix) {
         #[cfg(unix)]
         use pet_homebrew::Homebrew;
         #[cfg(unix)]
-        let homebrew_locator = Homebrew::from(&environment);
+        let homebrew_locator = Homebrew::from(environment);
         #[cfg(unix)]
         locators.push(Arc::new(homebrew_locator));
     }
@@ -57,9 +59,9 @@ pub fn create_locators(conda_locator: Arc<Conda>) -> Arc<Vec<Arc<dyn Locator>>> 
     // 6. Support for Virtual Envs
     // The order of these matter.
     // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
-    locators.push(Arc::new(Poetry::from(&environment)));
-    locators.push(Arc::new(PipEnv::from(&environment)));
-    locators.push(Arc::new(VirtualEnvWrapper::from(&environment)));
+    locators.push(Arc::new(Poetry::from(environment)));
+    locators.push(Arc::new(PipEnv::from(environment)));
+    locators.push(Arc::new(VirtualEnvWrapper::from(environment)));
     locators.push(Arc::new(Venv::new()));
     // VirtualEnv is the most generic, hence should be the last.
     locators.push(Arc::new(VirtualEnv::new()));
@@ -115,11 +117,7 @@ pub fn identify_python_environment_using_locators(
                 |e, loc| if e.is_some() { e } else { loc.try_from(&env) },
             )
         {
-            trace!(
-                "Unknown Env ({:?}) in Path resolved as {:?}",
-                executable,
-                env.kind
-            );
+            trace!("Env ({:?}) in Path resolved as {:?}", executable, env.kind);
             identify_and_set_search_path(&mut env, &search_paths);
             // TODO: Telemetry point.
             // As we had to spawn earlier.
@@ -145,7 +143,7 @@ pub fn identify_python_environment_using_locators(
                 }
             }
             info!(
-                "Unknown Env ({:?}) in Path resolved as {:?} and reported as {:?}",
+                "Env ({:?}) in Path resolved as {:?} and reported as {:?}",
                 executable, resolved_env, fallback_kind
             );
             let mut env = create_unknown_env(resolved_env, fallback_kind);

@@ -72,13 +72,19 @@ fn verify_validity_of_discovered_envs() {
     let conda_locator = Arc::new(Conda::from(&environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
     // Find all environments on this machine.
-    find_and_report_envs(&reporter, Default::default(), &locators, conda_locator);
+    find_and_report_envs(
+        &reporter,
+        Default::default(),
+        &locators,
+        conda_locator,
+        &environment,
+    );
     let result = reporter.get_result();
 
     let environments = result.environments;
@@ -136,8 +142,9 @@ fn check_if_virtualenvwrapper_exists() {
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone()),
+        &create_locators(conda_locator.clone(), &environment),
         conda_locator,
+        &environment,
     );
 
     let result = reporter.get_result();
@@ -177,8 +184,9 @@ fn check_if_pipenv_exists() {
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone()),
+        &create_locators(conda_locator.clone(), &environment),
         conda_locator,
+        &environment,
     );
 
     let result = reporter.get_result();
@@ -214,8 +222,9 @@ fn check_if_pyenv_virtualenv_exists() {
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone()),
+        &create_locators(conda_locator.clone(), &environment),
         conda_locator,
+        &environment,
     );
 
     let result = reporter.get_result();
@@ -337,7 +346,7 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     let mut config = Configuration::default();
     let search_paths = vec![project_dir.clone()];
     config.project_directories = Some(search_paths.clone());
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), &os_environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
@@ -523,14 +532,18 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     let conda_locator = Arc::new(Conda::from(&os_environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), &os_environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
-    let env = resolve_environment(&executable, &locators, vec![project_dir.clone()]).expect(
-        format!("Failed to resolve environment using `resolve` for {environment:?}").as_str(),
-    );
+    let env = resolve_environment(
+        &executable,
+        &locators,
+        vec![project_dir.clone()],
+        &os_environment,
+    )
+    .expect(format!("Failed to resolve environment using `resolve` for {environment:?}").as_str());
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
@@ -571,8 +584,9 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone()),
+        &create_locators(conda_locator.clone(), &environment),
         conda_locator,
+        &environment,
     );
 
     let result = reporter.get_result();

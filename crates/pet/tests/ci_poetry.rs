@@ -24,12 +24,18 @@ fn verify_ci_poetry_global() {
     let conda_locator = Arc::new(Conda::from(&environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
-    find_and_report_envs(&reporter, Default::default(), &locators, conda_locator);
+    find_and_report_envs(
+        &reporter,
+        Default::default(),
+        &locators,
+        conda_locator,
+        &environment,
+    );
 
     let result = reporter.get_result();
 
@@ -84,12 +90,18 @@ fn verify_ci_poetry_project() {
     let conda_locator = Arc::new(Conda::from(&environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
-    find_and_report_envs(&reporter, Default::default(), &locators, conda_locator);
+    find_and_report_envs(
+        &reporter,
+        Default::default(),
+        &locators,
+        conda_locator,
+        &environment,
+    );
 
     let result = reporter.get_result();
 

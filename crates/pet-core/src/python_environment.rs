@@ -114,7 +114,14 @@ impl PythonEnvironment {
 
 impl std::fmt::Display for PythonEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "Environment ({:?})", self.kind).unwrap_or_default();
+        writeln!(
+            f,
+            "Environment ({})",
+            self.kind
+                .map(|v| format!("{v:?}"))
+                .unwrap_or("Unknown".to_string())
+        )
+        .unwrap_or_default();
         if let Some(name) = &self.display_name {
             writeln!(f, "   Display-Name: {name}").unwrap_or_default();
         }

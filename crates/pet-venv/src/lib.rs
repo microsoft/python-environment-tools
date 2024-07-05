@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::path::Path;
+
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
@@ -19,6 +21,9 @@ fn is_venv_internal(env: &PythonEnv) -> Option<bool> {
 }
 pub fn is_venv(env: &PythonEnv) -> bool {
     is_venv_internal(env).unwrap_or_default()
+}
+pub fn is_venv_dir(path: &Path) -> bool {
+    PyVenvCfg::find(path).is_some()
 }
 pub struct Venv {}
 

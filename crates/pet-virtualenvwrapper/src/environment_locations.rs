@@ -3,7 +3,7 @@
 
 use crate::env_variables::EnvVariables;
 use pet_fs::path::norm_case;
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 #[cfg(windows)]
 fn get_default_virtualenvwrapper_path(env_vars: &EnvVariables) -> Option<PathBuf> {
@@ -13,11 +13,11 @@ fn get_default_virtualenvwrapper_path(env_vars: &EnvVariables) -> Option<PathBuf
 
     if let Some(user_home) = &env_vars.home {
         let home = user_home.join("Envs");
-        if fs::metadata(&home).is_ok() {
+        if home.exists() {
             return Some(norm_case(home));
         }
         let home = user_home.join("virtualenvs");
-        if fs::metadata(&home).is_ok() {
+        if home.exists() {
             return Some(norm_case(home));
         }
     }
@@ -26,11 +26,9 @@ fn get_default_virtualenvwrapper_path(env_vars: &EnvVariables) -> Option<PathBuf
 
 #[cfg(unix)]
 fn get_default_virtualenvwrapper_path(env_vars: &EnvVariables) -> Option<PathBuf> {
-    use std::fs;
-
     if let Some(home) = &env_vars.home {
         let home = home.join(".virtualenvs");
-        if fs::metadata(&home).is_ok() {
+        if home.exists() {
             return Some(norm_case(&home));
         }
     }
@@ -43,7 +41,7 @@ pub fn get_work_on_home_path(environment: &EnvVariables) -> Option<PathBuf> {
     if let Some(work_on_home) = &environment.workon_home {
         // TODO: Why do we need to canonicalize the path?
         if let Ok(work_on_home) = std::fs::canonicalize(work_on_home) {
-            if fs::metadata(&work_on_home).is_ok() {
+            if work_on_home.exists() {
                 return Some(norm_case(&work_on_home));
             }
         }

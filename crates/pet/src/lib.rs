@@ -29,12 +29,12 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
     if let Ok(cwd) = env::current_dir() {
         config.project_directories = Some(vec![cwd]);
     }
-    let locators = create_locators(conda_locator.clone());
+    let locators = create_locators(conda_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
 
-    let summary = find_and_report_envs(&reporter, config, &locators, conda_locator);
+    let summary = find_and_report_envs(&reporter, config, &locators, conda_locator, &environment);
 
     if print_summary {
         let summary = summary.lock().unwrap();
@@ -89,7 +89,13 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
                 .environments
                 .clone()
                 .into_iter()
-                .map(|(k, v)| (format!("{k:?}"), v))
+                .map(|(k, v)| {
+                    (
+                        k.map(|v| format!("{:?}", v))
+                            .unwrap_or("Unknown".to_string()),
+                        v,
+                    )
+                })
                 .collect::<BTreeMap<String, u16>>()
             {
                 println!("{k:<20} : {v:?}");

@@ -6,7 +6,7 @@ use std::{path::PathBuf, sync::Arc};
 use log::{trace, warn};
 use pet_core::{
     arch::Architecture,
-    os_environment::EnvironmentApi,
+    os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder},
     Locator,
 };
@@ -25,11 +25,11 @@ pub fn resolve_environment(
     executable: &PathBuf,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     search_paths: Vec<PathBuf>,
+    os_environment: &dyn Environment,
 ) -> Option<ResolvedEnvironment> {
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);
-    let environment = EnvironmentApi::new();
-    let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(&environment);
+    let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(os_environment);
 
     if let Some(mut env) =
         identify_python_environment_using_locators(&env, locators, &global_env_search_paths, None)

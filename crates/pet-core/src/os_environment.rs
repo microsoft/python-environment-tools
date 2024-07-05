@@ -10,7 +10,7 @@ use std::{
 use log::trace;
 use pet_fs::path::norm_case;
 
-pub trait Environment {
+pub trait Environment: Send + Sync {
     fn get_user_home(&self) -> Option<PathBuf>;
     /// Only used in tests, None in production.
     #[allow(dead_code)]

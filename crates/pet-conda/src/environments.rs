@@ -14,10 +14,7 @@ use pet_core::{
 };
 use pet_fs::path::{norm_case, resolve_symlink};
 use pet_python_utils::executable::{find_executable, find_executables};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct CondaEnvironment {
@@ -84,7 +81,7 @@ pub fn get_conda_environment_info(
         None => get_conda_installation_used_to_create_conda_env(env_path),
     };
     if let Some(conda_dir) = &conda_install_folder {
-        if fs::metadata(conda_dir).is_err() {
+        if !conda_dir.exists() {
             warn!(
                 "Conda install folder {}, does not exist, hence will not be used for the Conda Env: {}",
                 env_path.display(),
