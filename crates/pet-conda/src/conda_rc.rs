@@ -270,9 +270,7 @@ envs_dirs:
 "#;
 
         assert_eq!(
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
-                .unwrap()
-                .env_dirs,
+            parse_conda_rc_contents(&cfg).unwrap().env_dirs,
             ["/Users/username/dev/envs", "/opt/conda/envs",].map(PathBuf::from)
         );
 
@@ -287,9 +285,7 @@ envs_path:
 "#;
 
         assert_eq!(
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
-                .unwrap()
-                .env_dirs,
+            parse_conda_rc_contents(&cfg).unwrap().env_dirs,
             ["/opt/somep lace/envs", "/Users/username2/dev/envs2"].map(PathBuf::from)
         );
 
@@ -300,17 +296,7 @@ channels:
 channel_priority: strict
 "#;
 
-        assert!(
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
-                .unwrap()
-                .env_dirs
-                .is_empty(),
-        );
-        assert!(
-            parse_conda_rc_contents(&cfg, Some(PathBuf::from("/Users/username2")))
-                .unwrap()
-                .files
-                .is_empty(),
-        );
+        assert!(parse_conda_rc_contents(&cfg).unwrap().env_dirs.is_empty(),);
+        assert!(parse_conda_rc_contents(&cfg).unwrap().files.is_empty(),);
     }
 }
