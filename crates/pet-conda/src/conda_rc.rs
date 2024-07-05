@@ -286,7 +286,10 @@ envs_path:
 
         assert_eq!(
             parse_conda_rc_contents(&cfg).unwrap().env_dirs,
-            ["/opt/somep lace/envs", "/Users/username2/dev/envs2"].map(PathBuf::from)
+            [
+                PathBuf::from("/opt/somep lace/envs"),
+                expand_path(PathBuf::from("~/dev/envs2"))
+            ]
         );
 
         let cfg = r#"
