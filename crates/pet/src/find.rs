@@ -13,6 +13,7 @@ use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
+use pet_venv::is_venv_dir;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -178,17 +179,18 @@ fn find_python_environments_in_workspace_folders_recursive(
 ) {
     thread::scope(|s| {
         s.spawn(|| {
-            let bin = if cfg!(windows) { "Scripts" } else { "bin" };
             for workspace_folder in workspace_folders {
+                let paths_to_search_first = vec![
+                    // Possible this is a virtual env
+                    workspace_folder.clone(),
+                    // Optimize for finding these first.
+                    workspace_folder.join(".venv"),
+                    workspace_folder.join(".conda"),
+                    workspace_folder.join(".virtualenv"),
+                    workspace_folder.join("venv"),
+                ];
                 find_python_environments_in_paths_with_locators(
-                    vec![
-                        // Possible this is a virtual env
-                        workspace_folder.clone(),
-                        // Optimize for finding these first.
-                        workspace_folder.join(".venv"),
-                        // Optimize for finding these first.
-                        workspace_folder.join(".conda"),
-                    ],
+                    paths_to_search_first.clone(),
                     locators,
                     reporter,
                     true,
@@ -196,9 +198,8 @@ fn find_python_environments_in_workspace_folders_recursive(
                     Some(workspace_folder.clone()),
                 );
 
-                if workspace_folder.join(bin).exists() {
-                    // If the folder has a bin or scripts, then ignore it, its most likely an env.
-                    // I.e. no point looking for python environments in a Python environment.
+                // If this is a virtual env folder, no need to scan this.
+                if is_venv_dir(&workspace_folder) {
                     continue;
                 }
 
@@ -208,6 +209,7 @@ fn find_python_environments_in_workspace_folders_recursive(
                         .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
                         .map(|p| p.path())
                         .filter(should_search_for_environments_in_path)
+                        .filter(|p| !paths_to_search_first.contains(p))
                     {
                         find_python_environments(
                             vec![folder],

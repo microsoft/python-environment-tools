@@ -4,7 +4,7 @@
 use crate::env_variables::EnvVariables;
 use lazy_static::lazy_static;
 use regex::Regex;
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 lazy_static! {
     static ref PYTHON_VERSION: Regex =
@@ -41,9 +41,7 @@ pub fn get_homebrew_prefix_bin(env_vars: &EnvVariables) -> Vec<PathBuf> {
     // Check the environment variables
     if let Some(homebrew_prefix) = &env_vars.homebrew_prefix {
         let homebrew_prefix_bin = PathBuf::from(homebrew_prefix).join("bin");
-        if fs::metadata(&homebrew_prefix_bin).is_ok()
-            && !homebrew_prefixes.contains(&homebrew_prefix_bin)
-        {
+        if homebrew_prefix_bin.exists() && !homebrew_prefixes.contains(&homebrew_prefix_bin) {
             homebrew_prefixes.push(homebrew_prefix_bin);
         }
     }

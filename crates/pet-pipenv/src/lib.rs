@@ -38,7 +38,7 @@ fn get_pipenv_project_from_prefix(prefix: &Path) -> Option<PathBuf> {
     let project_file = prefix.join(".project");
     let contents = fs::read_to_string(project_file).ok()?;
     let project_folder = norm_case(PathBuf::from(contents.trim().to_string()));
-    if fs::metadata(&project_folder).is_ok() {
+    if project_folder.exists() {
         Some(project_folder)
     } else {
         None
@@ -47,14 +47,14 @@ fn get_pipenv_project_from_prefix(prefix: &Path) -> Option<PathBuf> {
 
 fn is_pipenv(env: &PythonEnv, env_vars: &EnvVariables) -> bool {
     if let Some(project_path) = get_pipenv_project(env) {
-        if fs::metadata(project_path.join(env_vars.pipenv_pipfile.clone())).is_ok() {
+        if project_path.join(env_vars.pipenv_pipfile.clone()).exists() {
             return true;
         }
     }
     // If we have a Pipfile, then this is a pipenv environment.
     // Else likely a virtualenvwrapper or the like.
     if let Some(project_path) = get_pipenv_project(env) {
-        fs::metadata(project_path.join(env_vars.pipenv_pipfile.clone())).is_ok()
+        project_path.join(env_vars.pipenv_pipfile.clone()).exists()
     } else {
         false
     }

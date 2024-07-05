@@ -1,25 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 /// conda-meta must exist as this contains a mandatory `history` file.
 pub fn is_conda_install(path: &Path) -> bool {
-    (path.join("condabin").metadata().is_ok() || path.join("envs").metadata().is_ok())
-        && path.join("conda-meta").metadata().is_ok()
+    (path.join("condabin").exists() || path.join("envs").exists())
+        && path.join("conda-meta").exists()
 }
 
 /// conda-meta must exist as this contains a mandatory `history` file.
 /// The root conda installation folder is also a conda environment (its the base environment).
 pub fn is_conda_env(path: &Path) -> bool {
-    if let Ok(metadata) = fs::metadata(path.join("conda-meta")) {
-        metadata.is_dir()
-    } else {
-        false
-    }
+    path.join("conda-meta").is_dir()
 }
 
 /// Only used in tests, noop in production.

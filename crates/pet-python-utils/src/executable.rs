@@ -25,7 +25,7 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
         env_path.join("python3.exe"),
     ]
     .into_iter()
-    .find(|path| fs::metadata(path).is_ok())
+    .find(|path| path.exists())
 }
 
 #[cfg(unix)]
@@ -37,7 +37,7 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
         env_path.join("python3"),
     ]
     .into_iter()
-    .find(|path| fs::metadata(path).is_ok())
+    .find(|path| path.exists())
 }
 
 pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
@@ -48,7 +48,7 @@ pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
     let mut python_executables = vec![];
     let bin = if cfg!(windows) { "Scripts" } else { "bin" };
     let mut env_path = env_path.as_ref().to_path_buf();
-    if env_path.join(bin).metadata().is_ok() {
+    if env_path.join(bin).exists() {
         env_path = env_path.join(bin);
     }
 
@@ -72,18 +72,16 @@ pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
     // If you install python@3.10, then only a python3.10 exe is created in that bin directory.
     // As a compromise, we only enumerate if this is a bin directory and there are no python exes
     // Else enumerating entire directories is very expensive.
-    if env_path.join(python_exe).metadata().is_ok()
-        || env_path.join(python3_exe).metadata().is_ok()
+    if env_path.join(python_exe).exists()
+        || env_path.join(python3_exe).exists()
         || env_path.ends_with(bin)
     {
         // Enumerate this directory and get all `python` & `pythonX.X` files.
         if let Ok(entries) = fs::read_dir(env_path) {
             for entry in entries.filter_map(Result::ok) {
                 let file = entry.path();
-                if let Ok(metadata) = fs::metadata(&file) {
-                    if is_python_executable_name(&entry.path()) && metadata.is_file() {
-                        python_executables.push(file);
-                    }
+                if file.is_file() && is_python_executable_name(&file) {
+                    python_executables.push(file);
                 }
             }
         }

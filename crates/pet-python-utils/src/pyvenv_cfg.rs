@@ -44,14 +44,14 @@ fn find(path: &Path) -> Option<PathBuf> {
     // Check if the pyvenv.cfg file is in the current directory.
     // Possible the passed value is the `env`` directory.
     let cfg = path.join(PYVENV_CONFIG_FILE);
-    if fs::metadata(&cfg).is_ok() {
+    if cfg.exists() {
         return Some(cfg);
     }
 
     let bin = if cfg!(windows) { "Scripts" } else { "bin" };
     if path.ends_with(bin) {
         let cfg = path.parent()?.join(PYVENV_CONFIG_FILE);
-        if fs::metadata(&cfg).is_ok() {
+        if cfg.exists() {
             return Some(cfg);
         }
     }
