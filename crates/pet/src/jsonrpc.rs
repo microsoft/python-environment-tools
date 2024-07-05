@@ -4,6 +4,7 @@
 use log::{error, info, trace};
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
+use pet_conda::CondaLocator;
 use pet_core::{
     os_environment::{Environment, EnvironmentApi},
     reporter::Reporter,
@@ -13,6 +14,7 @@ use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
 };
+use pet_poetry::Poetry;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
@@ -103,7 +105,6 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     context.reporter.as_ref(),
                     config,
                     &context.locators,
-                    context.conda_locator.clone(),
                     context.os_environment.deref(),
                 );
                 let summary = summary.lock().unwrap();
@@ -125,6 +126,32 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                 );
                 trace!("Finished refreshing environments in {:?}", summary.time);
                 send_reply(id, Some(RefreshResult::new(summary.time)));
+
+                // By now all conda envs have been found
+                // Spawn conda  in a separate thread.
+                // & see if we can find more environments by spawning conda.
+                // But we will not wait for this to complete.
+                let conda_locator = context.conda_locator.clone();
+                let conda_executable = context
+                    .configuration
+                    .read()
+                    .unwrap()
+                    .conda_executable
+                    .clone();
+                thread::spawn(move || {
+                    conda_locator.find_with_conda_executable(conda_executable);
+                    Some(())
+                });
+
+                // By now all poetry envs have been found
+                // Spawn poetry exe in a separate thread.
+                // & see if we can find more environments by spawning poetry.
+                // But we will not wait for this to complete.
+                let os_environment = context.os_environment.clone();
+                thread::spawn(move || {
+                    Poetry::new(os_environment.deref()).find_with_executable();
+                    Some(())
+                });
             });
         }
         Err(e) => {

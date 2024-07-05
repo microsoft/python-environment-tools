@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 use log::{trace, warn};
-use pet_conda::CondaLocator;
 use pet_core::os_environment::Environment;
 use pet_core::reporter::Reporter;
 use pet_core::{Configuration, Locator};
@@ -35,7 +34,6 @@ pub fn find_and_report_envs(
     reporter: &dyn Reporter,
     configuration: Configuration,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
-    conda_locator: Arc<dyn CondaLocator>,
     environment: &dyn Environment,
 ) -> Arc<Mutex<Summary>> {
     let summary = Arc::new(Mutex::new(Summary {
@@ -51,7 +49,6 @@ pub fn find_and_report_envs(
     // From settings
     let environment_directories = configuration.environment_directories.unwrap_or_default();
     let project_directories = configuration.project_directories.unwrap_or_default();
-    let conda_executable = configuration.conda_executable;
     thread::scope(|s| {
         // 1. Find using known global locators.
         s.spawn(|| {
@@ -73,23 +70,6 @@ pub fn find_and_report_envs(
                 }
             });
             summary.lock().unwrap().find_locators_time = start.elapsed();
-
-            // By now all conda envs have been found
-            // Spawn conda  in a separate thread.
-            // & see if we can find more environments by spawning conda.
-            // But we will not wait for this to complete.
-            thread::spawn(move || {
-                conda_locator.find_with_conda_executable(conda_executable);
-                Some(())
-            });
-            // // By now all poetry envs have been found
-            // // Spawn poetry exe in a separate thread.
-            // // & see if we can find more environments by spawning poetry.
-            // // But we will not wait for this to complete.
-            // thread::spawn(move || {
-            //     Poetry::new(os_environment).find_with_executable();
-            //     Some(())
-            // });
         });
         // Step 2: Search in PATH variable
         s.spawn(|| {

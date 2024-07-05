@@ -82,7 +82,6 @@ fn verify_validity_of_discovered_envs() {
         &reporter,
         Default::default(),
         &locators,
-        conda_locator,
         &environment,
     );
     let result = reporter.get_result();
@@ -143,7 +142,6 @@ fn check_if_virtualenvwrapper_exists() {
         &reporter,
         Default::default(),
         &create_locators(conda_locator.clone(), &environment),
-        conda_locator,
         &environment,
     );
 
@@ -185,7 +183,6 @@ fn check_if_pipenv_exists() {
         &reporter,
         Default::default(),
         &create_locators(conda_locator.clone(), &environment),
-        conda_locator,
         &environment,
     );
 
@@ -223,7 +220,6 @@ fn check_if_pyenv_virtualenv_exists() {
         &reporter,
         Default::default(),
         &create_locators(conda_locator.clone(), &environment),
-        conda_locator,
         &environment,
     );
 
@@ -585,7 +581,6 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
         &reporter,
         Default::default(),
         &create_locators(conda_locator.clone(), &environment),
-        conda_locator,
         &environment,
     );
 

@@ -12,6 +12,11 @@ pub struct CondaInfo {
     pub conda_prefix: PathBuf,
     pub conda_version: String,
     pub envs_dirs: Vec<PathBuf>,
+    pub envs_path: Vec<PathBuf>,
+    pub config_files: Vec<PathBuf>,
+    pub rc_path: Option<PathBuf>,
+    pub sys_rc_path: Option<PathBuf>,
+    pub user_rc_path: Option<PathBuf>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -20,6 +25,11 @@ pub struct CondaInfoJson {
     pub conda_prefix: Option<PathBuf>,
     pub conda_version: Option<String>,
     pub envs_dirs: Option<Vec<PathBuf>>,
+    pub envs_path: Option<Vec<PathBuf>>,
+    pub config_files: Option<Vec<PathBuf>>,
+    pub rc_path: Option<PathBuf>,
+    pub user_rc_path: Option<PathBuf>,
+    pub sys_rc_path: Option<PathBuf>,
 }
 
 impl CondaInfo {
@@ -48,8 +58,17 @@ impl CondaInfo {
                                 executable: executable.clone(),
                                 envs: info.envs.unwrap_or_default().drain(..).collect(),
                                 conda_prefix: info.conda_prefix.unwrap_or_default(),
+                                rc_path: info.rc_path,
+                                sys_rc_path: info.sys_rc_path,
+                                user_rc_path: info.user_rc_path,
                                 conda_version: info.conda_version.unwrap_or_default(),
                                 envs_dirs: info.envs_dirs.unwrap_or_default().drain(..).collect(),
+                                envs_path: info.envs_path.unwrap_or_default().drain(..).collect(),
+                                config_files: info
+                                    .config_files
+                                    .unwrap_or_default()
+                                    .drain(..)
+                                    .collect(),
                             };
                             Some(info)
                         }

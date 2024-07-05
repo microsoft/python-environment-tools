@@ -33,7 +33,6 @@ fn verify_ci_poetry_global() {
         &reporter,
         Default::default(),
         &locators,
-        conda_locator,
         &environment,
     );
 
@@ -99,7 +98,6 @@ fn verify_ci_poetry_project() {
         &reporter,
         Default::default(),
         &locators,
-        conda_locator,
         &environment,
     );
 
