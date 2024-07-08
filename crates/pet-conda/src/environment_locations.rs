@@ -302,6 +302,9 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     if let Some(ref conda_prefix) = env_vars.conda_prefix {
         known_paths.push(expand_path(PathBuf::from(conda_prefix.clone())));
     }
+    if let Some(ref conda_dir) = env_vars.conda_dir {
+        known_paths.push(expand_path(PathBuf::from(conda_dir.clone())));
+    }
     if let Some(ref conda) = env_vars.conda {
         known_paths.push(expand_path(PathBuf::from(conda)));
     }

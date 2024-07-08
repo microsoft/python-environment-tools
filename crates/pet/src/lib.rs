@@ -4,6 +4,7 @@
 use find::find_and_report_envs;
 use locators::create_locators;
 use pet_conda::Conda;
+use pet_conda::CondaLocator;
 use pet_core::{os_environment::EnvironmentApi, Configuration};
 use pet_reporter::{self, cache::CacheReporter, stdio};
 use std::{collections::BTreeMap, env, sync::Arc, time::SystemTime};
@@ -12,7 +13,12 @@ pub mod find;
 pub mod locators;
 pub mod resolve;
 
-pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose: bool) {
+pub fn find_and_report_envs_stdio(
+    print_list: bool,
+    print_summary: bool,
+    verbose: bool,
+    report_missing: bool,
+) {
     stdio::initialize_logger(if verbose {
         log::LevelFilter::Trace
     } else {
@@ -35,6 +41,12 @@ pub fn find_and_report_envs_stdio(print_list: bool, print_summary: bool, verbose
     }
 
     let summary = find_and_report_envs(&reporter, config, &locators, &environment);
+    if report_missing {
+        // By now all conda envs have been found
+        // Spawn conda
+        // & see if we can find more environments by spawning conda.
+        let _ = conda_locator.find_and_report_missing_envs(&reporter, None);
+    }
 
     if print_summary {
         let summary = summary.lock().unwrap();

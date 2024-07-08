@@ -1,11 +1,16 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use serde::{Deserialize, Serialize};
+
 use crate::python_environment::PythonEnvironmentKind;
 
 /// Information about an environment that was discovered to be inaccurate.
 /// If the discovered information is None, then it means that the information was not found.
 /// And we will not report that as an inaccuracy.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy)]
 pub struct InaccuratePythonEnvironmentInfo {
     /// Python Env kind
     pub kind: Option<PythonEnvironmentKind>,
