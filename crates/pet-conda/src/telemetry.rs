@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, vec};
 
 use log::warn;
 use pet_core::{
@@ -23,7 +23,8 @@ pub fn report_missing_envs(
     conda_info: &CondaInfo,
     user_provided_conda_exe: bool,
 ) -> Option<()> {
-    let missing_envs = log_and_find_missing_envs(possibly_missing_envs, known_envs, conda_info)?;
+    let missing_envs = log_and_find_missing_envs(possibly_missing_envs, known_envs, conda_info)
+        .unwrap_or_default();
     let known_conda_rcs = get_all_known_conda_rc(env_vars, known_envs);
     let conda_manager_not_found = !known_envs
         .iter()
@@ -34,10 +35,12 @@ pub fn report_missing_envs(
         .collect();
     let mut discovered_env_dirs: HashSet<_> = known_conda_rcs
         .iter()
-        .flat_map(|rc| rc.env_dirs.iter())
+        .flat_map(|rc| rc.env_dirs.clone().into_iter())
         .collect();
     let known_env_prefixes: HashSet<_> =
         known_envs.iter().filter_map(|e| e.prefix.clone()).collect();
+
+    let mut conda_env_dirs = vec![];
 
     let mut root_prefix_not_found = false;
     let mut conda_prefix_not_found = false;
@@ -54,43 +57,66 @@ pub fn report_missing_envs(
         }
     }
 
-    let (sys_conda_rc_not_found, missing_from_sys_rc_env_dirs, missing_env_dirs_from_sys_rc) =
-        count_missing_envs(
-            &mut discovered_conda_rcs,
-            &mut discovered_env_dirs,
-            &missing_envs,
-            &conda_info
-                .sys_rc_path
-                .clone()
-                .map(|x| [x])
-                .unwrap_or_default(),
-            "sys",
-        );
+    let (
+        sys_conda_rc_not_found,
+        missing_from_sys_rc_env_dirs,
+        missing_env_dirs_from_sys_rc,
+        mut env_dirs,
+    ) = count_missing_envs(
+        &mut discovered_conda_rcs,
+        &mut discovered_env_dirs,
+        &missing_envs,
+        &conda_info
+            .sys_rc_path
+            .clone()
+            .map(|x| [x])
+            .unwrap_or_default(),
+        "sys",
+    );
+    conda_env_dirs.append(&mut env_dirs);
 
-    let (user_conda_rc_not_found, missing_from_user_rc_env_dirs, missing_env_dirs_from_user_rc) =
-        count_missing_envs(
-            &mut discovered_conda_rcs,
-            &mut discovered_env_dirs,
-            &missing_envs,
-            &conda_info
-                .user_rc_path
-                .clone()
-                .map(|x| [x])
-                .unwrap_or_default(),
-            "user",
-        );
+    let (
+        user_conda_rc_not_found,
+        missing_from_user_rc_env_dirs,
+        missing_env_dirs_from_user_rc,
+        mut env_dirs,
+    ) = count_missing_envs(
+        &mut discovered_conda_rcs,
+        &mut discovered_env_dirs,
+        &missing_envs,
+        &conda_info
+            .user_rc_path
+            .clone()
+            .map(|x| [x])
+            .unwrap_or_default(),
+        "user",
+    );
+    conda_env_dirs.append(&mut env_dirs);
 
-    let (other_conda_rc_not_found, missing_from_other_rc_env_dirs, missing_env_dirs_from_other_rc) =
-        count_missing_envs(
-            &mut discovered_conda_rcs,
-            &mut discovered_env_dirs,
-            &missing_envs,
-            &conda_info.config_files,
-            "other",
-        );
+    let (
+        other_conda_rc_not_found,
+        missing_from_other_rc_env_dirs,
+        missing_env_dirs_from_other_rc,
+        mut env_dirs,
+    ) = count_missing_envs(
+        &mut discovered_conda_rcs,
+        &mut discovered_env_dirs,
+        &missing_envs,
+        &conda_info.config_files,
+        "other",
+    );
+    conda_env_dirs.append(&mut env_dirs);
+
+    let conda_env_dirs: HashSet<_> = conda_env_dirs.into_iter().collect();
+    let missing_conda_env_dirs = conda_env_dirs.difference(&discovered_env_dirs).count();
 
     let missing_info = MissingCondaEnvironments {
         missing: missing_envs.len() as u16,
+        env_dirs_not_found: if missing_conda_env_dirs > 0 {
+            Some(missing_conda_env_dirs as u16)
+        } else {
+            None
+        },
         user_provided_conda_exe: if user_provided_conda_exe {
             Some(true)
         } else {
@@ -225,14 +251,15 @@ fn get_all_known_conda_rc(
 
 fn count_missing_envs(
     discovered_conda_rcs: &mut HashSet<PathBuf>,
-    discovered_env_dirs: &mut HashSet<&PathBuf>,
+    discovered_env_dirs: &mut HashSet<PathBuf>,
     missing_envs: &[PathBuf],
     config_files: &[PathBuf],
     config_type: &str,
-) -> (u16, u16, u16) {
+) -> (u16, u16, u16, Vec<PathBuf>) {
     let mut conda_rc_not_found = 0;
     let mut missing_from_rc_env_dirs = 0;
     let mut missing_env_dirs_from_rc = 0;
+    let mut env_dirs = vec![];
 
     for rc in config_files.iter() {
         // We are not interested in the rc if it does not exist.
@@ -247,6 +274,7 @@ fn count_missing_envs(
 
             if let Some(cfg) = Condarc::from_path(rc) {
                 for env_dir in cfg.env_dirs.iter().filter(|d| d.exists()) {
+                    env_dirs.push(env_dir.clone());
                     if !discovered_env_dirs.contains(env_dir) {
                         missing_env_dirs_from_rc += 1;
                         warn!(
@@ -272,5 +300,6 @@ fn count_missing_envs(
         conda_rc_not_found,
         missing_from_rc_env_dirs,
         missing_env_dirs_from_rc,
+        env_dirs,
     )
 }
