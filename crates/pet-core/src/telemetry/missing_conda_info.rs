@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 pub struct MissingCondaEnvironments {
     /// Total number of missing conda envs.
     pub missing: u16,
+    /// Total number of env_dirs not found even after parsing the conda_rc files.
+    /// This will tell us that we are either unable to parse some of the conda_rc files or there are other
+    /// env_dirs that we are not able to find.
+    pub env_dirs_not_found: Option<u16>,
     /// Whether the user provided a conda executable.
     pub user_provided_conda_exe: Option<bool>,
     /// Whether the root prefix returned by conda was not found by us.
