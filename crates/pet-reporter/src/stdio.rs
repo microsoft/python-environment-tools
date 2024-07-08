@@ -36,6 +36,9 @@ impl StdioReporter {
     }
 }
 impl Reporter for StdioReporter {
+    fn report_telemetry(&self, _event: &pet_core::telemetry::TelemetryEvent) {
+        //
+    }
     fn report_manager(&self, manager: &EnvManager) {
         let mut managers = self.managers.lock().unwrap();
         let count = managers.get(&manager.tool).unwrap_or(&0) + 1;

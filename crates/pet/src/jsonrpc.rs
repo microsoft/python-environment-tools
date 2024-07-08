@@ -138,8 +138,9 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     .unwrap()
                     .conda_executable
                     .clone();
+                let reporter = context.reporter.clone();
                 thread::spawn(move || {
-                    conda_locator.find_with_conda_executable(conda_executable);
+                    conda_locator.find_and_report_missing_envs(reporter.as_ref(), conda_executable);
                     Some(())
                 });
 

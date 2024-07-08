@@ -61,7 +61,7 @@ pub fn find_conda_binary(env_vars: &EnvVariables) -> Option<PathBuf> {
 pub struct CondaManager {
     pub executable: PathBuf,
     pub version: Option<String>,
-    pub conda_dir: PathBuf,
+    pub conda_dir: Option<PathBuf>,
 }
 
 impl CondaManager {
@@ -108,7 +108,7 @@ fn get_conda_manager(path: &Path) -> Option<CondaManager> {
         Some(CondaManager {
             executable: conda_exe,
             version: Some(conda_pkg.version),
-            conda_dir: path.to_path_buf(),
+            conda_dir: Some(path.to_path_buf()),
         })
     } else {
         None

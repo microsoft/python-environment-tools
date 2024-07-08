@@ -77,7 +77,7 @@ pub fn get_conda_environment_info(
     }
     // If we know the conda install folder, then we can use it.
     let mut conda_install_folder = match manager {
-        Some(manager) => Some(manager.conda_dir.clone()),
+        Some(manager) => manager.conda_dir.clone(),
         None => get_conda_installation_used_to_create_conda_env(env_path),
     };
     if let Some(conda_dir) = &conda_install_folder {

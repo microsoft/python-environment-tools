@@ -23,9 +23,13 @@ enum Commands {
         #[arg(short, long)]
         list: Option<bool>,
 
-        // Whether to display verbose output (defaults to just info).
+        /// Whether to display verbose output (defaults to just info).
         #[arg(short, long)]
         verbose: bool,
+
+        /// Whether to look for missing environments and report them (e.g. spawn conda and find what was missed).
+        #[arg(short, long)]
+        report_missing: bool,
     },
     /// Starts the JSON RPC Server.
     Server,
@@ -37,10 +41,13 @@ fn main() {
     match cli.command.unwrap_or(Commands::Find {
         list: Some(true),
         verbose: false,
+        report_missing: false,
     }) {
-        Commands::Find { list, verbose } => {
-            find_and_report_envs_stdio(list.unwrap_or(true), true, verbose)
-        }
+        Commands::Find {
+            list,
+            verbose,
+            report_missing,
+        } => find_and_report_envs_stdio(list.unwrap_or(true), true, verbose, report_missing),
         Commands::Server => start_jsonrpc_server(),
     }
 }

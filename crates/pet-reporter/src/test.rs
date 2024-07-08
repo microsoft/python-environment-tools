@@ -31,6 +31,9 @@ impl TestReporter {
 }
 
 impl Reporter for TestReporter {
+    fn report_telemetry(&self, _event: &pet_core::telemetry::TelemetryEvent) {
+        //
+    }
     fn report_manager(&self, manager: &EnvManager) {
         let mut reported_managers = self.managers.lock().unwrap();
         reported_managers.insert(manager.executable.clone(), manager.clone());

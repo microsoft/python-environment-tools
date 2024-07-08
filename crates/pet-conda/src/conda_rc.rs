@@ -5,6 +5,7 @@ use crate::env_variables::EnvVariables;
 use log::trace;
 use pet_fs::path::expand_path;
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -93,11 +94,19 @@ fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
             PathBuf::from(conda_prefix.clone()).join(".condarc.d"),
         ]);
     }
+    if let Some(ref conda_dir) = env_vars.conda_dir {
+        search_paths.append(&mut vec![
+            PathBuf::from(conda_dir.clone()).join(".condarc"),
+            PathBuf::from(conda_dir.clone()).join("condarc"),
+            PathBuf::from(conda_dir.clone()).join(".condarc.d"),
+        ]);
+    }
     if let Some(ref condarc) = env_vars.condarc {
         search_paths.append(&mut vec![PathBuf::from(condarc)]);
     }
 
-    search_paths
+    let search_paths: HashSet<_> = search_paths.into_iter().collect();
+    search_paths.into_iter().collect()
 }
 
 // https://github.com/conda/conda/blob/3ae5d7cf6cbe2b0ff9532359456b7244ae1ea5ef/conda/common/configuration.py#L1315

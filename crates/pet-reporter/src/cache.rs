@@ -25,6 +25,9 @@ impl CacheReporter {
     }
 }
 impl Reporter for CacheReporter {
+    fn report_telemetry(&self, event: &pet_core::telemetry::TelemetryEvent) {
+        self.reporter.report_telemetry(event);
+    }
     fn report_manager(&self, manager: &EnvManager) {
         let mut reported_managers = self.reported_managers.lock().unwrap();
         if !reported_managers.contains_key(&manager.executable) {

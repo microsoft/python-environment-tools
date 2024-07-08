@@ -18,6 +18,8 @@ pub struct EnvVariables {
     pub programdata: Option<String>,
     pub homedrive: Option<String>,
     pub conda_root: Option<String>,
+    /// https://github.com/jupyter/docker-stacks/issues/1086
+    pub conda_dir: Option<String>,
     pub conda: Option<String>,
     pub conda_prefix: Option<String>,
     /// https://docs.conda.io/projects/conda/en/22.11.x/user-guide/configuration/use-condarc.html
@@ -37,6 +39,7 @@ impl EnvVariables {
             allusersprofile: env.get_env_var("ALLUSERSPROFILE".to_string()),
             programdata: env.get_env_var("PROGRAMDATA".to_string()),
             homedrive: env.get_env_var("HOMEDRIVE".to_string()),
+            conda_dir: env.get_env_var("CONDA_DIR".to_string()),
             conda_root: env.get_env_var("CONDA_ROOT".to_string()),
             conda: env.get_env_var("CONDA".to_string()),
             conda_prefix: env.get_env_var("CONDA_PREFIX".to_string()),

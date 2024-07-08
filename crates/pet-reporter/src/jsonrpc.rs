@@ -3,13 +3,34 @@
 
 use env_logger::Builder;
 use log::{trace, LevelFilter};
-use pet_core::{manager::EnvManager, python_environment::PythonEnvironment, reporter::Reporter};
+use pet_core::{
+    manager::EnvManager,
+    python_environment::PythonEnvironment,
+    reporter::Reporter,
+    telemetry::{get_telemetry_event_name, TelemetryEvent},
+};
 use pet_jsonrpc::send_message;
 use serde::{Deserialize, Serialize};
 
 pub struct JsonRpcReporter {}
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
+struct TelemetryData {
+    event: String,
+    data: TelemetryEvent,
+}
+
 impl Reporter for JsonRpcReporter {
+    fn report_telemetry(&self, event: &TelemetryEvent) {
+        let event = TelemetryData {
+            event: get_telemetry_event_name(event).to_string(),
+            data: *event,
+        };
+        trace!("Telemetry event {:?}", event.event);
+        send_message("telemetry", Some(event))
+    }
     fn report_manager(&self, manager: &EnvManager) {
         trace!("Reporting Manager {:?}", manager);
         send_message("manager", manager.into())
