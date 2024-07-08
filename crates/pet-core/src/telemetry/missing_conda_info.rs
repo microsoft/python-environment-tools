@@ -13,13 +13,13 @@ pub struct MissingCondaEnvironments {
     /// Total number of missing conda envs.
     pub missing: u16,
     /// Whether the user provided a conda executable.
-    pub user_provided_conda_exe: bool,
+    pub user_provided_conda_exe: Option<bool>,
     /// Whether the root prefix returned by conda was not found by us.
-    pub root_prefix_not_found: bool,
+    pub root_prefix_not_found: Option<bool>,
     /// Whether the conda prefix returned by conda was not found by us.
-    pub conda_prefix_not_found: bool,
+    pub conda_prefix_not_found: Option<bool>,
     /// Whether we found a conda manager or not.
-    pub conda_manager_not_found: bool,
+    pub conda_manager_not_found: Option<bool>,
     /// Whether we failed to find the system rc path.
     pub sys_rc_not_found: Option<bool>,
     /// Whether we failed to find the user rc path.
@@ -43,16 +43,16 @@ pub struct MissingCondaEnvironments {
 impl std::fmt::Display for MissingCondaEnvironments {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(f, "Missing Conda Environments ({}): ", self.missing).unwrap_or_default();
-        if self.user_provided_conda_exe {
+        if self.user_provided_conda_exe.unwrap_or_default() {
             writeln!(f, "   User Provided Conda Exe").unwrap_or_default();
         }
-        if self.root_prefix_not_found {
+        if self.root_prefix_not_found.unwrap_or_default() {
             writeln!(f, "   Root Prefix not found").unwrap_or_default();
         }
-        if self.conda_prefix_not_found {
+        if self.conda_prefix_not_found.unwrap_or_default() {
             writeln!(f, "   Conda Prefix not found").unwrap_or_default();
         }
-        if self.conda_manager_not_found {
+        if self.conda_manager_not_found.unwrap_or_default() {
             writeln!(f, "   Conda Manager not found").unwrap_or_default();
         }
         if self.sys_rc_not_found.unwrap_or_default() {

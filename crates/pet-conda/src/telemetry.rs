@@ -91,10 +91,26 @@ pub fn report_missing_envs(
 
     let missing_info = MissingCondaEnvironments {
         missing: missing_envs.len() as u16,
-        user_provided_conda_exe,
-        root_prefix_not_found,
-        conda_prefix_not_found,
-        conda_manager_not_found,
+        user_provided_conda_exe: if user_provided_conda_exe {
+            Some(true)
+        } else {
+            None
+        },
+        root_prefix_not_found: if root_prefix_not_found {
+            Some(true)
+        } else {
+            None
+        },
+        conda_prefix_not_found: if conda_prefix_not_found {
+            Some(true)
+        } else {
+            None
+        },
+        conda_manager_not_found: if conda_manager_not_found {
+            Some(true)
+        } else {
+            None
+        },
         sys_rc_not_found: if sys_conda_rc_not_found > 0 {
             Some(true)
         } else {
