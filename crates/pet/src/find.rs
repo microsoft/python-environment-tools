@@ -87,7 +87,6 @@ pub fn find_and_report_envs(
                 locators,
                 false,
                 &global_env_search_paths,
-                None,
             );
             summary.lock().unwrap().find_path_time = start.elapsed();
         });
@@ -117,7 +116,6 @@ pub fn find_and_report_envs(
                 locators,
                 false,
                 &global_env_search_paths,
-                None,
             );
             summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
         });
@@ -173,7 +171,6 @@ fn find_python_environments_in_workspace_folders_recursive(
                     reporter,
                     true,
                     &[],
-                    Some(workspace_folder.clone()),
                 );
 
                 // If this is a virtual env folder, no need to scan this.
@@ -189,14 +186,7 @@ fn find_python_environments_in_workspace_folders_recursive(
                         .filter(should_search_for_environments_in_path)
                         .filter(|p| !paths_to_search_first.contains(p))
                     {
-                        find_python_environments(
-                            vec![folder],
-                            reporter,
-                            locators,
-                            true,
-                            &[],
-                            Some(workspace_folder.clone()),
-                        );
+                        find_python_environments(vec![folder], reporter, locators, true, &[]);
                     }
                 }
             }
@@ -210,7 +200,6 @@ fn find_python_environments(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     is_workspace_folder: bool,
     global_env_search_paths: &[PathBuf],
-    search_path: Option<PathBuf>,
 ) {
     if paths.is_empty() {
         return;
@@ -218,7 +207,6 @@ fn find_python_environments(
     thread::scope(|s| {
         for item in paths {
             let locators = locators.clone();
-            let search_path = search_path.clone();
             s.spawn(move || {
                 find_python_environments_in_paths_with_locators(
                     vec![item],
@@ -226,7 +214,6 @@ fn find_python_environments(
                     reporter,
                     is_workspace_folder,
                     global_env_search_paths,
-                    search_path,
                 );
             });
         }
@@ -239,7 +226,6 @@ fn find_python_environments_in_paths_with_locators(
     reporter: &dyn Reporter,
     is_workspace_folder: bool,
     global_env_search_paths: &[PathBuf],
-    search_path: Option<PathBuf>,
 ) {
     for path in paths {
         let executables = if is_workspace_folder {
@@ -275,7 +261,6 @@ fn find_python_environments_in_paths_with_locators(
             locators,
             reporter,
             global_env_search_paths,
-            search_path.clone(),
         );
     }
 }
@@ -285,17 +270,13 @@ fn identify_python_executables_using_locators(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     reporter: &dyn Reporter,
     global_env_search_paths: &[PathBuf],
-    search_path: Option<PathBuf>,
 ) {
     for exe in executables.into_iter() {
         let executable = exe.clone();
         let env = PythonEnv::new(exe.to_owned(), None, None);
-        if let Some(env) = identify_python_environment_using_locators(
-            &env,
-            locators,
-            global_env_search_paths,
-            search_path.clone(),
-        ) {
+        if let Some(env) =
+            identify_python_environment_using_locators(&env, locators, global_env_search_paths)
+        {
             reporter.report_environment(&env);
             if let Some(manager) = env.manager {
                 reporter.report_manager(&manager);
