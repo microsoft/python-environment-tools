@@ -92,7 +92,8 @@ pub struct PoetryConfig {
 pub fn get_config(executable: &PathBuf, workspace_dir: &PathBuf) -> PoetryConfig {
     let cache_dir = get_config_path(executable, workspace_dir, "cache-dir");
     let virtualenvs_path = get_config_path(executable, workspace_dir, "virtualenvs.path");
-    let virtualenvs_in_project = get_config_bool(executable, workspace_dir, "virtualenvs.in-project");
+    let virtualenvs_in_project =
+        get_config_bool(executable, workspace_dir, "virtualenvs.in-project");
     PoetryConfig {
         cache_dir,
         virtualenvs_in_project,
@@ -115,11 +116,19 @@ fn get_config_bool(executable: &PathBuf, workspace_dir: &PathBuf, setting: &str)
         None => None,
     }
 }
-fn get_config_path(executable: &PathBuf, workspace_dir: &PathBuf, setting: &str) -> Option<PathBuf> {
+fn get_config_path(
+    executable: &PathBuf,
+    workspace_dir: &PathBuf,
+    setting: &str,
+) -> Option<PathBuf> {
     get_config_value(executable, workspace_dir, setting).map(|output| PathBuf::from(output.trim()))
 }
 
-fn get_config_value(executable: &PathBuf, workspace_dir: &PathBuf, setting: &str) -> Option<String> {
+fn get_config_value(
+    executable: &PathBuf,
+    workspace_dir: &PathBuf,
+    setting: &str,
+) -> Option<String> {
     let start = SystemTime::now();
     let result = std::process::Command::new(executable)
         .arg("config")

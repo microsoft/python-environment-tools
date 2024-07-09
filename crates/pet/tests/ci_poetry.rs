@@ -50,7 +50,8 @@ fn verify_ci_poetry_global() {
     let poetry_envs = environments
         .iter()
         .filter(|e| {
-            e.kind == Some(PythonEnvironmentKind::Poetry) && e.project == Some(workspace_dir.clone())
+            e.kind == Some(PythonEnvironmentKind::Poetry)
+                && e.project == Some(workspace_dir.clone())
         })
         .collect::<Vec<&PythonEnvironment>>();
 
@@ -111,7 +112,8 @@ fn verify_ci_poetry_project() {
     let poetry_envs = environments
         .iter()
         .filter(|e| {
-            e.kind == Some(PythonEnvironmentKind::Poetry) && e.project == Some(workspace_dir.clone())
+            e.kind == Some(PythonEnvironmentKind::Poetry)
+                && e.project == Some(workspace_dir.clone())
         })
         .collect::<Vec<&PythonEnvironment>>();
 

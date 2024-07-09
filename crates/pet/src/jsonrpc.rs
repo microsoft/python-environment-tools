@@ -69,6 +69,7 @@ pub fn start_jsonrpc_server() {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ConfigureOptions {
     /// These are paths like workspace folders, where we can look for environments.
     pub workspace_directories: Option<Vec<PathBuf>>,
