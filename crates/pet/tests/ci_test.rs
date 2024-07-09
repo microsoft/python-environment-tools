@@ -542,13 +542,9 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
         locator.configure(&config);
     }
 
-    let env = resolve_environment(
-        &executable,
-        &locators,
-        vec![workspace_dir.clone()],
-        &os_environment,
-    )
-    .expect(format!("Failed to resolve environment using `resolve` for {environment:?}").as_str());
+    let env = resolve_environment(&executable, &locators, &os_environment).expect(
+        format!("Failed to resolve environment using `resolve` for {environment:?}").as_str(),
+    );
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
