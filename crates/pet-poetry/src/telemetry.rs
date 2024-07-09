@@ -39,9 +39,7 @@ pub fn report_missing_envs(
         let local_cache_dir = local_config.clone().and_then(|c| c.cache_dir.clone());
         let cache_dir = local_cache_dir.or(global_cache_dir);
 
-        let poetry_exe_found = envs_discovered_by_us
-            .clone()
-            .map(|e| !e.managers.is_empty());
+        let poetry_exe_not_found = envs_discovered_by_us.clone().map(|e| e.managers.is_empty());
         let global_config_not_found = Some(global_config.is_none());
         let envs_discovered_by_us: HashSet<_> = envs_discovered_by_us
             .clone()
@@ -127,7 +125,7 @@ pub fn report_missing_envs(
             missing: missing_envs.len() as u16,
             missing_in_path: missing_path.unwrap_or_default(),
             user_provided_poetry_exe: Some(user_provided_poetry_exe),
-            poetry_exe_found,
+            poetry_exe_not_found,
             global_config_not_found,
             cache_dir_not_found,
             cache_dir_is_different,

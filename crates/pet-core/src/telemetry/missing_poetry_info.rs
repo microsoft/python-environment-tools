@@ -17,7 +17,7 @@ pub struct MissingPoetryEnvironments {
     /// Whether the user provided a executable.
     pub user_provided_poetry_exe: Option<bool>,
     /// Whether we managed to find the poetry exe or not.
-    pub poetry_exe_found: Option<bool>,
+    pub poetry_exe_not_found: Option<bool>,
     /// Whether we failed to find the global config file.
     pub global_config_not_found: Option<bool>,
     /// Whether the cache-dir returned by Poetry exe was not found by us
