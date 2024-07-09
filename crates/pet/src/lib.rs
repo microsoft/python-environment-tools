@@ -7,6 +7,7 @@ use pet_conda::Conda;
 use pet_conda::CondaLocator;
 use pet_core::{os_environment::EnvironmentApi, Configuration};
 use pet_poetry::Poetry;
+use pet_poetry::PoetryLocator;
 use pet_reporter::{self, cache::CacheReporter, stdio};
 use std::{collections::BTreeMap, env, sync::Arc, time::SystemTime};
 
@@ -48,6 +49,7 @@ pub fn find_and_report_envs_stdio(
         // Spawn conda
         // & see if we can find more environments by spawning conda.
         let _ = conda_locator.find_and_report_missing_envs(&reporter, None);
+        let _ = poetry_locator.find_and_report_missing_envs(&reporter, None);
     }
 
     if print_summary {
