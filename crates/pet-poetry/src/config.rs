@@ -17,6 +17,7 @@ static _APP_NAME: &str = "pypoetry";
 pub struct Config {
     pub virtualenvs_in_project: Option<bool>,
     pub virtualenvs_path: PathBuf,
+    pub cache_dir: Option<PathBuf>,
     pub file: Option<PathBuf>,
 }
 
@@ -24,17 +25,20 @@ impl Config {
     fn new(
         file: Option<PathBuf>,
         virtualenvs_path: PathBuf,
+        cache_dir: Option<PathBuf>,
         virtualenvs_in_project: Option<bool>,
     ) -> Self {
         trace!(
-            "Poetry config file => {:?}, virtualenv.path => {:?}, virtualenvs_in_project => {:?}",
+            "Poetry config file => {:?}, virtualenv.path => {:?}, cache_dir => {:?}, virtualenvs_in_project => {:?}",
             file,
             virtualenvs_path,
+            cache_dir,
             virtualenvs_in_project
         );
         Config {
             file,
             virtualenvs_path,
+            cache_dir,
             virtualenvs_in_project,
         }
     }
@@ -54,44 +58,79 @@ impl Config {
 
 fn create_config(file: Option<PathBuf>, env: &EnvVariables) -> Option<Config> {
     let cfg = file.clone().and_then(|f| parse(&f));
+    let cache_dir = get_cache_dir(&cfg, env);
+    let virtualenvs_path_from_env_var = env
+        .poetry_virtualenvs_path
+        .clone()
+        .map(|p| resolve_virtualenvs_path(&p, &cache_dir));
+
     if let Some(virtualenvs_path) = &cfg.clone().and_then(|cfg| cfg.virtualenvs_path) {
-        let mut virtualenvs_path = virtualenvs_path.clone();
         trace!("Poetry virtualenvs path => {:?}", virtualenvs_path);
-        if virtualenvs_path
-            .to_string_lossy()
-            .to_lowercase()
-            .contains("{cache-dir}")
-        {
-            if let Some(cache_dir) = &get_default_cache_dir(env) {
-                virtualenvs_path = PathBuf::from(
-                    virtualenvs_path
-                        .to_string_lossy()
-                        .replace("{cache-dir}", cache_dir.to_string_lossy().as_ref()),
-                );
-                trace!(
-                    "Poetry virtualenvs path after replacing cache-dir => {:?}",
-                    virtualenvs_path
-                );
-            }
-        }
+        let virtualenvs_path = resolve_virtualenvs_path(&virtualenvs_path.clone(), &cache_dir);
 
         return Some(Config::new(
             file.clone(),
-            virtualenvs_path.clone(),
+            // Give preference to the virtualenvs path from the env var
+            virtualenvs_path_from_env_var.unwrap_or(virtualenvs_path.clone()),
+            cache_dir,
             cfg.and_then(|cfg| cfg.virtualenvs_in_project),
         ));
     }
 
-    get_default_cache_dir(env)
-        .map(|cache_dir| Config::new(file, cache_dir.join("virtualenvs"), None))
+    // Give preference to the virtualenvs path from the env var
+    if let Some(virtualenvs_path_from_env_var) = virtualenvs_path_from_env_var {
+        if virtualenvs_path_from_env_var.exists() {
+            return Some(Config::new(
+                file,
+                virtualenvs_path_from_env_var,
+                cache_dir,
+                cfg.and_then(|cfg| cfg.virtualenvs_in_project),
+            ));
+        }
+    }
+
+    cache_dir
+        .map(|cache_dir| Config::new(file, cache_dir.join("virtualenvs"), Some(cache_dir), None))
+}
+
+/// Replaces {cache-dir} in virtualenvs path with the cache dir
+fn resolve_virtualenvs_path(virtualenvs_path: &Path, cache_dir: &Option<PathBuf>) -> PathBuf {
+    if virtualenvs_path
+        .to_string_lossy()
+        .to_lowercase()
+        .contains("{cache-dir}")
+    {
+        if let Some(cache_dir) = &cache_dir {
+            let virtualenvs_path = PathBuf::from(
+                virtualenvs_path
+                    .to_string_lossy()
+                    .replace("{cache-dir}", cache_dir.to_string_lossy().as_ref()),
+            );
+            trace!(
+                "Poetry virtualenvs path after replacing cache-dir => {:?}",
+                virtualenvs_path
+            );
+            return virtualenvs_path;
+        }
+    }
+    virtualenvs_path.to_path_buf()
 }
 /// Maps to DEFAULT_CACHE_DIR in poetry
-fn get_default_cache_dir(env: &EnvVariables) -> Option<PathBuf> {
+fn get_cache_dir(cfg: &Option<ConfigToml>, env: &EnvVariables) -> Option<PathBuf> {
+    // Cache dir in env variables takes precedence
     if let Some(cache_dir) = env.poetry_cache_dir.clone() {
-        Some(cache_dir)
-    } else {
-        Platformdirs::new(_APP_NAME.into(), false).user_cache_path()
+        if cache_dir.is_dir() {
+            return Some(cache_dir);
+        }
     }
+    // Check cache dir in config.
+    if let Some(cache_dir) = cfg.as_ref().and_then(|cfg| cfg.cache_dir.clone()) {
+        if cache_dir.is_dir() {
+            return Some(cache_dir);
+        }
+    }
+
+    Platformdirs::new(_APP_NAME.into(), false).user_cache_path()
 }
 
 /// Maps to CONFIG_DIR in poetry
@@ -105,7 +144,7 @@ fn get_config_dir(env: &EnvVariables) -> Option<PathBuf> {
     Platformdirs::new(_APP_NAME.into(), true).user_config_path()
 }
 
-fn find_config_file(env: &EnvVariables) -> Option<PathBuf> {
+pub fn find_config_file(env: &EnvVariables) -> Option<PathBuf> {
     let config_dir = get_config_dir(env)?;
     let file = config_dir.join("config.toml");
     if file.exists() {

@@ -3,7 +3,8 @@
 
 use env_variables::EnvVariables;
 use environment_locations::list_environments;
-use log::{error, warn};
+use log::error;
+use manager::PoetryManager;
 use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
@@ -19,6 +20,7 @@ use std::{
         Arc, Mutex,
     },
 };
+use telemetry::report_missing_envs;
 
 pub mod config;
 pub mod env_variables;
@@ -27,6 +29,15 @@ pub mod environment_locations;
 mod environment_locations_spawn;
 pub mod manager;
 mod pyproject_toml;
+mod telemetry;
+
+pub trait PoetryLocator: Send + Sync {
+    fn find_and_report_missing_envs(
+        &self,
+        reporter: &dyn Reporter,
+        poetry_executable: Option<PathBuf>,
+    ) -> Option<()>;
+}
 
 pub struct Poetry {
     pub project_directories: Arc<Mutex<Vec<PathBuf>>>,
@@ -46,51 +57,8 @@ impl Poetry {
             poetry_executable: Arc::new(Mutex::new(None)),
         }
     }
-    pub fn from(environment: &dyn Environment) -> impl Locator {
+    pub fn from(environment: &dyn Environment) -> Poetry {
         Poetry::new(environment)
-    }
-    pub fn find_with_executable(&self) -> Option<()> {
-        let manager = manager::PoetryManager::find(
-            self.poetry_executable.lock().unwrap().clone(),
-            &self.env_vars,
-        )?;
-
-        let environments_using_spawn = environment_locations_spawn::list_environments(
-            &manager.executable,
-            self.project_directories.lock().unwrap().clone(),
-            &manager,
-        )
-        .iter()
-        .filter_map(|env| env.prefix.clone())
-        .collect::<Vec<_>>();
-
-        // Get environments using the faster way.
-        if let Some(environments) = &self.find_with_cache() {
-            let environments = environments
-                .environments
-                .iter()
-                .filter_map(|env| env.prefix.clone())
-                .collect::<Vec<_>>();
-
-            for env in environments_using_spawn {
-                if !environments.contains(&env) {
-                    warn!(
-                        "Found a Poetry env {:?} using the poetry exe {:?}",
-                        env, manager.executable
-                    );
-                    // TODO: Send telemetry.
-                }
-            }
-        } else {
-            // TODO: Send telemetry.
-            for env in environments_using_spawn {
-                warn!(
-                    "Found a Poetry env {:?} using the poetry exe {:?}",
-                    env, manager.executable
-                );
-            }
-        }
-        Some(())
     }
     fn find_with_cache(&self) -> Option<LocatorResult> {
         if self.searched.load(Ordering::Relaxed) {
@@ -131,6 +99,38 @@ impl Poetry {
                 None
             }
         }
+    }
+}
+
+impl PoetryLocator for Poetry {
+    fn find_and_report_missing_envs(
+        &self,
+        reporter: &dyn Reporter,
+        poetry_executable: Option<PathBuf>,
+    ) -> Option<()> {
+        let user_provided_poetry_exe = poetry_executable.is_some();
+        let manager = PoetryManager::find(poetry_executable.clone(), &self.env_vars)?;
+        let poetry_executable = manager.executable.clone();
+
+        let project_dirs = self.project_directories.lock().unwrap().clone();
+        let environments_using_spawn = environment_locations_spawn::list_environments(
+            &poetry_executable,
+            &project_dirs,
+            &manager,
+        );
+
+        let result = self.search_result.lock().unwrap().clone();
+        let _ = report_missing_envs(
+            reporter,
+            &poetry_executable,
+            project_dirs,
+            &self.env_vars,
+            &environments_using_spawn,
+            result,
+            user_provided_poetry_exe,
+        );
+
+        Some(())
     }
 }
 

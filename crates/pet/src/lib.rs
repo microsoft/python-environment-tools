@@ -6,6 +6,7 @@ use locators::create_locators;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
 use pet_core::{os_environment::EnvironmentApi, Configuration};
+use pet_poetry::Poetry;
 use pet_reporter::{self, cache::CacheReporter, stdio};
 use std::{collections::BTreeMap, env, sync::Arc, time::SystemTime};
 
@@ -30,12 +31,13 @@ pub fn find_and_report_envs_stdio(
     let reporter = CacheReporter::new(stdio_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
 
     let mut config = Configuration::default();
     if let Ok(cwd) = env::current_dir() {
         config.project_directories = Some(vec![cwd]);
     }
-    let locators = create_locators(conda_locator.clone(), &environment);
+    let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }

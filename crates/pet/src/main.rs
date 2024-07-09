@@ -21,7 +21,7 @@ enum Commands {
     /// Finds the environments and reports them to the standard output.
     Find {
         #[arg(short, long)]
-        list: Option<bool>,
+        list: bool,
 
         /// Whether to display verbose output (defaults to just info).
         #[arg(short, long)]
@@ -39,7 +39,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command.unwrap_or(Commands::Find {
-        list: Some(true),
+        list: true,
         verbose: false,
         report_missing: false,
     }) {
@@ -47,7 +47,7 @@ fn main() {
             list,
             verbose,
             report_missing,
-        } => find_and_report_envs_stdio(list.unwrap_or(true), true, verbose, report_missing),
+        } => find_and_report_envs_stdio(list, true, verbose, report_missing),
         Commands::Server => start_jsonrpc_server(),
     }
 }

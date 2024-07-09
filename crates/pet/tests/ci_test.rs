@@ -12,6 +12,7 @@ use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
+use pet_poetry::Poetry;
 use pet_python_utils::env::PythonEnv;
 use regex::Regex;
 use serde::Deserialize;
@@ -70,9 +71,10 @@ fn verify_validity_of_discovered_envs() {
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone(), &environment);
+    let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
@@ -132,11 +134,12 @@ fn check_if_virtualenvwrapper_exists() {
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone(), &environment),
+        &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
     );
 
@@ -173,11 +176,12 @@ fn check_if_pipenv_exists() {
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone(), &environment),
+        &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
     );
 
@@ -210,11 +214,12 @@ fn check_if_pyenv_virtualenv_exists() {
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone(), &environment),
+        &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
     );
 
@@ -334,10 +339,15 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let os_environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&os_environment));
+    let poetry_locator = Arc::new(Poetry::from(&os_environment));
     let mut config = Configuration::default();
     let search_paths = vec![project_dir.clone()];
     config.project_directories = Some(search_paths.clone());
-    let locators = create_locators(conda_locator.clone(), &os_environment);
+    let locators = create_locators(
+        conda_locator.clone(),
+        poetry_locator.clone(),
+        &os_environment,
+    );
     for locator in locators.iter() {
         locator.configure(&config);
     }
@@ -521,9 +531,14 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let os_environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&os_environment));
+    let poetry_locator = Arc::new(Poetry::from(&os_environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone(), &os_environment);
+    let locators = create_locators(
+        conda_locator.clone(),
+        poetry_locator.clone(),
+        &os_environment,
+    );
     for locator in locators.iter() {
         locator.configure(&config);
     }
@@ -571,11 +586,12 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone(), &environment),
+        &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
     );
 

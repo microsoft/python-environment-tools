@@ -15,6 +15,7 @@ use pet_jsonrpc::{
     server::{start_server, HandlersKeyedByMethodName},
 };
 use pet_poetry::Poetry;
+use pet_poetry::PoetryLocator;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,7 @@ pub struct Context {
     configuration: RwLock<Configuration>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<Conda>,
+    poetry_locator: Arc<Poetry>,
     os_environment: Arc<dyn Environment>,
 }
 
@@ -46,10 +48,12 @@ pub fn start_jsonrpc_server() {
     let jsonrpc_reporter = Arc::new(jsonrpc::create_reporter());
     let reporter = Arc::new(CacheReporter::new(jsonrpc_reporter.clone()));
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
     let context = Context {
         reporter,
-        locators: create_locators(conda_locator.clone(), &environment),
+        locators: create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         conda_locator,
+        poetry_locator,
         configuration: RwLock::new(Configuration::default()),
         os_environment: Arc::new(environment),
     };
@@ -148,9 +152,17 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                 // Spawn poetry exe in a separate thread.
                 // & see if we can find more environments by spawning poetry.
                 // But we will not wait for this to complete.
-                let os_environment = context.os_environment.clone();
+                let poetry_locator = context.poetry_locator.clone();
+                let poetry_executable = context
+                    .configuration
+                    .read()
+                    .unwrap()
+                    .poetry_executable
+                    .clone();
+                let reporter = context.reporter.clone();
                 thread::spawn(move || {
-                    Poetry::new(os_environment.deref()).find_with_executable();
+                    poetry_locator
+                        .find_and_report_missing_envs(reporter.as_ref(), poetry_executable);
                     Some(())
                 });
             });
