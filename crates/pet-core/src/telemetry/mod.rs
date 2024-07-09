@@ -3,10 +3,12 @@
 
 use inaccurate_python_info::InaccuratePythonEnvironmentInfo;
 use missing_conda_info::MissingCondaEnvironments;
+use missing_poetry_info::MissingPoetryEnvironments;
 use serde::{Deserialize, Serialize};
 
 pub mod inaccurate_python_info;
 pub mod missing_conda_info;
+pub mod missing_poetry_info;
 
 pub type NumberOfCustomSearchPaths = u32;
 
@@ -30,6 +32,8 @@ pub enum TelemetryEvent {
     InaccuratePythonEnvironmentInfo(InaccuratePythonEnvironmentInfo),
     /// Sent when an environment is discovered by spawning conda and not found otherwise.
     MissingCondaEnvironments(MissingCondaEnvironments),
+    /// Sent when an environment is discovered by spawning poetry and not found otherwise.
+    MissingPoetryEnvironments(MissingPoetryEnvironments),
 }
 
 pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
@@ -47,5 +51,6 @@ pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
         TelemetryEvent::SearchCompleted(_) => "SearchCompleted",
         TelemetryEvent::InaccuratePythonEnvironmentInfo(_) => "InaccuratePythonEnvironmentInfo",
         TelemetryEvent::MissingCondaEnvironments(_) => "MissingCondaEnvironments",
+        TelemetryEvent::MissingPoetryEnvironments(_) => "MissingPoetryEnvironments",
     }
 }

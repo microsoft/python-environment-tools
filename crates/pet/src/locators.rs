@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 pub fn create_locators(
     conda_locator: Arc<Conda>,
+    poetry_locator: Arc<Poetry>,
     environment: &dyn Environment,
 ) -> Arc<Vec<Arc<dyn Locator>>> {
     // NOTE: The order of the items matter.
@@ -59,7 +60,7 @@ pub fn create_locators(
     // 6. Support for Virtual Envs
     // The order of these matter.
     // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
-    locators.push(Arc::new(Poetry::from(environment)));
+    locators.push(poetry_locator);
     locators.push(Arc::new(PipEnv::from(environment)));
     locators.push(Arc::new(VirtualEnvWrapper::from(environment)));
     locators.push(Arc::new(Venv::new()));

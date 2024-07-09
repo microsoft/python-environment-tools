@@ -25,6 +25,7 @@ pub fn create_env_variables(home: PathBuf, root: PathBuf) -> EnvVariables {
         poetry_config_dir: None,
         poetry_home: None,
         poetry_virtualenvs_in_project: None,
+        poetry_virtualenvs_path: None,
     }
 }
 

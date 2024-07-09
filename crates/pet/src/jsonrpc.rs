@@ -15,10 +15,12 @@ use pet_jsonrpc::{
     server::{start_server, HandlersKeyedByMethodName},
 };
 use pet_poetry::Poetry;
+use pet_poetry::PoetryLocator;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     ops::Deref,
     path::PathBuf,
@@ -34,8 +36,11 @@ pub struct Context {
     configuration: RwLock<Configuration>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<Conda>,
+    poetry_locator: Arc<Poetry>,
     os_environment: Arc<dyn Environment>,
 }
+
+static MISSING_ENVS_REPORTED: AtomicBool = AtomicBool::new(false);
 
 pub fn start_jsonrpc_server() {
     jsonrpc::initialize_logger(log::LevelFilter::Trace);
@@ -46,10 +51,12 @@ pub fn start_jsonrpc_server() {
     let jsonrpc_reporter = Arc::new(jsonrpc::create_reporter());
     let reporter = Arc::new(CacheReporter::new(jsonrpc_reporter.clone()));
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
     let context = Context {
         reporter,
-        locators: create_locators(conda_locator.clone(), &environment),
+        locators: create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         conda_locator,
+        poetry_locator,
         configuration: RwLock::new(Configuration::default()),
         os_environment: Arc::new(environment),
     };
@@ -127,32 +134,48 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                 trace!("Finished refreshing environments in {:?}", summary.time);
                 send_reply(id, Some(RefreshResult::new(summary.time)));
 
-                // By now all conda envs have been found
-                // Spawn conda  in a separate thread.
-                // & see if we can find more environments by spawning conda.
-                // But we will not wait for this to complete.
-                let conda_locator = context.conda_locator.clone();
-                let conda_executable = context
-                    .configuration
-                    .read()
-                    .unwrap()
-                    .conda_executable
-                    .clone();
-                let reporter = context.reporter.clone();
-                thread::spawn(move || {
-                    conda_locator.find_and_report_missing_envs(reporter.as_ref(), conda_executable);
-                    Some(())
-                });
+                // Find an report missing envs for the first launch of this process.
+                if MISSING_ENVS_REPORTED
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .ok()
+                    .unwrap_or_default()
+                {
+                    // By now all conda envs have been found
+                    // Spawn conda  in a separate thread.
+                    // & see if we can find more environments by spawning conda.
+                    // But we will not wait for this to complete.
+                    let conda_locator = context.conda_locator.clone();
+                    let conda_executable = context
+                        .configuration
+                        .read()
+                        .unwrap()
+                        .conda_executable
+                        .clone();
+                    let reporter = context.reporter.clone();
+                    thread::spawn(move || {
+                        conda_locator
+                            .find_and_report_missing_envs(reporter.as_ref(), conda_executable);
+                        Some(())
+                    });
 
-                // By now all poetry envs have been found
-                // Spawn poetry exe in a separate thread.
-                // & see if we can find more environments by spawning poetry.
-                // But we will not wait for this to complete.
-                let os_environment = context.os_environment.clone();
-                thread::spawn(move || {
-                    Poetry::new(os_environment.deref()).find_with_executable();
-                    Some(())
-                });
+                    // By now all poetry envs have been found
+                    // Spawn poetry exe in a separate thread.
+                    // & see if we can find more environments by spawning poetry.
+                    // But we will not wait for this to complete.
+                    let poetry_locator = context.poetry_locator.clone();
+                    let poetry_executable = context
+                        .configuration
+                        .read()
+                        .unwrap()
+                        .poetry_executable
+                        .clone();
+                    let reporter = context.reporter.clone();
+                    thread::spawn(move || {
+                        poetry_locator
+                            .find_and_report_missing_envs(reporter.as_ref(), poetry_executable);
+                        Some(())
+                    });
+                }
             });
         }
         Err(e) => {

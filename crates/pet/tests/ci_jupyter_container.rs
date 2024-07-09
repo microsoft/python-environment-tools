@@ -29,6 +29,7 @@ fn verify_python_in_jupyter_contaner() {
         os_environment::EnvironmentApi,
         python_environment::{PythonEnvironment, PythonEnvironmentKind},
     };
+    use pet_poetry::Poetry;
     use pet_reporter::test;
     use std::{path::PathBuf, sync::Arc};
 
@@ -37,11 +38,12 @@ fn verify_python_in_jupyter_contaner() {
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
         &reporter,
         Default::default(),
-        &create_locators(conda_locator.clone(), &environment),
+        &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
     );
     let result = reporter.get_result();

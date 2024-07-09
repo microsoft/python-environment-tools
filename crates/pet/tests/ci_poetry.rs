@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use pet_poetry::Poetry;
+
 mod common;
 
 #[cfg_attr(any(feature = "ci-poetry-global", feature = "ci-poetry-custom"), test)]
@@ -22,9 +24,10 @@ fn verify_ci_poetry_global() {
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone(), &environment);
+    let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }
@@ -82,9 +85,10 @@ fn verify_ci_poetry_project() {
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
+    let poetry_locator = Arc::new(Poetry::from(&environment));
     let mut config = Configuration::default();
     config.project_directories = Some(vec![project_dir.clone()]);
-    let locators = create_locators(conda_locator.clone(), &environment);
+    let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
     }

@@ -13,6 +13,8 @@ pub struct EnvVariables {
     pub root: Option<PathBuf>,
     /// Maps to env var `APPDATA`
     pub app_data: Option<PathBuf>,
+    /// Maps to env var `POETRY_VIRTUALENVS_PATH`
+    pub poetry_virtualenvs_path: Option<PathBuf>,
     /// Maps to env var `POETRY_HOME`
     pub poetry_home: Option<PathBuf>,
     /// Maps to env var `POETRY_CONFIG_DIR`
@@ -46,6 +48,9 @@ impl EnvVariables {
             path: env.get_env_var("PATH".to_string()),
             root: env.get_root(),
             app_data: env.get_env_var("APPDATA".to_string()).map(PathBuf::from),
+            poetry_virtualenvs_path: env
+                .get_env_var("POETRY_VIRTUALENVS_PATH".to_string())
+                .map(PathBuf::from),
             poetry_cache_dir: env
                 .get_env_var("POETRY_CACHE_DIR".to_string())
                 .map(PathBuf::from),
