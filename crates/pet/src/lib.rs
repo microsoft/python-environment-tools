@@ -36,7 +36,7 @@ pub fn find_and_report_envs_stdio(
 
     let mut config = Configuration::default();
     if let Ok(cwd) = env::current_dir() {
-        config.project_directories = Some(vec![cwd]);
+        config.workspace_directories = Some(vec![cwd]);
     }
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
@@ -75,7 +75,7 @@ pub fn find_and_report_envs_stdio(
         );
         println!(
             "{:<20} : {:?}",
-            "Custom search paths", summary.find_search_paths_time
+            "Workspace folders", summary.find_workspace_directories_time
         );
         println!();
         let summary = stdio_reporter.get_summary();

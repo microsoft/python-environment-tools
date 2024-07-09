@@ -27,7 +27,7 @@ pub struct Summary {
     pub find_locators_time: Duration,
     pub find_path_time: Duration,
     pub find_global_virtual_envs_time: Duration,
-    pub find_search_paths_time: Duration,
+    pub find_workspace_directories_time: Duration,
 }
 
 pub fn find_and_report_envs(
@@ -42,13 +42,13 @@ pub fn find_and_report_envs(
         find_locators_time: Duration::from_secs(0),
         find_path_time: Duration::from_secs(0),
         find_global_virtual_envs_time: Duration::from_secs(0),
-        find_search_paths_time: Duration::from_secs(0),
+        find_workspace_directories_time: Duration::from_secs(0),
     }));
     let start = std::time::Instant::now();
 
     // From settings
     let environment_directories = configuration.environment_directories.unwrap_or_default();
-    let project_directories = configuration.project_directories.unwrap_or_default();
+    let workspace_directories = configuration.workspace_directories.unwrap_or_default();
     thread::scope(|s| {
         // 1. Find using known global locators.
         s.spawn(|| {
@@ -129,20 +129,20 @@ pub fn find_and_report_envs(
         // & users can have a lot of workspace folders and can have a large number fo files/directories
         // that could the discovery.
         s.spawn(|| {
-            if project_directories.is_empty() {
+            if workspace_directories.is_empty() {
                 return;
             }
             trace!(
                 "Searching for environments in custom folders: {:?}",
-                project_directories
+                workspace_directories
             );
             let start = std::time::Instant::now();
             find_python_environments_in_workspace_folders_recursive(
-                project_directories,
+                workspace_directories,
                 reporter,
                 locators,
             );
-            summary.lock().unwrap().find_search_paths_time = start.elapsed();
+            summary.lock().unwrap().find_workspace_directories_time = start.elapsed();
         });
     });
     summary.lock().unwrap().time = start.elapsed();

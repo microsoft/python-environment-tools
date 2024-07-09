@@ -20,13 +20,13 @@ fn verify_ci_poetry_global() {
     use pet_reporter::test;
     use std::{env, path::PathBuf, sync::Arc};
 
-    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
     let mut config = Configuration::default();
-    config.project_directories = Some(vec![project_dir.clone()]);
+    config.workspace_directories = Some(vec![workspace_dir.clone()]);
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
@@ -50,7 +50,7 @@ fn verify_ci_poetry_global() {
     let poetry_envs = environments
         .iter()
         .filter(|e| {
-            e.kind == Some(PythonEnvironmentKind::Poetry) && e.project == Some(project_dir.clone())
+            e.kind == Some(PythonEnvironmentKind::Poetry) && e.project == Some(workspace_dir.clone())
         })
         .collect::<Vec<&PythonEnvironment>>();
 
@@ -81,13 +81,13 @@ fn verify_ci_poetry_project() {
     use pet_reporter::test;
     use std::{env, path::PathBuf, sync::Arc};
 
-    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
     let mut config = Configuration::default();
-    config.project_directories = Some(vec![project_dir.clone()]);
+    config.workspace_directories = Some(vec![workspace_dir.clone()]);
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
@@ -111,7 +111,7 @@ fn verify_ci_poetry_project() {
     let poetry_envs = environments
         .iter()
         .filter(|e| {
-            e.kind == Some(PythonEnvironmentKind::Poetry) && e.project == Some(project_dir.clone())
+            e.kind == Some(PythonEnvironmentKind::Poetry) && e.project == Some(workspace_dir.clone())
         })
         .collect::<Vec<&PythonEnvironment>>();
 
@@ -127,6 +127,6 @@ fn verify_ci_poetry_project() {
     );
     assert_eq!(
         poetry_envs[0].prefix.clone().unwrap_or_default(),
-        project_dir.join(".venv")
+        workspace_dir.join(".venv")
     );
 }

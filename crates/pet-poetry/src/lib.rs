@@ -40,7 +40,7 @@ pub trait PoetryLocator: Send + Sync {
 }
 
 pub struct Poetry {
-    pub project_directories: Arc<Mutex<Vec<PathBuf>>>,
+    pub workspace_directories: Arc<Mutex<Vec<PathBuf>>>,
     pub env_vars: EnvVariables,
     pub poetry_executable: Arc<Mutex<Option<PathBuf>>>,
     searched: AtomicBool,
@@ -52,7 +52,7 @@ impl Poetry {
         Poetry {
             searched: AtomicBool::new(false),
             search_result: Arc::new(Mutex::new(None)),
-            project_directories: Arc::new(Mutex::new(vec![])),
+            workspace_directories: Arc::new(Mutex::new(vec![])),
             env_vars: EnvVariables::from(environment),
             poetry_executable: Arc::new(Mutex::new(None)),
         }
@@ -76,10 +76,10 @@ impl Poetry {
         if let Some(manager) = &manager {
             result.managers.push(manager.to_manager());
         }
-        if let Ok(values) = self.project_directories.lock() {
-            let project_dirs = values.clone();
+        if let Ok(values) = self.workspace_directories.lock() {
+            let workspace_dirs = values.clone();
             drop(values);
-            let envs = list_environments(&self.env_vars, &project_dirs.clone(), manager)
+            let envs = list_environments(&self.env_vars, &workspace_dirs.clone(), manager)
                 .unwrap_or_default();
             result.environments.extend(envs.clone());
         }
@@ -112,10 +112,10 @@ impl PoetryLocator for Poetry {
         let manager = PoetryManager::find(poetry_executable.clone(), &self.env_vars)?;
         let poetry_executable = manager.executable.clone();
 
-        let project_dirs = self.project_directories.lock().unwrap().clone();
+        let workspace_dirs = self.workspace_directories.lock().unwrap().clone();
         let environments_using_spawn = environment_locations_spawn::list_environments(
             &poetry_executable,
-            &project_dirs,
+            &workspace_dirs,
             &manager,
         );
 
@@ -123,7 +123,7 @@ impl PoetryLocator for Poetry {
         let _ = report_missing_envs(
             reporter,
             &poetry_executable,
-            project_dirs,
+            workspace_dirs,
             &self.env_vars,
             &environments_using_spawn,
             result,
@@ -139,13 +139,13 @@ impl Locator for Poetry {
         "Poetry"
     }
     fn configure(&self, config: &Configuration) {
-        if let Some(project_directories) = &config.project_directories {
-            self.project_directories.lock().unwrap().clear();
-            if !project_directories.is_empty() {
-                self.project_directories
+        if let Some(workspace_directories) = &config.workspace_directories {
+            self.workspace_directories.lock().unwrap().clear();
+            if !workspace_directories.is_empty() {
+                self.workspace_directories
                     .lock()
                     .unwrap()
-                    .extend(project_directories.clone());
+                    .extend(workspace_directories.clone());
             }
         }
         if let Some(exe) = &config.poetry_executable {
