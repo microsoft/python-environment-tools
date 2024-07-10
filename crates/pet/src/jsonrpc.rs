@@ -62,21 +62,48 @@ pub fn start_jsonrpc_server() {
     };
 
     let mut handlers = HandlersKeyedByMethodName::new(Arc::new(context));
+    handlers.add_request_handler("configure", handle_configure);
     handlers.add_request_handler("refresh", handle_refresh);
     handlers.add_request_handler("resolve", handle_resolve);
     start_server(&handlers)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RequestOptions {
+#[serde(rename_all = "camelCase")]
+pub struct ConfigureOptions {
     /// These are paths like workspace folders, where we can look for environments.
-    pub project_directories: Option<Vec<PathBuf>>,
+    pub workspace_directories: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
     pub poetry_executable: Option<PathBuf>,
-    /// Custom locations where environments can be found.
-    /// These are different from search_paths, as these are specific directories where environments are expected.
-    /// search_paths on the other hand can be any directory such as a workspace folder, where envs might never exist.
+    /// Custom locations where environments can be found. Generally global locations where virtualenvs & the like can be found.
+    /// Workspace directories should not be included into this list.
     pub environment_directories: Option<Vec<PathBuf>>,
+}
+
+pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
+    match serde_json::from_value::<ConfigureOptions>(params.clone()) {
+        Ok(configure_options) => {
+            // Start in a new thread, we can have multiple requests.
+            thread::spawn(move || {
+                let mut cfg = context.configuration.write().unwrap();
+                cfg.workspace_directories = configure_options.workspace_directories;
+                cfg.conda_executable = configure_options.conda_executable;
+                cfg.environment_directories = configure_options.environment_directories;
+                cfg.poetry_executable = configure_options.poetry_executable;
+                trace!("Configuring locators: {:?}", cfg);
+                drop(cfg);
+                let config = context.configuration.read().unwrap().clone();
+                for locator in context.locators.iter() {
+                    locator.configure(&config);
+                }
+                send_reply(id, None::<()>);
+            });
+        }
+        Err(e) => {
+            send_reply(id, None::<u128>);
+            error!("Failed to parse configure options {:?}: {}", params, e);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -92,97 +119,78 @@ impl RefreshResult {
     }
 }
 
-pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
-    match serde_json::from_value::<RequestOptions>(params.clone()) {
-        Ok(request_options) => {
-            // Start in a new thread, we can have multiple requests.
+pub fn handle_refresh(context: Arc<Context>, id: u32, _params: Value) {
+    // Start in a new thread, we can have multiple requests.
+    thread::spawn(move || {
+        let config = context.configuration.read().unwrap().clone();
+        trace!("Start refreshing environments, config: {:?}", config);
+        let summary = find_and_report_envs(
+            context.reporter.as_ref(),
+            config,
+            &context.locators,
+            context.os_environment.deref(),
+        );
+        let summary = summary.lock().unwrap();
+        for locator in summary.find_locators_times.iter() {
+            info!("Locator {} took {:?}", locator.0, locator.1);
+        }
+        info!(
+            "Environments found using locators in {:?}",
+            summary.find_locators_time
+        );
+        info!("Environments in PATH found in {:?}", summary.find_path_time);
+        info!(
+            "Environments in global virtual env paths found in {:?}",
+            summary.find_global_virtual_envs_time
+        );
+        info!(
+            "Environments in workspace folders found in {:?}",
+            summary.find_workspace_directories_time
+        );
+        trace!("Finished refreshing environments in {:?}", summary.time);
+        send_reply(id, Some(RefreshResult::new(summary.time)));
+
+        // Find an report missing envs for the first launch of this process.
+        if MISSING_ENVS_REPORTED
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok()
+            .unwrap_or_default()
+        {
+            // By now all conda envs have been found
+            // Spawn conda  in a separate thread.
+            // & see if we can find more environments by spawning conda.
+            // But we will not wait for this to complete.
+            let conda_locator = context.conda_locator.clone();
+            let conda_executable = context
+                .configuration
+                .read()
+                .unwrap()
+                .conda_executable
+                .clone();
+            let reporter = context.reporter.clone();
             thread::spawn(move || {
-                let mut cfg = context.configuration.write().unwrap();
-                cfg.project_directories = request_options.project_directories;
-                cfg.conda_executable = request_options.conda_executable;
-                cfg.environment_directories = request_options.environment_directories;
-                cfg.poetry_executable = request_options.poetry_executable;
-                trace!("Start refreshing environments, config: {:?}", cfg);
-                drop(cfg);
-                let config = context.configuration.read().unwrap().clone();
-                for locator in context.locators.iter() {
-                    locator.configure(&config);
-                }
-                let summary = find_and_report_envs(
-                    context.reporter.as_ref(),
-                    config,
-                    &context.locators,
-                    context.os_environment.deref(),
-                );
-                let summary = summary.lock().unwrap();
-                for locator in summary.find_locators_times.iter() {
-                    info!("Locator {} took {:?}", locator.0, locator.1);
-                }
-                info!(
-                    "Environments found using locators in {:?}",
-                    summary.find_locators_time
-                );
-                info!("Environments in PATH found in {:?}", summary.find_path_time);
-                info!(
-                    "Environments in global virtual env paths found in {:?}",
-                    summary.find_global_virtual_envs_time
-                );
-                info!(
-                    "Environments in custom search paths found in {:?}",
-                    summary.find_search_paths_time
-                );
-                trace!("Finished refreshing environments in {:?}", summary.time);
-                send_reply(id, Some(RefreshResult::new(summary.time)));
+                conda_locator.find_and_report_missing_envs(reporter.as_ref(), conda_executable);
+                Some(())
+            });
 
-                // Find an report missing envs for the first launch of this process.
-                if MISSING_ENVS_REPORTED
-                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                    .ok()
-                    .unwrap_or_default()
-                {
-                    // By now all conda envs have been found
-                    // Spawn conda  in a separate thread.
-                    // & see if we can find more environments by spawning conda.
-                    // But we will not wait for this to complete.
-                    let conda_locator = context.conda_locator.clone();
-                    let conda_executable = context
-                        .configuration
-                        .read()
-                        .unwrap()
-                        .conda_executable
-                        .clone();
-                    let reporter = context.reporter.clone();
-                    thread::spawn(move || {
-                        conda_locator
-                            .find_and_report_missing_envs(reporter.as_ref(), conda_executable);
-                        Some(())
-                    });
-
-                    // By now all poetry envs have been found
-                    // Spawn poetry exe in a separate thread.
-                    // & see if we can find more environments by spawning poetry.
-                    // But we will not wait for this to complete.
-                    let poetry_locator = context.poetry_locator.clone();
-                    let poetry_executable = context
-                        .configuration
-                        .read()
-                        .unwrap()
-                        .poetry_executable
-                        .clone();
-                    let reporter = context.reporter.clone();
-                    thread::spawn(move || {
-                        poetry_locator
-                            .find_and_report_missing_envs(reporter.as_ref(), poetry_executable);
-                        Some(())
-                    });
-                }
+            // By now all poetry envs have been found
+            // Spawn poetry exe in a separate thread.
+            // & see if we can find more environments by spawning poetry.
+            // But we will not wait for this to complete.
+            let poetry_locator = context.poetry_locator.clone();
+            let poetry_executable = context
+                .configuration
+                .read()
+                .unwrap()
+                .poetry_executable
+                .clone();
+            let reporter = context.reporter.clone();
+            thread::spawn(move || {
+                poetry_locator.find_and_report_missing_envs(reporter.as_ref(), poetry_executable);
+                Some(())
             });
         }
-        Err(e) => {
-            send_reply(id, None::<u128>);
-            error!("Failed to parse request options {:?}: {}", params, e);
-        }
-    }
+    });
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -199,7 +207,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                 .read()
                 .unwrap()
                 .clone()
-                .project_directories;
+                .workspace_directories;
             let search_paths = search_paths.unwrap_or_default();
             // Start in a new thread, we can have multiple resolve requests.
             let environment = context.os_environment.clone();

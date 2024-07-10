@@ -16,16 +16,16 @@ use crate::{config::Config, env_variables::EnvVariables, environment_locations_s
 pub fn report_missing_envs(
     reporter: &dyn Reporter,
     executable: &PathBuf,
-    project_dirs: Vec<PathBuf>,
+    workspace_dirs: Vec<PathBuf>,
     env_vars: &EnvVariables,
     envs_discovered_by_poetry: &[PythonEnvironment],
     envs_discovered_by_us: Option<LocatorResult>,
     user_provided_poetry_exe: bool,
 ) -> Option<()> {
-    for projec_dir in project_dirs {
-        let config = get_config(executable, &projec_dir);
+    for workspace_dir in workspace_dirs {
+        let config = get_config(executable, &workspace_dir);
         let global_config = Config::find_global(env_vars);
-        let local_config = Config::find_local(&projec_dir, env_vars);
+        let local_config = Config::find_local(&workspace_dir, env_vars);
 
         let global_virtualenvs_path = global_config.clone().map(|c| c.virtualenvs_path.clone());
         let local_virtualenvs_path = local_config.clone().map(|c| c.virtualenvs_path.clone());
@@ -47,12 +47,12 @@ pub fn report_missing_envs(
             .map(|e| e.environments.clone())
             .unwrap_or_default()
             .iter()
-            .filter(|e| e.project == Some(projec_dir.clone()))
+            .filter(|e| e.project == Some(workspace_dir.clone()))
             .flat_map(|e| e.prefix.clone())
             .collect();
         let envs_discovered_by_poetry: HashSet<_> = envs_discovered_by_poetry
             .iter()
-            .filter(|e| e.project == Some(projec_dir.clone()))
+            .filter(|e| e.project == Some(workspace_dir.clone()))
             .flat_map(|e| e.prefix.clone())
             .collect();
 
@@ -118,7 +118,7 @@ pub fn report_missing_envs(
         }
         warn!(
             "Missing Poetry envs: {:?} for {:?}",
-            missing_envs, projec_dir
+            missing_envs, workspace_dir
         );
 
         let missing_info = MissingPoetryEnvironments {

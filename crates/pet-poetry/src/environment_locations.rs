@@ -25,23 +25,23 @@ lazy_static! {
 
 pub fn list_environments(
     env: &EnvVariables,
-    project_dirs: &[PathBuf],
+    workspace_dirs: &[PathBuf],
     manager: Option<PoetryManager>,
 ) -> Option<Vec<PythonEnvironment>> {
-    if project_dirs.is_empty() {
+    if workspace_dirs.is_empty() {
         return None;
     }
 
-    let project_dirs = project_dirs
+    let workspace_dirs = workspace_dirs
         .iter()
-        .map(|project_dir| (project_dir, PyProjectToml::find(project_dir)))
-        .filter_map(|(project_dir, pyproject_toml)| {
-            pyproject_toml.map(|pyproject_toml| (project_dir, pyproject_toml))
+        .map(|workspace_dir| (workspace_dir, PyProjectToml::find(workspace_dir)))
+        .filter_map(|(workspace_dir, pyproject_toml)| {
+            pyproject_toml.map(|pyproject_toml| (workspace_dir, pyproject_toml))
         })
         .collect::<Vec<_>>();
 
     // We're only interested in directories that have a pyproject.toml
-    if project_dirs.is_empty() {
+    if workspace_dirs.is_empty() {
         return None;
     }
 
@@ -53,17 +53,17 @@ pub fn list_environments(
         global_envs = list_all_environments_from_config(&config).unwrap_or_default();
     }
 
-    for (project_dir, pyproject_toml) in project_dirs {
-        let virtualenv_prefix = generate_env_name(&pyproject_toml.name, project_dir);
+    for (workspace_dir, pyproject_toml) in workspace_dirs {
+        let virtualenv_prefix = generate_env_name(&pyproject_toml.name, workspace_dir);
         trace!(
             "Found pyproject.toml ({}): {:?} in {:?}",
             virtualenv_prefix,
             pyproject_toml.name,
-            project_dir
+            workspace_dir
         );
 
         for virtual_env in [
-            list_all_environments_from_project_config(&global_config, project_dir, env)
+            list_all_environments_from_project_config(&global_config, workspace_dir, env)
                 .unwrap_or_default(),
             global_envs.clone(),
         ]
@@ -78,7 +78,7 @@ pub fn list_environments(
             // Look for .venv as well, in case we create the virtual envs in the local project folder.
             if name.starts_with(&virtualenv_prefix) || name.starts_with(".venv") {
                 if let Some(env) =
-                    create_poetry_env(&virtual_env, project_dir.clone(), manager.clone())
+                    create_poetry_env(&virtual_env, workspace_dir.clone(), manager.clone())
                 {
                     envs.push(env);
                 }

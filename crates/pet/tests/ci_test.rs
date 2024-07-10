@@ -67,13 +67,13 @@ fn verify_validity_of_discovered_envs() {
 
     setup();
 
-    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = test::create_reporter();
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
     let mut config = Configuration::default();
-    config.project_directories = Some(vec![project_dir.clone()]);
+    config.workspace_directories = Some(vec![workspace_dir.clone()]);
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
@@ -188,12 +188,12 @@ fn check_if_pipenv_exists() {
     let result = reporter.get_result();
     let environments = result.environments;
 
-    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     environments
         .iter()
         .find(|env| {
             env.kind == Some(PythonEnvironmentKind::Pipenv)
-                && env.project == Some(project_dir.clone())
+                && env.project == Some(workspace_dir.clone())
         })
         .expect(format!("Pipenv environment not found, found {environments:?}").as_str());
 }
@@ -336,13 +336,13 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     use pet_core::{os_environment::EnvironmentApi, Configuration};
     use std::{env, sync::Arc};
 
-    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let os_environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&os_environment));
     let poetry_locator = Arc::new(Poetry::from(&os_environment));
     let mut config = Configuration::default();
-    let search_paths = vec![project_dir.clone()];
-    config.project_directories = Some(search_paths.clone());
+    let search_paths = vec![workspace_dir.clone()];
+    config.workspace_directories = Some(search_paths.clone());
     let locators = create_locators(
         conda_locator.clone(),
         poetry_locator.clone(),
@@ -359,7 +359,7 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
         &env,
         &locators,
         &global_env_search_paths,
-        Some(project_dir.clone()),
+        Some(workspace_dir.clone()),
     )
     .expect(format!("Failed to resolve environment using `resolve` for {environment:?}").as_str());
     trace!(
@@ -528,12 +528,12 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     use pet_core::{os_environment::EnvironmentApi, Configuration};
     use std::{env, sync::Arc};
 
-    let project_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let os_environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&os_environment));
     let poetry_locator = Arc::new(Poetry::from(&os_environment));
     let mut config = Configuration::default();
-    config.project_directories = Some(vec![project_dir.clone()]);
+    config.workspace_directories = Some(vec![workspace_dir.clone()]);
     let locators = create_locators(
         conda_locator.clone(),
         poetry_locator.clone(),
@@ -546,7 +546,7 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     let env = resolve_environment(
         &executable,
         &locators,
-        vec![project_dir.clone()],
+        vec![workspace_dir.clone()],
         &os_environment,
     )
     .expect(format!("Failed to resolve environment using `resolve` for {environment:?}").as_str());

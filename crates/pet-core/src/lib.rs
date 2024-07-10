@@ -24,7 +24,7 @@ pub struct LocatorResult {
 #[derive(Debug, Default, Clone)]
 pub struct Configuration {
     /// These are paths like workspace folders, where we can look for environments.
-    pub project_directories: Option<Vec<PathBuf>>,
+    pub workspace_directories: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
     pub poetry_executable: Option<PathBuf>,
     /// Custom locations where environments can be found.
