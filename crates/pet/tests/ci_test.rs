@@ -355,13 +355,12 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
         get_search_paths_from_env_variables(&os_environment);
 
     let env = PythonEnv::new(executable.clone(), None, None);
-    let resolved = identify_python_environment_using_locators(
-        &env,
-        &locators,
-        &global_env_search_paths,
-        Some(workspace_dir.clone()),
-    )
-    .expect(format!("Failed to resolve environment using `resolve` for {environment:?}").as_str());
+    let resolved =
+        identify_python_environment_using_locators(&env, &locators, &global_env_search_paths)
+            .expect(
+                format!("Failed to resolve environment using `resolve` for {environment:?}")
+                    .as_str(),
+            );
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
@@ -543,13 +542,9 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
         locator.configure(&config);
     }
 
-    let env = resolve_environment(
-        &executable,
-        &locators,
-        vec![workspace_dir.clone()],
-        &os_environment,
-    )
-    .expect(format!("Failed to resolve environment using `resolve` for {environment:?}").as_str());
+    let env = resolve_environment(&executable, &locators, &os_environment).expect(
+        format!("Failed to resolve environment using `resolve` for {environment:?}").as_str(),
+    );
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,

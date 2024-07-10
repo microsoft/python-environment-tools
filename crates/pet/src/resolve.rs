@@ -13,7 +13,7 @@ use pet_core::{
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
 
-use crate::locators::{identify_and_set_search_path, identify_python_environment_using_locators};
+use crate::locators::identify_python_environment_using_locators;
 
 #[derive(Debug)]
 pub struct ResolvedEnvironment {
@@ -24,17 +24,15 @@ pub struct ResolvedEnvironment {
 pub fn resolve_environment(
     executable: &PathBuf,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
-    search_paths: Vec<PathBuf>,
     os_environment: &dyn Environment,
 ) -> Option<ResolvedEnvironment> {
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);
     let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(os_environment);
 
-    if let Some(mut env) =
-        identify_python_environment_using_locators(&env, locators, &global_env_search_paths, None)
+    if let Some(env) =
+        identify_python_environment_using_locators(&env, locators, &global_env_search_paths)
     {
-        identify_and_set_search_path(&mut env, &search_paths);
         // Ok we got the environment.
         // Now try to resolve this fully, by spawning python.
         if let Some(ref executable) = env.executable {
@@ -67,7 +65,6 @@ pub fn resolve_environment(
                     .name(env.name)
                     .prefix(prefix)
                     .project(env.project)
-                    .search_path(env.search_path)
                     .symlinks(Some(symlinks))
                     .version(version)
                     .build();

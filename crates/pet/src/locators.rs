@@ -89,21 +89,12 @@ pub fn identify_python_environment_using_locators(
     env: &PythonEnv,
     locators: &[Arc<dyn Locator>],
     global_env_search_paths: &[PathBuf],
-    search_path: Option<PathBuf>,
 ) -> Option<PythonEnvironment> {
     let executable = env.executable.clone();
-    let search_paths = if let Some(search_path) = search_path {
-        vec![search_path]
-    } else {
-        vec![]
-    };
-    if let Some(mut env) =
-        locators.iter().fold(
-            None,
-            |e, loc| if e.is_some() { e } else { loc.try_from(env) },
-        )
-    {
-        identify_and_set_search_path(&mut env, &search_paths);
+    if let Some(env) = locators.iter().fold(
+        None,
+        |e, loc| if e.is_some() { e } else { loc.try_from(env) },
+    ) {
         return Some(env);
     }
 
@@ -112,14 +103,13 @@ pub fn identify_python_environment_using_locators(
     // We try to get the interpreter info, hoping that the real exe returned might be identifiable.
     if let Some(resolved_env) = ResolvedPythonEnv::from(&executable) {
         let env = resolved_env.to_python_env();
-        if let Some(mut env) =
+        if let Some(env) =
             locators.iter().fold(
                 None,
                 |e, loc| if e.is_some() { e } else { loc.try_from(&env) },
             )
         {
             trace!("Env ({:?}) in Path resolved as {:?}", executable, env.kind);
-            identify_and_set_search_path(&mut env, &search_paths);
             // TODO: Telemetry point.
             // As we had to spawn earlier.
             return Some(env);
@@ -147,40 +137,10 @@ pub fn identify_python_environment_using_locators(
                 "Env ({:?}) in Path resolved as {:?} and reported as {:?}",
                 executable, resolved_env, fallback_kind
             );
-            let mut env = create_unknown_env(resolved_env, fallback_kind);
-            identify_and_set_search_path(&mut env, &search_paths);
-            return Some(env);
+            return Some(create_unknown_env(resolved_env, fallback_kind));
         }
     }
     None
-}
-
-/// Assume we found a .venv environment, generally these are specific to a workspace folder, i.e. they belong in a worksapce folder.
-/// If thats the case then verify this by checking if the workspace folder is a parent of the prefix (.venv folder).
-/// If it is, and there is not project set, then set the search_path to the workspace folder.
-pub fn identify_and_set_search_path(env: &mut PythonEnvironment, search_path: &Vec<PathBuf>) {
-    if search_path.is_empty() || env.project.is_some() {
-        return;
-    }
-
-    // All other environments generally need to be found globally,
-    // If we end up with some env thats not found globally, but only found in a special folder for some reason,
-    // then thats a weird situation, either way, when we cache the result it will re-appear (however for all other workspaces as well)
-    // Thats fine for now (if users complain then we'll find out that there's a problem and we can fix it then).
-    // Else no need to try and identify/fix edge cases that may not exist.
-    if env.kind == Some(PythonEnvironmentKind::Conda)
-        || env.kind == Some(PythonEnvironmentKind::Venv)
-        || env.kind == Some(PythonEnvironmentKind::VirtualEnv)
-    {
-        if let Some(prefix) = &env.prefix {
-            for path in search_path {
-                if path.starts_with(prefix) {
-                    env.search_path = Some(path.clone());
-                    break;
-                }
-            }
-        }
-    }
 }
 
 fn create_unknown_env(
