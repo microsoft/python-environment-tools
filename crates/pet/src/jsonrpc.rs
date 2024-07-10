@@ -6,11 +6,8 @@ use pet::resolve::resolve_environment;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
 use pet_core::python_environment::PythonEnvironment;
-use pet_core::telemetry::refresh_performance::RefreshPerformance;
-use pet_core::telemetry::TelemetryEvent;
 use pet_core::{
     os_environment::{Environment, EnvironmentApi},
-    reporter::Reporter,
     Configuration, Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
@@ -40,7 +37,6 @@ use std::{
 use crate::find::find_and_report_envs;
 use crate::find::find_python_environments_in_workspace_folder_recursive;
 use crate::find::identify_python_executables_using_locators;
-use crate::find::SearchScope;
 use crate::locators::create_locators;
 
 pub struct Context {
@@ -74,7 +70,6 @@ pub fn start_jsonrpc_server() {
     handlers.add_request_handler("refresh", handle_refresh);
     handlers.add_request_handler("resolve", handle_resolve);
     handlers.add_request_handler("find", handle_find);
-    handlers.add_request_handler("condaInfo", handle_conda_telemetry);
     start_server(&handlers)
 }
 
@@ -338,27 +333,13 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                 }
             }
             Err(e) => {
-                error!("Failed to parse find {params:?}: {e}");
+                error!("Failed to parse request {params:?}: {e}");
                 send_error(
                     Some(id),
                     -4,
-                    format!("Failed to parse find {params:?}: {e}"),
+                    format!("Failed to parse request {params:?}: {e}"),
                 );
             }
         },
     );
-}
-
-pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
-    thread::spawn(move || {
-        let conda_locator = context.conda_locator.clone();
-        let conda_executable = context
-            .configuration
-            .read()
-            .unwrap()
-            .conda_executable
-            .clone();
-        let info = conda_locator.get_info_for_telemetry(conda_executable);
-        send_reply(id, info.into());
-    });
 }

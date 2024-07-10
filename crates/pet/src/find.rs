@@ -5,7 +5,7 @@ use log::{trace, warn};
 use pet_conda::utils::is_conda_env;
 use pet_core::os_environment::Environment;
 use pet_core::reporter::Reporter;
-use pet_core::{Configuration, Locator};
+use pet_core::{Configuration, Locator, SearchScope};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_python_utils::env::PythonEnv;
@@ -55,14 +55,15 @@ pub fn find_and_report_envs(
     // From settings
     let environment_directories = configuration.environment_directories.unwrap_or_default();
     let workspace_directories = configuration.workspace_directories.unwrap_or_default();
-    let search_global = match search_scope {
+    let scope = configuration.search_scope.clone();
+    let search_global = match scope {
         Some(SearchScope::Global) => true,
-        Some(SearchScope::Workspace) => false,
+        Some(SearchScope::Projects) => false,
         _ => true,
     };
-    let search_workspace = match search_scope {
+    let search_project = match scope {
         Some(SearchScope::Global) => false,
-        Some(SearchScope::Workspace) => true,
+        Some(SearchScope::Projects) => true,
         _ => true,
     };
 
@@ -82,17 +83,13 @@ pub fn find_and_report_envs(
                             summary
                                 .lock()
                                 .unwrap()
-                                .locators
+                                .find_locators_times
                                 .insert(locator.get_name(), start.elapsed());
                         });
                     }
                 });
             }
-            summary
-                .lock()
-                .unwrap()
-                .breakdown
-                .insert("Locators", start.elapsed());
+            summary.lock().unwrap().find_locators_time = start.elapsed();
         });
         // Step 2: Search in PATH variable
         s.spawn(|| {
@@ -113,11 +110,7 @@ pub fn find_and_report_envs(
                     &global_env_search_paths,
                 );
             }
-            summary
-                .lock()
-                .unwrap()
-                .breakdown
-                .insert("Path", start.elapsed());
+            summary.lock().unwrap().find_path_time = start.elapsed();
         });
         // Step 3: Search in some global locations for virtual envs.
         s.spawn(|| {
@@ -148,11 +141,7 @@ pub fn find_and_report_envs(
                     &global_env_search_paths,
                 );
             }
-            summary
-                .lock()
-                .unwrap()
-                .breakdown
-                .insert("GlobalVirtualEnvs", start.elapsed());
+            summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
         });
         // Step 4: Find in workspace folders too.
         // This can be merged with step 2 as well, as we're only look for environments
@@ -163,7 +152,10 @@ pub fn find_and_report_envs(
         // that could the discovery.
         s.spawn(|| {
             let start = std::time::Instant::now();
-            if search_workspace && !workspace_directories.is_empty() {
+            if search_project {
+                if workspace_directories.is_empty() {
+                    return;
+                }
                 trace!(
                     "Searching for environments in workspace folders: {:?}",
                     workspace_directories
@@ -182,11 +174,7 @@ pub fn find_and_report_envs(
                     });
                 }
             }
-            summary
-                .lock()
-                .unwrap()
-                .breakdown
-                .insert("Workspaces", start.elapsed());
+            summary.lock().unwrap().find_workspace_directories_time = start.elapsed();
         });
     });
     summary.lock().unwrap().total = start.elapsed();

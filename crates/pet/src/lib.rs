@@ -3,13 +3,13 @@
 
 use find::find_and_report_envs;
 use find::identify_python_executables_using_locators;
-use find::SearchScope;
 use locators::create_locators;
 use log::warn;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
 use pet_core::os_environment::Environment;
 use pet_core::Locator;
+use pet_core::SearchScope;
 use pet_core::{os_environment::EnvironmentApi, reporter::Reporter, Configuration};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_poetry::Poetry;
@@ -32,7 +32,6 @@ pub struct FindOptions {
     pub report_missing: bool,
     pub workspace_dirs: Option<Vec<PathBuf>>,
     pub workspace_only: bool,
-    pub global_only: bool,
 }
 
 pub fn find_and_report_envs_stdio(options: FindOptions) {
@@ -42,13 +41,6 @@ pub fn find_and_report_envs_stdio(options: FindOptions) {
         log::LevelFilter::Warn
     });
     let now = SystemTime::now();
-    let search_scope = if options.workspace_only {
-        Some(SearchScope::Workspace)
-    } else if options.global_only {
-        Some(SearchScope::Global)
-    } else {
-        None
-    };
     let (config, executable_to_find) = create_config(&options);
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
@@ -69,7 +61,6 @@ pub fn find_and_report_envs_stdio(options: FindOptions) {
             conda_locator.as_ref(),
             poetry_locator.as_ref(),
             &environment,
-            search_scope,
         );
     }
 
@@ -99,6 +90,9 @@ fn create_config(options: &FindOptions) -> (Configuration, Option<PathBuf>) {
         };
     config.workspace_directories = Some(workspace_directories);
 
+    if options.workspace_only || executable_to_find.is_some() {
+        config.search_scope = Some(SearchScope::Projects);
+    }
     (config, executable_to_find)
 }
 
@@ -109,12 +103,11 @@ fn find_envs(
     conda_locator: &Conda,
     poetry_locator: &Poetry,
     environment: &dyn Environment,
-    search_scope: Option<SearchScope>,
 ) {
     let stdio_reporter = Arc::new(stdio::create_reporter(options.print_list));
     let reporter = CacheReporter::new(stdio_reporter.clone());
 
-    let summary = find_and_report_envs(&reporter, config, locators, environment, search_scope);
+    let summary = find_and_report_envs(&reporter, config, locators, environment);
     if options.report_missing {
         // By now all conda envs have been found
         // Spawn conda
@@ -125,21 +118,12 @@ fn find_envs(
 
     if options.print_summary {
         let summary = summary.lock().unwrap();
-        if !summary.locators.is_empty() {
+        if !summary.find_locators_times.is_empty() {
             println!();
             println!("Breakdown by each locator:");
             println!("--------------------------");
-            for locator in summary.locators.iter() {
+            for locator in summary.find_locators_times.iter() {
                 println!("{:<20} : {:?}", locator.0, locator.1);
-            }
-            println!()
-        }
-
-        if !summary.breakdown.is_empty() {
-            println!("Breakdown for finding Environments:");
-            println!("-----------------------------------");
-            for item in summary.breakdown.iter() {
-                println!("{:<20} : {:?}", item.0, item.1);
             }
             println!();
         }
