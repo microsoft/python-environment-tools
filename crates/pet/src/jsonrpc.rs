@@ -5,17 +5,19 @@ use log::{error, info, trace};
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
+use pet_core::python_environment::PythonEnvironment;
 use pet_core::{
     os_environment::{Environment, EnvironmentApi},
-    reporter::Reporter,
     Configuration, Locator,
 };
+use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
 };
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
+use pet_reporter::collect;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
@@ -29,7 +31,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use crate::{find::find_and_report_envs, locators::create_locators};
+use crate::find::find_and_report_envs;
+use crate::find::find_python_environments_in_workspace_folder_recursive;
+use crate::find::identify_python_executables_using_locators;
+use crate::locators::create_locators;
 
 pub struct Context {
     configuration: RwLock<Configuration>,
@@ -61,6 +66,7 @@ pub fn start_jsonrpc_server() {
     handlers.add_request_handler("configure", handle_configure);
     handlers.add_request_handler("refresh", handle_refresh);
     handlers.add_request_handler("resolve", handle_resolve);
+    handlers.add_request_handler("find", handle_find);
     start_server(&handlers)
 }
 
@@ -249,4 +255,56 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
             );
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FindOptions {
+    /// Search path, can be a directory or a Python executable as well.
+    /// If passing a directory, the assumption is that its a project directory (workspace folder).
+    /// This is important, because any poetry/pipenv environment found will have the project directory set.
+    pub search_path: PathBuf,
+}
+
+pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
+    thread::spawn(
+        move || match serde_json::from_value::<FindOptions>(params.clone()) {
+            Ok(find_options) => {
+                let global_env_search_paths: Vec<PathBuf> =
+                    get_search_paths_from_env_variables(context.os_environment.as_ref());
+
+                let collect_reporter = Arc::new(collect::create_reporter());
+                let reporter = CacheReporter::new(collect_reporter.clone());
+                if find_options.search_path.is_file() {
+                    identify_python_executables_using_locators(
+                        vec![find_options.search_path.clone()],
+                        &context.locators,
+                        &reporter,
+                        &global_env_search_paths,
+                    );
+                } else {
+                    find_python_environments_in_workspace_folder_recursive(
+                        &find_options.search_path,
+                        &reporter,
+                        &context.locators,
+                        &global_env_search_paths,
+                    );
+                }
+
+                let envs = collect_reporter.environments.lock().unwrap().clone();
+                if envs.is_empty() {
+                    send_reply(id, None::<Vec<PythonEnvironment>>);
+                } else {
+                    send_reply(id, envs.into());
+                }
+            }
+            Err(e) => {
+                error!("Failed to parse request {params:?}: {e}");
+                send_error(
+                    Some(id),
+                    -4,
+                    format!("Failed to parse request {params:?}: {e}"),
+                );
+            }
+        },
+    );
 }

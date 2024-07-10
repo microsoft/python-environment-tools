@@ -2,16 +2,17 @@
 // Licensed under the MIT License.
 
 use log::{trace, warn};
+use pet_conda::utils::is_conda_env;
 use pet_core::os_environment::Environment;
 use pet_core::reporter::Reporter;
-use pet_core::{Configuration, Locator};
+use pet_core::{Configuration, Locator, SearchScope};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
-use pet_venv::is_venv_dir;
+use pet_virtualenv::is_virtualenv_dir;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -49,74 +50,92 @@ pub fn find_and_report_envs(
     // From settings
     let environment_directories = configuration.environment_directories.unwrap_or_default();
     let workspace_directories = configuration.workspace_directories.unwrap_or_default();
+    let scope = configuration.search_scope.clone();
+    let search_global = match scope {
+        Some(SearchScope::Global) => true,
+        Some(SearchScope::Projects) => false,
+        _ => true,
+    };
+    let search_project = match scope {
+        Some(SearchScope::Global) => false,
+        Some(SearchScope::Projects) => true,
+        _ => true,
+    };
+
     thread::scope(|s| {
         // 1. Find using known global locators.
         s.spawn(|| {
             // Find in all the finders
             let start = std::time::Instant::now();
-            thread::scope(|s| {
-                for locator in locators.iter() {
-                    let locator = locator.clone();
-                    let summary = summary.clone();
-                    s.spawn(move || {
-                        let start = std::time::Instant::now();
-                        locator.find(reporter);
-                        summary
-                            .lock()
-                            .unwrap()
-                            .find_locators_times
-                            .insert(locator.get_name(), start.elapsed());
-                    });
-                }
-            });
+            if search_global {
+                thread::scope(|s| {
+                    for locator in locators.iter() {
+                        let locator = locator.clone();
+                        let summary = summary.clone();
+                        s.spawn(move || {
+                            let start = std::time::Instant::now();
+                            locator.find(reporter);
+                            summary
+                                .lock()
+                                .unwrap()
+                                .find_locators_times
+                                .insert(locator.get_name(), start.elapsed());
+                        });
+                    }
+                });
+            }
             summary.lock().unwrap().find_locators_time = start.elapsed();
         });
         // Step 2: Search in PATH variable
         s.spawn(|| {
             let start = std::time::Instant::now();
-            let global_env_search_paths: Vec<PathBuf> =
-                get_search_paths_from_env_variables(environment);
+            if search_global {
+                let global_env_search_paths: Vec<PathBuf> =
+                    get_search_paths_from_env_variables(environment);
 
-            trace!(
-                "Searching for environments in global folders: {:?}",
-                global_env_search_paths
-            );
-            find_python_environments(
-                global_env_search_paths.clone(),
-                reporter,
-                locators,
-                false,
-                &global_env_search_paths,
-            );
+                trace!(
+                    "Searching for environments in global folders: {:?}",
+                    global_env_search_paths
+                );
+                find_python_environments(
+                    global_env_search_paths.clone(),
+                    reporter,
+                    locators,
+                    false,
+                    &global_env_search_paths,
+                );
+            }
             summary.lock().unwrap().find_path_time = start.elapsed();
         });
         // Step 3: Search in some global locations for virtual envs.
         s.spawn(|| {
             let start = std::time::Instant::now();
-            let search_paths: Vec<PathBuf> = [
-                list_global_virtual_envs_paths(
-                    environment.get_env_var("WORKON_HOME".into()),
-                    environment.get_env_var("XDG_DATA_HOME".into()),
-                    environment.get_user_home(),
-                ),
-                environment_directories,
-            ]
-            .concat();
-            let global_env_search_paths: Vec<PathBuf> =
-                get_search_paths_from_env_variables(environment);
+            if search_global {
+                let search_paths: Vec<PathBuf> = [
+                    list_global_virtual_envs_paths(
+                        environment.get_env_var("WORKON_HOME".into()),
+                        environment.get_env_var("XDG_DATA_HOME".into()),
+                        environment.get_user_home(),
+                    ),
+                    environment_directories,
+                ]
+                .concat();
+                let global_env_search_paths: Vec<PathBuf> =
+                    get_search_paths_from_env_variables(environment);
 
-            trace!(
-                "Searching for environments in global venv folders: {:?}",
-                search_paths
-            );
+                trace!(
+                    "Searching for environments in global venv folders: {:?}",
+                    search_paths
+                );
 
-            find_python_environments(
-                search_paths,
-                reporter,
-                locators,
-                false,
-                &global_env_search_paths,
-            );
+                find_python_environments(
+                    search_paths,
+                    reporter,
+                    locators,
+                    false,
+                    &global_env_search_paths,
+                );
+            }
             summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
         });
         // Step 4: Find in workspace folders too.
@@ -127,19 +146,29 @@ pub fn find_and_report_envs(
         // & users can have a lot of workspace folders and can have a large number fo files/directories
         // that could the discovery.
         s.spawn(|| {
-            if workspace_directories.is_empty() {
-                return;
-            }
-            trace!(
-                "Searching for environments in custom folders: {:?}",
-                workspace_directories
-            );
             let start = std::time::Instant::now();
-            find_python_environments_in_workspace_folders_recursive(
-                workspace_directories,
-                reporter,
-                locators,
-            );
+            if search_project {
+                if workspace_directories.is_empty() {
+                    return;
+                }
+                trace!(
+                    "Searching for environments in workspace folders: {:?}",
+                    workspace_directories
+                );
+                let global_env_search_paths: Vec<PathBuf> =
+                    get_search_paths_from_env_variables(environment);
+                for workspace_folder in workspace_directories {
+                    let global_env_search_paths = global_env_search_paths.clone();
+                    s.spawn(move || {
+                        find_python_environments_in_workspace_folder_recursive(
+                            &workspace_folder,
+                            reporter,
+                            locators,
+                            &global_env_search_paths,
+                        );
+                    });
+                }
+            }
             summary.lock().unwrap().find_workspace_directories_time = start.elapsed();
         });
     });
@@ -148,50 +177,47 @@ pub fn find_and_report_envs(
     summary
 }
 
-fn find_python_environments_in_workspace_folders_recursive(
-    workspace_folders: Vec<PathBuf>,
+pub fn find_python_environments_in_workspace_folder_recursive(
+    workspace_folder: &PathBuf,
     reporter: &dyn Reporter,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
+    global_env_search_paths: &[PathBuf],
 ) {
-    thread::scope(|s| {
-        s.spawn(|| {
-            for workspace_folder in workspace_folders {
-                let paths_to_search_first = vec![
-                    // Possible this is a virtual env
-                    workspace_folder.clone(),
-                    // Optimize for finding these first.
-                    workspace_folder.join(".venv"),
-                    workspace_folder.join(".conda"),
-                    workspace_folder.join(".virtualenv"),
-                    workspace_folder.join("venv"),
-                ];
-                find_python_environments_in_paths_with_locators(
-                    paths_to_search_first.clone(),
-                    locators,
-                    reporter,
-                    true,
-                    &[],
-                );
+    // When searching in a directory, give preference to some paths.
+    let paths_to_search_first = vec![
+        // Possible this is a virtual env
+        workspace_folder.to_path_buf(),
+        // Optimize for finding these first.
+        workspace_folder.join(".venv"),
+        workspace_folder.join(".conda"),
+        workspace_folder.join(".virtualenv"),
+        workspace_folder.join("venv"),
+    ];
 
-                // If this is a virtual env folder, no need to scan this.
-                if is_venv_dir(&workspace_folder) {
-                    continue;
-                }
+    // Possible this is an environment.
+    find_python_environments_in_paths_with_locators(
+        paths_to_search_first.clone(),
+        locators,
+        reporter,
+        true,
+        global_env_search_paths,
+    );
 
-                if let Ok(reader) = fs::read_dir(&workspace_folder) {
-                    for folder in reader
-                        .filter_map(Result::ok)
-                        .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
-                        .map(|p| p.path())
-                        .filter(should_search_for_environments_in_path)
-                        .filter(|p| !paths_to_search_first.contains(p))
-                    {
-                        find_python_environments(vec![folder], reporter, locators, true, &[]);
-                    }
-                }
-            }
-        });
-    });
+    // If this is a virtual env folder, no need to scan this.
+    if is_virtualenv_dir(workspace_folder) || is_conda_env(workspace_folder) {
+        return;
+    }
+    if let Ok(reader) = fs::read_dir(workspace_folder) {
+        for folder in reader
+            .filter_map(Result::ok)
+            .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+            .map(|p| p.path())
+            .filter(should_search_for_environments_in_path)
+            .filter(|p| !paths_to_search_first.contains(p))
+        {
+            find_python_environments(vec![folder], reporter, locators, true, &[]);
+        }
+    }
 }
 
 fn find_python_environments(
@@ -265,7 +291,7 @@ fn find_python_environments_in_paths_with_locators(
     }
 }
 
-fn identify_python_executables_using_locators(
+pub fn identify_python_executables_using_locators(
     executables: Vec<PathBuf>,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     reporter: &dyn Reporter,
@@ -277,10 +303,10 @@ fn identify_python_executables_using_locators(
         if let Some(env) =
             identify_python_environment_using_locators(&env, locators, global_env_search_paths)
         {
-            reporter.report_environment(&env);
-            if let Some(manager) = env.manager {
-                reporter.report_manager(&manager);
+            if let Some(manager) = &env.manager {
+                reporter.report_manager(manager);
             }
+            reporter.report_environment(&env);
             continue;
         } else {
             warn!("Unknown Python Env {:?}", executable);

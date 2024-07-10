@@ -46,21 +46,21 @@ interface RefreshParams {
      *
      * Useful for VS Code so users can configure where they store virtual environments.
      */
-    environment_directories: getCustomVirtualEnvDirs(),
+    environment_directories: string[];
     /**
      * This is the path to the conda executable.
      * If conda is installed in the usual location, there's no need to update this value.
      *
      * Useful for VS Code so users can configure where they have installed Conda.
      */
-    conda_executable: getPythonSettingAndUntildify<string>(CONDAPATH_SETTING_KEY),
+    conda_executable?: string,
     /**
      * This is the path to the conda executable.
      * If Poetry is installed in the usual location, there's no need to update this value.
      *
      * Useful for VS Code so users can configure where they have installed Poetry.
      */
-    poetry_executable: getPythonSettingAndUntildify<string>('poetryPath'),
+    poetry_executable?: string,
 }
 
 interface RefreshResult {
@@ -120,28 +120,24 @@ interface Environment {
   executable?: string;
   /**
    * The kind of the environment.
-   *
-   * If an environment is discovered and the kind is not know, then `Unknown` is used.
-   * I.e this is never Optional.
    */
-  kind:
+  kind?:
     | "Conda" // Conda environment
-    | "Homebrew" // Homebrew installed Python
-    | "Pyenv" // Pyenv installed Python
     | "GlobalPaths" // Unknown Pyton environment, found in the PATH environment variable
-    | "PyenvVirtualEnv" // pyenv-virtualenv environment
+    | "Homebrew" // Homebrew installed Python
+    | "LinuxGlobal" // Python installed from the system package manager on Linux
+    | "MacCommandLineTools" // Python installed from the Mac command line tools
+    | "MacPythonOrg" // Python installed from python.org on Mac
+    | "MacXCode" // Python installed from XCode on Mac
     | "Pipenv" // Pipenv environment
     | "Poetry" // Poetry environment
-    | "MacPythonOrg" // Python installed from python.org on Mac
-    | "MacCommandLineTools" // Python installed from the Mac command line tools
-    | "LinuxGlobal" // Python installed from the system package manager on Linux
-    | "MacXCode" // Python installed from XCode on Mac
-    | "Unknown" // Unknown Python environment
+    | "Pyenv" // Pyenv installed Python
+    | "PyenvVirtualEnv" // pyenv-virtualenv environment
     | "Venv" // Python venv environment (generally created using the `venv` module)
     | "VirtualEnv" // Python virtual environment
     | "VirtualEnvWrapper" // Virtualenvwrapper Environment
-    | "WindowsStore" // Python installed from the Windows Store
-    | "WindowsRegistry"; // Python installed & found in Windows Registry
+    | "WindowsRegistry" // Python installed & found in Windows Registry
+    | "WindowsStore"; // Python installed from the Windows Store
   /**
    * The version of the python executable.
    * This will at a minimum contain the 3 parts of the version such as `3.8.1`.
