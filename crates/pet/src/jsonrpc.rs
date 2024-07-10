@@ -7,7 +7,6 @@ use pet_conda::Conda;
 use pet_conda::CondaLocator;
 use pet_core::{
     os_environment::{Environment, EnvironmentApi},
-    reporter::Reporter,
     Configuration, Locator,
 };
 use pet_jsonrpc::{
