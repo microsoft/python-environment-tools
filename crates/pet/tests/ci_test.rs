@@ -66,13 +66,13 @@ fn verify_validity_of_discovered_envs() {
     use pet::{find::find_and_report_envs, locators::create_locators};
     use pet_conda::Conda;
     use pet_core::{os_environment::EnvironmentApi, Configuration};
-    use pet_reporter::test;
     use std::{env, sync::Arc, thread};
 
     setup();
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
-    let reporter = test::create_reporter();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -85,9 +85,8 @@ fn verify_validity_of_discovered_envs() {
 
     // Find all environments on this machine.
     find_and_report_envs(&reporter, Default::default(), &locators, &environment, None);
-    let result = reporter.get_result();
 
-    let environments = result.environments;
+    let environments = collect_reporter.environments.lock().unwrap().clone();
     let mut threads = vec![];
     for environment in environments {
         if environment.executable.is_none() {
@@ -134,11 +133,11 @@ fn check_if_virtualenvwrapper_exists() {
     use pet::{find::find_and_report_envs, locators::create_locators};
     use pet_conda::Conda;
     use pet_core::os_environment::EnvironmentApi;
-    use pet_reporter::test;
     use std::sync::Arc;
 
     setup();
-    let reporter = test::create_reporter();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -151,8 +150,8 @@ fn check_if_virtualenvwrapper_exists() {
         None,
     );
 
-    let result = reporter.get_result();
-    let environments = result.environments;
+    let managers = collect_reporter.managers.lock().unwrap().clone();
+    let environments = collect_reporter.environments.lock().unwrap().clone();
 
     assert!(
         environments.iter().any(
@@ -177,11 +176,11 @@ fn check_if_pipenv_exists() {
     use pet::{find::find_and_report_envs, locators::create_locators};
     use pet_conda::Conda;
     use pet_core::os_environment::EnvironmentApi;
-    use pet_reporter::test;
     use std::{env, sync::Arc};
 
     setup();
-    let reporter = test::create_reporter();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -194,8 +193,7 @@ fn check_if_pipenv_exists() {
         None,
     );
 
-    let result = reporter.get_result();
-    let environments = result.environments;
+    let environments = collect_reporter.environments.lock().unwrap().clone();
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     environments
@@ -216,11 +214,11 @@ fn check_if_pyenv_virtualenv_exists() {
     use pet::{find::find_and_report_envs, locators::create_locators};
     use pet_conda::Conda;
     use pet_core::os_environment::EnvironmentApi;
-    use pet_reporter::test;
     use std::sync::Arc;
 
     setup();
-    let reporter = test::create_reporter();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -233,8 +231,8 @@ fn check_if_pyenv_virtualenv_exists() {
         None,
     );
 
-    let result = reporter.get_result();
-    let environments = result.environments;
+    let managers = collect_reporter.managers.lock().unwrap().clone();
+    let environments = collect_reporter.environments.lock().unwrap().clone();
 
     assert!(
         environments.iter().any(
@@ -646,11 +644,11 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
     use pet::{find::find_and_report_envs, locators::create_locators};
     use pet_conda::Conda;
     use pet_core::os_environment::EnvironmentApi;
-    use pet_reporter::test;
     use std::sync::Arc;
 
     setup();
-    let reporter = test::create_reporter();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -663,8 +661,8 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
         None,
     );
 
-    let result = reporter.get_result();
-    let environments = result.environments;
+    let managers = collect_reporter.managers.lock().unwrap().clone();
+    let environments = collect_reporter.environments.lock().unwrap().clone();
 
     // Python env /bin/python cannot have symlinks in /usr/bin or /usr/local
     // Python env /usr/bin/python cannot have symlinks /bin or /usr/local

@@ -11,7 +11,7 @@ fn does_not_find_any_pyenv_envs() {
     use pet_core::{self, Locator};
     use pet_pyenv;
     use pet_pyenv::PyEnv;
-    use pet_reporter::test::create_reporter;
+    use pet_reporter::{cache::CacheReporter, collect};
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
     let environment = create_test_environment(
@@ -23,12 +23,15 @@ fn does_not_find_any_pyenv_envs() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let reporter = create_reporter();
-    locator.find(&reporter);
-    let result = reporter.get_result();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
 
-    assert_eq!(result.managers.is_empty(), true);
-    assert_eq!(result.environments.is_empty(), true);
+    locator.find(&reporter);
+    let managers = collect_reporter.managers.lock().unwrap().clone();
+    let environments = collect_reporter.environments.lock().unwrap().clone();
+
+    assert_eq!(managers.is_empty(), true);
+    assert_eq!(environments.is_empty(), true);
 }
 
 #[test]
@@ -44,7 +47,7 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
     };
     use pet_pyenv;
     use pet_pyenv::PyEnv;
-    use pet_reporter::test::create_reporter;
+    use pet_reporter::{cache::CacheReporter, collect};
     use serde_json::json;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -67,11 +70,12 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let reporter = create_reporter();
-    locator.find(&reporter);
-    let result = reporter.get_result();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
 
-    let managers = result.clone().managers;
+    locator.find(&reporter);
+    let managers = collect_reporter.managers.lock().unwrap().clone();
+
     assert_eq!(managers.len(), 1);
 
     let expected_manager = EnvManager {
@@ -79,7 +83,7 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
         version: None,
         tool: EnvManagerType::Pyenv,
     };
-    assert_eq!(json!(expected_manager), json!(result.managers[0]));
+    assert_eq!(json!(expected_manager), json!(managers[0]));
 }
 
 #[test]
@@ -97,7 +101,7 @@ fn find_pyenv_envs() {
     };
     use pet_pyenv;
     use pet_pyenv::PyEnv;
-    use pet_reporter::test::create_reporter;
+    use pet_reporter::{cache::CacheReporter, collect};
     use serde_json::json;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -123,11 +127,14 @@ fn find_pyenv_envs() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let reporter = create_reporter();
-    locator.find(&reporter);
-    let mut result = reporter.get_result();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
 
-    assert_eq!(result.managers.len(), 2);
+    locator.find(&reporter);
+    let managers = collect_reporter.managers.lock().unwrap().clone();
+    let environments = collect_reporter.environments.lock().unwrap().clone();
+
+    assert_eq!(managers.len(), 2);
 
     let expected_pyenv_manager = EnvManager {
         executable: pyenv_exe.clone(),
@@ -144,9 +151,9 @@ fn find_pyenv_envs() {
         expected_pyenv_manager.clone(),
         expected_conda_manager.clone(),
     ];
-    result.managers.sort();
+    managers.sort();
     expected.sort();
-    assert_eq!(expected, result.managers);
+    assert_eq!(expected, managers);
 
     let expected_3_9_9 = PythonEnvironment {
         display_name: None,

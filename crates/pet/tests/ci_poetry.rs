@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_poetry::Poetry;
+use pet_reporter::{cache::CacheReporter, collect};
 
 mod common;
 
@@ -17,11 +18,11 @@ fn verify_ci_poetry_global() {
         python_environment::{PythonEnvironment, PythonEnvironmentKind},
         Configuration,
     };
-    use pet_reporter::test;
     use std::{env, path::PathBuf, sync::Arc};
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
-    let reporter = test::create_reporter();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -34,14 +35,12 @@ fn verify_ci_poetry_global() {
 
     find_and_report_envs(&reporter, Default::default(), &locators, &environment, None);
 
-    let result = reporter.get_result();
-
-    let environments = result.environments;
+    let managers = collect_reporter.managers.lock().unwrap().clone();
+    let environments = collect_reporter.environments.lock().unwrap().clone();
 
     // On CI the poetry manager is installed using wsl, and the path isn't available on windows
     if std::env::consts::OS != "windows" {
-        result
-            .managers
+        managers
             .iter()
             .find(|m| m.tool == EnvManagerType::Poetry)
             .expect("Poetry manager not found");
@@ -79,11 +78,11 @@ fn verify_ci_poetry_project() {
         python_environment::{PythonEnvironment, PythonEnvironmentKind},
         Configuration,
     };
-    use pet_reporter::test;
     use std::{env, path::PathBuf, sync::Arc};
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
-    let reporter = test::create_reporter();
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -96,14 +95,12 @@ fn verify_ci_poetry_project() {
 
     find_and_report_envs(&reporter, Default::default(), &locators, &environment, None);
 
-    let result = reporter.get_result();
-
-    let environments = result.environments;
+    let managers = collect_reporter.managers.lock().unwrap().clone();
+    let environments = collect_reporter.environments.lock().unwrap().clone();
 
     // On CI the poetry manager is installed using wsl, and the path isn't available on windows
     if std::env::consts::OS != "windows" {
-        result
-            .managers
+        managers
             .iter()
             .find(|m| m.tool == EnvManagerType::Poetry)
             .expect("Poetry manager not found");
