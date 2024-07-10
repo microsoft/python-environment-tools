@@ -84,7 +84,7 @@ fn verify_validity_of_discovered_envs() {
     }
 
     // Find all environments on this machine.
-    find_and_report_envs(&reporter, Default::default(), &locators, &environment);
+    find_and_report_envs(&reporter, Default::default(), &locators, &environment, None);
     let result = reporter.get_result();
 
     let environments = result.environments;
@@ -190,6 +190,7 @@ fn check_if_pipenv_exists() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
     );
 
     let result = reporter.get_result();
@@ -228,6 +229,7 @@ fn check_if_pyenv_virtualenv_exists() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
     );
 
     let result = reporter.get_result();
@@ -657,6 +659,7 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
     );
 
     let result = reporter.get_result();

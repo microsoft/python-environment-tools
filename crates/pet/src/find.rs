@@ -5,7 +5,7 @@ use log::{trace, warn};
 use pet_conda::utils::is_conda_env;
 use pet_core::os_environment::Environment;
 use pet_core::reporter::Reporter;
-use pet_core::{Configuration, Locator, SearchScope};
+use pet_core::{Configuration, Locator};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_python_utils::env::PythonEnv;
@@ -13,6 +13,7 @@ use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
 use pet_virtualenv::is_virtualenv_dir;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -31,11 +32,21 @@ pub struct Summary {
     pub find_workspace_directories_time: Duration,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SearchScope {
+    /// Search for environments in global space.
+    Global,
+    /// Search for environments in workspace folder.
+    Workspace,
+}
+
 pub fn find_and_report_envs(
     reporter: &dyn Reporter,
     configuration: Configuration,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     environment: &dyn Environment,
+    search_scope: Option<SearchScope>,
 ) -> Arc<Mutex<Summary>> {
     let summary = Arc::new(Mutex::new(Summary {
         time: Duration::from_secs(0),
@@ -50,15 +61,14 @@ pub fn find_and_report_envs(
     // From settings
     let environment_directories = configuration.environment_directories.unwrap_or_default();
     let workspace_directories = configuration.workspace_directories.unwrap_or_default();
-    let scope = configuration.search_scope.clone();
-    let search_global = match scope {
+    let search_global = match search_scope {
         Some(SearchScope::Global) => true,
-        Some(SearchScope::Projects) => false,
+        Some(SearchScope::Workspace) => false,
         _ => true,
     };
-    let search_project = match scope {
+    let search_workspace = match search_scope {
         Some(SearchScope::Global) => false,
-        Some(SearchScope::Projects) => true,
+        Some(SearchScope::Workspace) => true,
         _ => true,
     };
 
@@ -147,10 +157,7 @@ pub fn find_and_report_envs(
         // that could the discovery.
         s.spawn(|| {
             let start = std::time::Instant::now();
-            if search_project {
-                if workspace_directories.is_empty() {
-                    return;
-                }
+            if search_workspace && !workspace_directories.is_empty() {
                 trace!(
                     "Searching for environments in workspace folders: {:?}",
                     workspace_directories

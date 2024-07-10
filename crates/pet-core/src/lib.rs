@@ -21,13 +21,6 @@ pub struct LocatorResult {
     pub environments: Vec<PythonEnvironment>,
 }
 
-#[derive(Debug, Clone)]
-pub enum SearchScope {
-    /// Search for environments in global space.
-    Global,
-    /// Search for environments in projects.
-    Projects,
-}
 
 #[derive(Debug, Default, Clone)]
 pub struct Configuration {
@@ -39,9 +32,6 @@ pub struct Configuration {
     /// These are different from search_paths, as these are specific directories where environments are expected.
     /// environment_directories on the other hand can be any directory such as a workspace folder, where envs might never exist.
     pub environment_directories: Option<Vec<PathBuf>>,
-    /// The search paths are the paths where we will look for environments.
-    /// Defaults to searching everywhere, global and project level (workspaces).
-    pub search_scope: Option<SearchScope>,
 }
 
 pub trait Locator: Send + Sync {

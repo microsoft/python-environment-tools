@@ -41,8 +41,13 @@ enum Commands {
 
         /// Exclusively search just the workspace directories.
         /// I.e. exclude all global environments.
-        #[arg(short, long)]
+        #[arg(short, long, conflicts_with = "global_only")]
         workspace_only: bool,
+
+        /// Exclusively search just the global environments (Conda, Poetry, Registry, etc).
+        /// I.e. do not search the workspace directories.
+        #[arg(short, long, conflicts_with = "workspace_only")]
+        global_only: bool,
     },
     /// Resolves & reports the details of the the environment to the standard output.
     Resolve {
@@ -67,6 +72,7 @@ fn main() {
         report_missing: false,
         workspace_dirs: None,
         workspace_only: false,
+        global_only: false,
     }) {
         Commands::Find {
             list,
@@ -74,6 +80,7 @@ fn main() {
             report_missing,
             workspace_dirs,
             workspace_only,
+            global_only,
         } => find_and_report_envs_stdio(FindOptions {
             print_list: list,
             print_summary: true,
@@ -81,6 +88,7 @@ fn main() {
             report_missing,
             workspace_dirs,
             workspace_only,
+            global_only,
         }),
         Commands::Resolve {
             executable,

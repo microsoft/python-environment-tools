@@ -34,6 +34,7 @@ use std::{
 use crate::find::find_and_report_envs;
 use crate::find::find_python_environments_in_workspace_folder_recursive;
 use crate::find::identify_python_executables_using_locators;
+use crate::find::SearchScope;
 use crate::locators::create_locators;
 
 pub struct Context {
@@ -109,6 +110,14 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshOptions {
+    /// The search paths are the paths where we will look for environments.
+    /// Defaults to searching everywhere (or when None), else it can be restricted to a specific scope.
+    pub search_scope: Option<SearchScope>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RefreshResult {
     duration: u128,
 }
@@ -121,81 +130,95 @@ impl RefreshResult {
     }
 }
 
-pub fn handle_refresh(context: Arc<Context>, id: u32, _params: Value) {
-    // Start in a new thread, we can have multiple requests.
-    thread::spawn(move || {
-        let config = context.configuration.read().unwrap().clone();
-        let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter())));
-
-        trace!("Start refreshing environments, config: {:?}", config);
-        let summary = find_and_report_envs(
-            reporter.as_ref(),
-            config,
-            &context.locators,
-            context.os_environment.deref(),
-        );
-        let summary = summary.lock().unwrap();
-        for locator in summary.find_locators_times.iter() {
-            info!("Locator {} took {:?}", locator.0, locator.1);
-        }
-        info!(
-            "Environments found using locators in {:?}",
-            summary.find_locators_time
-        );
-        info!("Environments in PATH found in {:?}", summary.find_path_time);
-        info!(
-            "Environments in global virtual env paths found in {:?}",
-            summary.find_global_virtual_envs_time
-        );
-        info!(
-            "Environments in workspace folders found in {:?}",
-            summary.find_workspace_directories_time
-        );
-        trace!("Finished refreshing environments in {:?}", summary.time);
-        send_reply(id, Some(RefreshResult::new(summary.time)));
-
-        // Find an report missing envs for the first launch of this process.
-        if MISSING_ENVS_REPORTED
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .ok()
-            .unwrap_or_default()
-        {
-            // By now all conda envs have been found
-            // Spawn conda  in a separate thread.
-            // & see if we can find more environments by spawning conda.
-            // But we will not wait for this to complete.
-            let conda_locator = context.conda_locator.clone();
-            let conda_executable = context
-                .configuration
-                .read()
-                .unwrap()
-                .conda_executable
-                .clone();
-            let reporter_ref = reporter.clone();
+pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
+    match serde_json::from_value::<RefreshOptions>(params.clone()) {
+        Ok(refres_options) => {
+            // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
-                conda_locator.find_and_report_missing_envs(reporter_ref.as_ref(), conda_executable);
-                Some(())
-            });
+                let config = context.configuration.read().unwrap().clone();
+                let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter())));
 
-            // By now all poetry envs have been found
-            // Spawn poetry exe in a separate thread.
-            // & see if we can find more environments by spawning poetry.
-            // But we will not wait for this to complete.
-            let poetry_locator = context.poetry_locator.clone();
-            let poetry_executable = context
-                .configuration
-                .read()
-                .unwrap()
-                .poetry_executable
-                .clone();
-            let reporter_ref = reporter.clone();
-            thread::spawn(move || {
-                poetry_locator
-                    .find_and_report_missing_envs(reporter_ref.as_ref(), poetry_executable);
-                Some(())
+                trace!("Start refreshing environments, config: {:?}", config);
+                let summary = find_and_report_envs(
+                    reporter.as_ref(),
+                    config,
+                    &context.locators,
+                    context.os_environment.deref(),
+                    refres_options.search_scope,
+                );
+                let summary = summary.lock().unwrap();
+                for locator in summary.find_locators_times.iter() {
+                    info!("Locator {} took {:?}", locator.0, locator.1);
+                }
+                info!(
+                    "Environments found using locators in {:?}",
+                    summary.find_locators_time
+                );
+                info!("Environments in PATH found in {:?}", summary.find_path_time);
+                info!(
+                    "Environments in global virtual env paths found in {:?}",
+                    summary.find_global_virtual_envs_time
+                );
+                info!(
+                    "Environments in workspace folders found in {:?}",
+                    summary.find_workspace_directories_time
+                );
+                trace!("Finished refreshing environments in {:?}", summary.time);
+                send_reply(id, Some(RefreshResult::new(summary.time)));
+
+                // Find an report missing envs for the first launch of this process.
+                if MISSING_ENVS_REPORTED
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .ok()
+                    .unwrap_or_default()
+                {
+                    // By now all conda envs have been found
+                    // Spawn conda  in a separate thread.
+                    // & see if we can find more environments by spawning conda.
+                    // But we will not wait for this to complete.
+                    let conda_locator = context.conda_locator.clone();
+                    let conda_executable = context
+                        .configuration
+                        .read()
+                        .unwrap()
+                        .conda_executable
+                        .clone();
+                    let reporter_ref = reporter.clone();
+                    thread::spawn(move || {
+                        conda_locator
+                            .find_and_report_missing_envs(reporter_ref.as_ref(), conda_executable);
+                        Some(())
+                    });
+
+                    // By now all poetry envs have been found
+                    // Spawn poetry exe in a separate thread.
+                    // & see if we can find more environments by spawning poetry.
+                    // But we will not wait for this to complete.
+                    let poetry_locator = context.poetry_locator.clone();
+                    let poetry_executable = context
+                        .configuration
+                        .read()
+                        .unwrap()
+                        .poetry_executable
+                        .clone();
+                    let reporter_ref = reporter.clone();
+                    thread::spawn(move || {
+                        poetry_locator
+                            .find_and_report_missing_envs(reporter_ref.as_ref(), poetry_executable);
+                        Some(())
+                    });
+                }
             });
         }
-    });
+        Err(e) => {
+            error!("Failed to parse refresh {params:?}: {e}");
+            send_error(
+                Some(id),
+                -4,
+                format!("Failed to parse refresh {params:?}: {e}"),
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -247,11 +270,11 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
             });
         }
         Err(e) => {
-            error!("Failed to parse request {params:?}: {e}");
+            error!("Failed to parse resolve {params:?}: {e}");
             send_error(
                 Some(id),
                 -4,
-                format!("Failed to parse request {params:?}: {e}"),
+                format!("Failed to parse resolve {params:?}: {e}"),
             );
         }
     }
@@ -298,11 +321,11 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                 }
             }
             Err(e) => {
-                error!("Failed to parse request {params:?}: {e}");
+                error!("Failed to parse find {params:?}: {e}");
                 send_error(
                     Some(id),
                     -4,
-                    format!("Failed to parse request {params:?}: {e}"),
+                    format!("Failed to parse find {params:?}: {e}"),
                 );
             }
         },
