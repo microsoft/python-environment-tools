@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::path::Path;
+
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
@@ -20,34 +22,49 @@ pub fn is_virtualenv(env: &PythonEnv) -> bool {
         }
     }
     if let Some(bin) = env.executable.parent() {
-        // Check if there are any activate.* files in the same directory as the interpreter.
-        //
-        // env
-        // |__ activate, activate.*  <--- check if any of these files exist
-        // |__ python  <--- interpreterPath
+        return is_virtualenv_dir(bin);
+    }
 
-        // if let Some(parent_path) = PathBuf::from(env.)
-        // const directory = path.dirname(interpreterPath);
-        // const files = await fsapi.readdir(directory);
-        // const regex = /^activate(\.([A-z]|\d)+)?$/i;
-        if bin.join("activate").exists() || bin.join("activate.bat").exists() {
-            return true;
+    false
+}
+
+pub fn is_virtualenv_dir(path: &Path) -> bool {
+    // Check if the executable is in a bin or Scripts directory.
+    // Possible for some reason we do not have the prefix.
+    let mut path = path.to_path_buf();
+    if !path.ends_with("bin") && !path.ends_with("Scripts") {
+        if cfg!(windows) {
+            path = path.join("Scripts");
+        } else {
+            path = path.join("bin");
         }
+    }
+    // Check if there are any activate.* files in the same directory as the interpreter.
+    //
+    // env
+    // |__ activate, activate.*  <--- check if any of these files exist
+    // |__ python  <--- interpreterPath
 
-        // Support for activate.ps, etc.
-        if let Ok(files) = std::fs::read_dir(bin) {
-            for file in files.filter_map(Result::ok).map(|e| e.path()) {
-                if file
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_str()
-                    .unwrap_or_default()
-                    .starts_with("activate")
-                {
-                    return true;
-                }
+    // if let Some(parent_path) = PathBuf::from(env.)
+    // const directory = path.dirname(interpreterPath);
+    // const files = await fsapi.readdir(directory);
+    // const regex = /^activate(\.([A-z]|\d)+)?$/i;
+    if path.join("activate").exists() || path.join("activate.bat").exists() {
+        return true;
+    }
+
+    // Support for activate.ps, etc.
+    if let Ok(files) = std::fs::read_dir(path) {
+        for file in files.filter_map(Result::ok).map(|e| e.path()) {
+            if file
+                .file_name()
+                .unwrap_or_default()
+                .to_str()
+                .unwrap_or_default()
+                .starts_with("activate")
+            {
+                return true;
             }
-            return false;
         }
     }
 

@@ -128,11 +128,11 @@ impl Locator for PyEnv {
         }
         if let Some(ref versions) = &pyenv_info.versions {
             if let Some(envs) = list_pyenv_environments(&manager, versions, &self.conda_locator) {
-                for env in envs.environments {
-                    reporter.report_environment(&env);
-                }
                 for mgr in envs.managers {
                     reporter.report_manager(&mgr);
+                }
+                for env in envs.environments {
+                    reporter.report_environment(&env);
                 }
             }
         }
