@@ -21,7 +21,6 @@ pub struct LocatorResult {
     pub environments: Vec<PythonEnvironment>,
 }
 
-
 #[derive(Debug, Default, Clone)]
 pub struct Configuration {
     /// These are paths like workspace folders, where we can look for environments.
