@@ -32,7 +32,6 @@ use std::{
 use crate::{find::find_and_report_envs, locators::create_locators};
 
 pub struct Context {
-    reporter: Arc<dyn Reporter>,
     configuration: RwLock<Configuration>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<Conda>,
@@ -48,12 +47,9 @@ pub fn start_jsonrpc_server() {
     // These are globals for the the lifetime of the server.
     // Hence passed around as Arcs via the context.
     let environment = EnvironmentApi::new();
-    let jsonrpc_reporter = Arc::new(jsonrpc::create_reporter());
-    let reporter = Arc::new(CacheReporter::new(jsonrpc_reporter.clone()));
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
     let context = Context {
-        reporter,
         locators: create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         conda_locator,
         poetry_locator,
@@ -123,9 +119,11 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, _params: Value) {
     // Start in a new thread, we can have multiple requests.
     thread::spawn(move || {
         let config = context.configuration.read().unwrap().clone();
+        let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter())));
+
         trace!("Start refreshing environments, config: {:?}", config);
         let summary = find_and_report_envs(
-            context.reporter.as_ref(),
+            reporter.as_ref(),
             config,
             &context.locators,
             context.os_environment.deref(),
@@ -167,9 +165,9 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, _params: Value) {
                 .unwrap()
                 .conda_executable
                 .clone();
-            let reporter = context.reporter.clone();
+            let reporter_ref = reporter.clone();
             thread::spawn(move || {
-                conda_locator.find_and_report_missing_envs(reporter.as_ref(), conda_executable);
+                conda_locator.find_and_report_missing_envs(reporter_ref.as_ref(), conda_executable);
                 Some(())
             });
 
@@ -184,9 +182,10 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, _params: Value) {
                 .unwrap()
                 .poetry_executable
                 .clone();
-            let reporter = context.reporter.clone();
+            let reporter_ref = reporter.clone();
             thread::spawn(move || {
-                poetry_locator.find_and_report_missing_envs(reporter.as_ref(), poetry_executable);
+                poetry_locator
+                    .find_and_report_missing_envs(reporter_ref.as_ref(), poetry_executable);
                 Some(())
             });
         }
@@ -212,8 +211,9 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                 {
                     if let Some(resolved) = result.resolved {
                         // Gather telemetry of this resolved env and see what we got wrong.
+                        let jsonrpc_reporter = jsonrpc::create_reporter();
                         let _ = report_inaccuracies_identified_after_resolving(
-                            context.reporter.as_ref(),
+                            &jsonrpc_reporter,
                             &result.discovered,
                             &resolved,
                         );
