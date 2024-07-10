@@ -37,6 +37,7 @@ use std::{
 use crate::find::find_and_report_envs;
 use crate::find::find_python_environments_in_workspace_folder_recursive;
 use crate::find::identify_python_executables_using_locators;
+use crate::find::SearchScope;
 use crate::locators::create_locators;
 
 pub struct Context {
@@ -133,10 +134,6 @@ impl RefreshResult {
 }
 
 pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
-    let params = match params {
-        Value::Null => json!({}),
-        _ => params,
-    };
     match serde_json::from_value::<RefreshOptions>(params.clone()) {
         Ok(refres_options) => {
             // Start in a new thread, we can have multiple requests.
@@ -153,31 +150,25 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     refres_options.search_scope,
                 );
                 let summary = summary.lock().unwrap();
-                for locator in summary.locators.iter() {
+                for locator in summary.find_locators_times.iter() {
                     info!("Locator {} took {:?}", locator.0, locator.1);
                 }
-                for item in summary.breakdown.iter() {
-                    info!("Locator {} took {:?}", item.0, item.1);
-                }
-                trace!("Finished refreshing environments in {:?}", summary.total);
-                send_reply(id, Some(RefreshResult::new(summary.total)));
+                info!(
+                    "Environments found using locators in {:?}",
+                    summary.find_locators_time
+                );
+                info!("Environments in PATH found in {:?}", summary.find_path_time);
+                info!(
+                    "Environments in global virtual env paths found in {:?}",
+                    summary.find_global_virtual_envs_time
+                );
+                info!(
+                    "Environments in workspace folders found in {:?}",
+                    summary.find_workspace_directories_time
+                );
+                trace!("Finished refreshing environments in {:?}", summary.time);
+                send_reply(id, Some(RefreshResult::new(summary.time)));
 
-                let perf = RefreshPerformance {
-                    total: summary.total.as_millis(),
-                    locators: summary
-                        .locators
-                        .clone()
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.as_millis()))
-                        .collect::<BTreeMap<String, u128>>(),
-                    breakdown: summary
-                        .breakdown
-                        .clone()
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.as_millis()))
-                        .collect::<BTreeMap<String, u128>>(),
-                };
-                reporter.report_telemetry(&TelemetryEvent::RefreshPerformance(perf));
                 // Find an report missing envs for the first launch of this process.
                 if MISSING_ENVS_REPORTED
                     .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -333,11 +324,11 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                 }
             }
             Err(e) => {
-                error!("Failed to parse request {params:?}: {e}");
+                error!("Failed to parse find {params:?}: {e}");
                 send_error(
                     Some(id),
                     -4,
-                    format!("Failed to parse request {params:?}: {e}"),
+                    format!("Failed to parse find {params:?}: {e}"),
                 );
             }
         },
