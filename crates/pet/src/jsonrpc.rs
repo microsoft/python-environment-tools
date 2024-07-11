@@ -24,6 +24,7 @@ use pet_reporter::collect;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use serde_json::{self, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -137,6 +138,10 @@ impl RefreshResult {
 }
 
 pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
+    let params = match params {
+        Value::Null => json!({}),
+        _ => params,
+    };
     match serde_json::from_value::<RefreshOptions>(params.clone()) {
         Ok(refres_options) => {
             // Start in a new thread, we can have multiple requests.

@@ -82,7 +82,7 @@ pub fn find_and_report_envs(
                             summary
                                 .lock()
                                 .unwrap()
-                                .find_locators_times
+                                .locators
                                 .insert(locator.get_name(), start.elapsed());
                         });
                     }
