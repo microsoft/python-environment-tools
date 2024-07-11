@@ -30,7 +30,6 @@ fn verify_python_in_homebrew_contaner() {
         &environment,
         None,
     );
-    let managers = collect_reporter.managers.lock().unwrap().clone();
     let environments = collect_reporter.environments.lock().unwrap().clone();
 
     let python3_12 = PythonEnvironment {
