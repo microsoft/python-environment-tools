@@ -6,7 +6,10 @@ use std::{path::PathBuf, sync::Once};
 use common::{does_version_match, resolve_test_path};
 use lazy_static::lazy_static;
 use log::{error, trace};
-use pet::{locators::identify_python_environment_using_locators, resolve::resolve_environment};
+use pet::{
+    find::identify_python_executables_using_locators,
+    locators::identify_python_environment_using_locators, resolve::resolve_environment,
+};
 use pet_core::{
     arch::Architecture,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
@@ -14,6 +17,7 @@ use pet_core::{
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_poetry::Poetry;
 use pet_python_utils::env::PythonEnv;
+use pet_reporter::{cache::CacheReporter, collect};
 use regex::Regex;
 use serde::Deserialize;
 
@@ -80,7 +84,7 @@ fn verify_validity_of_discovered_envs() {
     }
 
     // Find all environments on this machine.
-    find_and_report_envs(&reporter, Default::default(), &locators, &environment);
+    find_and_report_envs(&reporter, Default::default(), &locators, &environment, None);
     let result = reporter.get_result();
 
     let environments = result.environments;
@@ -110,6 +114,9 @@ fn verify_validity_of_discovered_envs() {
                 // Verification 4 & 5:
                 // Similarly for each environment use resolve method and verify we get the exact same information.
                 verify_we_can_get_same_env_info_using_resolve_with_exe(exe, environment.clone());
+                // Verification 6:
+                // Given the exe, verify we can use the `find` method in JSON RPC to get the details, without spawning Python.
+                verify_we_can_get_same_env_info_using_find_with_exe(exe, environment.clone());
             }
         }));
     }
@@ -183,6 +190,7 @@ fn check_if_pipenv_exists() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
     );
 
     let result = reporter.get_result();
@@ -221,6 +229,7 @@ fn check_if_pyenv_virtualenv_exists() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
     );
 
     let result = reporter.get_result();
@@ -372,6 +381,68 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
         resolved,
         environment,
         format!("try_from using exe {executable:?}").as_str(),
+    );
+}
+
+fn verify_we_can_get_same_env_info_using_find_with_exe(
+    executable: &PathBuf,
+    environment: PythonEnvironment,
+) {
+    // Assume we were given a path to the exe, then we use the `locator.try_from` method.
+    // We should be able to get the exct same information back given only the exe.
+    //
+    // Note: We will not not use the old locator objects, as we do not want any cached information.
+    // Hence create the locators all over again.
+    use pet::locators::create_locators;
+    use pet_conda::Conda;
+    use pet_core::{os_environment::EnvironmentApi, Configuration};
+    use std::{env, sync::Arc};
+
+    let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
+    let os_environment = EnvironmentApi::new();
+    let conda_locator = Arc::new(Conda::from(&os_environment));
+    let poetry_locator = Arc::new(Poetry::from(&os_environment));
+    let mut config = Configuration::default();
+    let search_paths = vec![workspace_dir.clone()];
+    config.workspace_directories = Some(search_paths.clone());
+    let locators = create_locators(
+        conda_locator.clone(),
+        poetry_locator.clone(),
+        &os_environment,
+    );
+    for locator in locators.iter() {
+        locator.configure(&config);
+    }
+    let global_env_search_paths: Vec<PathBuf> =
+        get_search_paths_from_env_variables(&os_environment);
+
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
+    identify_python_executables_using_locators(
+        vec![executable.clone()],
+        &locators,
+        &reporter,
+        &global_env_search_paths,
+    );
+
+    let envs = collect_reporter.environments.lock().unwrap().clone();
+    if envs.is_empty() {
+        panic!(
+            "Failed to find Python environment {:?}, details => {:?}",
+            executable, environment
+        );
+    }
+    trace!(
+        "For exe {:?} we got Environment = {:?}, To compare against {:?}",
+        executable,
+        envs[0],
+        environment
+    );
+
+    compare_environments(
+        envs[0].clone(),
+        environment,
+        format!("find using exe {executable:?}").as_str(),
     );
 }
 
@@ -588,6 +659,7 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
     );
 
     let result = reporter.get_result();
