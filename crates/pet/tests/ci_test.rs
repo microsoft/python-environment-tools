@@ -148,6 +148,7 @@ fn check_if_virtualenvwrapper_exists() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
     );
 
     let result = reporter.get_result();
