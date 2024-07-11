@@ -60,6 +60,7 @@ pub fn start_jsonrpc_server() {
     handlers.add_request_handler("configure", handle_configure);
     handlers.add_request_handler("refresh", handle_refresh);
     handlers.add_request_handler("resolve", handle_resolve);
+    handlers.add_request_handler("condaInfo", handle_conda_telemetry);
     start_server(&handlers)
 }
 
@@ -248,4 +249,18 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
             );
         }
     }
+}
+
+pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
+    thread::spawn(move || {
+        let conda_locator = context.conda_locator.clone();
+        let conda_executable = context
+            .configuration
+            .read()
+            .unwrap()
+            .conda_executable
+            .clone();
+        let info = conda_locator.get_info_for_telemetry(conda_executable);
+        send_reply(id, info.into());
+    });
 }

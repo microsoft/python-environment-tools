@@ -14,13 +14,14 @@ use pet_core::{
     Locator, LocatorResult,
 };
 use pet_python_utils::env::PythonEnv;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
 };
-use telemetry::report_missing_envs;
+use telemetry::{get_conda_rcs_and_env_dirs, report_missing_envs};
 use utils::{is_conda_env, is_conda_install};
 
 mod conda_info;
@@ -40,7 +41,17 @@ pub trait CondaLocator: Send + Sync {
         reporter: &dyn Reporter,
         conda_executable: Option<PathBuf>,
     ) -> Option<()>;
+    fn get_info_for_telemetry(&self, conda_executable: Option<PathBuf>) -> CondaTelemetryInfo;
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CondaTelemetryInfo {
+    pub can_spawn_conda: bool,
+    pub conda_rcs: Vec<PathBuf>,
+    pub env_dirs: Vec<PathBuf>,
+}
+
 pub struct Conda {
     /// Directories where conda environments are found (env_dirs returned from `conda info --json`)
     pub env_dirs: Arc<Mutex<Vec<PathBuf>>>,
@@ -106,6 +117,20 @@ impl CondaLocator for Conda {
         );
 
         Some(())
+    }
+
+    fn get_info_for_telemetry(&self, conda_executable: Option<PathBuf>) -> CondaTelemetryInfo {
+        let can_spawn_conda = CondaInfo::from(conda_executable).is_some();
+        let environments = self.environments.lock().unwrap().clone();
+        let environments = environments
+            .into_values()
+            .collect::<Vec<PythonEnvironment>>();
+        let (conda_rcs, env_dirs) = get_conda_rcs_and_env_dirs(&self.env_vars, &environments);
+        CondaTelemetryInfo {
+            can_spawn_conda,
+            conda_rcs,
+            env_dirs,
+        }
     }
 
     fn find_in(&self, conda_dir: &Path) -> Option<LocatorResult> {
