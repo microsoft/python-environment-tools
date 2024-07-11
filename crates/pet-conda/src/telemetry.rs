@@ -188,6 +188,23 @@ pub fn report_missing_envs(
     Some(())
 }
 
+pub fn get_conda_rcs_and_env_dirs(
+    env_vars: &EnvVariables,
+    known_envs: &[PythonEnvironment],
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let known_conda_rcs = get_all_known_conda_rc(env_vars, known_envs);
+    let discovered_conda_rcs = known_conda_rcs
+        .iter()
+        .flat_map(|rc| rc.files.clone().into_iter())
+        .collect();
+    let discovered_env_dirs = known_conda_rcs
+        .iter()
+        .flat_map(|rc| rc.env_dirs.clone().into_iter())
+        .collect();
+
+    (discovered_conda_rcs, discovered_env_dirs)
+}
+
 fn log_and_find_missing_envs(
     possibly_missing_envs: &[PathBuf],
     known_envs: &[PythonEnvironment],
