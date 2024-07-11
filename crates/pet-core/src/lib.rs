@@ -15,7 +15,7 @@ pub mod python_environment;
 pub mod reporter;
 pub mod telemetry;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocatorResult {
     pub managers: Vec<EnvManager>,
     pub environments: Vec<PythonEnvironment>,
