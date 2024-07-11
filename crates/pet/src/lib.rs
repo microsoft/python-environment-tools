@@ -132,6 +132,7 @@ fn find_envs(
             for locator in summary.locators.iter() {
                 println!("{:<20} : {:?}", locator.0, locator.1);
             }
+            println!()
         }
 
         if !summary.breakdown.is_empty() {
