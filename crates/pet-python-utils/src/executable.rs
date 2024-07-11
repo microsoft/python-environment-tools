@@ -92,7 +92,7 @@ pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
     python_executables
 }
 
-pub fn is_python_executable_name(exe: &Path) -> bool {
+fn is_python_executable_name(exe: &Path) -> bool {
     let name = exe
         .file_name()
         .unwrap_or_default()
