@@ -4,17 +4,19 @@
 use inaccurate_python_info::InaccuratePythonEnvironmentInfo;
 use missing_conda_info::MissingCondaEnvironments;
 use missing_poetry_info::MissingPoetryEnvironments;
+use refresh_performance::RefreshPerformance;
 use serde::{Deserialize, Serialize};
 
 pub mod inaccurate_python_info;
 pub mod missing_conda_info;
 pub mod missing_poetry_info;
+pub mod refresh_performance;
 
 pub type NumberOfCustomSearchPaths = u32;
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum TelemetryEvent {
     /// Total time taken to search for Global environments.
     GlobalEnvironmentsSearchCompleted(std::time::Duration),
@@ -34,6 +36,8 @@ pub enum TelemetryEvent {
     MissingCondaEnvironments(MissingCondaEnvironments),
     /// Sent when an environment is discovered by spawning poetry and not found otherwise.
     MissingPoetryEnvironments(MissingPoetryEnvironments),
+    /// Telemetry with metrics for finding all environments as a result of refresh.
+    RefreshPerformance(RefreshPerformance),
 }
 
 pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
@@ -52,5 +56,6 @@ pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
         TelemetryEvent::InaccuratePythonEnvironmentInfo(_) => "InaccuratePythonEnvironmentInfo",
         TelemetryEvent::MissingCondaEnvironments(_) => "MissingCondaEnvironments",
         TelemetryEvent::MissingPoetryEnvironments(_) => "MissingPoetryEnvironments",
+        TelemetryEvent::RefreshPerformance(_) => "RefreshPerformance",
     }
 }

@@ -24,12 +24,9 @@ use std::{sync::Arc, thread};
 use crate::locators::identify_python_environment_using_locators;
 
 pub struct Summary {
-    pub time: Duration,
-    pub find_locators_times: BTreeMap<&'static str, Duration>,
-    pub find_locators_time: Duration,
-    pub find_path_time: Duration,
-    pub find_global_virtual_envs_time: Duration,
-    pub find_workspace_directories_time: Duration,
+    pub total: Duration,
+    pub locators: BTreeMap<&'static str, Duration>,
+    pub breakdown: BTreeMap<&'static str, Duration>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -49,12 +46,9 @@ pub fn find_and_report_envs(
     search_scope: Option<SearchScope>,
 ) -> Arc<Mutex<Summary>> {
     let summary = Arc::new(Mutex::new(Summary {
-        time: Duration::from_secs(0),
-        find_locators_times: BTreeMap::new(),
-        find_locators_time: Duration::from_secs(0),
-        find_path_time: Duration::from_secs(0),
-        find_global_virtual_envs_time: Duration::from_secs(0),
-        find_workspace_directories_time: Duration::from_secs(0),
+        total: Duration::from_secs(0),
+        locators: BTreeMap::new(),
+        breakdown: BTreeMap::new(),
     }));
     let start = std::time::Instant::now();
 
@@ -88,13 +82,17 @@ pub fn find_and_report_envs(
                             summary
                                 .lock()
                                 .unwrap()
-                                .find_locators_times
+                                .locators
                                 .insert(locator.get_name(), start.elapsed());
                         });
                     }
                 });
             }
-            summary.lock().unwrap().find_locators_time = start.elapsed();
+            summary
+                .lock()
+                .unwrap()
+                .breakdown
+                .insert("Locators", start.elapsed());
         });
         // Step 2: Search in PATH variable
         s.spawn(|| {
@@ -115,7 +113,11 @@ pub fn find_and_report_envs(
                     &global_env_search_paths,
                 );
             }
-            summary.lock().unwrap().find_path_time = start.elapsed();
+            summary
+                .lock()
+                .unwrap()
+                .breakdown
+                .insert("Path", start.elapsed());
         });
         // Step 3: Search in some global locations for virtual envs.
         s.spawn(|| {
@@ -146,7 +148,11 @@ pub fn find_and_report_envs(
                     &global_env_search_paths,
                 );
             }
-            summary.lock().unwrap().find_global_virtual_envs_time = start.elapsed();
+            summary
+                .lock()
+                .unwrap()
+                .breakdown
+                .insert("GlobalVirtualEnvs", start.elapsed());
         });
         // Step 4: Find in workspace folders too.
         // This can be merged with step 2 as well, as we're only look for environments
@@ -176,10 +182,14 @@ pub fn find_and_report_envs(
                     });
                 }
             }
-            summary.lock().unwrap().find_workspace_directories_time = start.elapsed();
+            summary
+                .lock()
+                .unwrap()
+                .breakdown
+                .insert("Workspaces", start.elapsed());
         });
     });
-    summary.lock().unwrap().time = start.elapsed();
+    summary.lock().unwrap().total = start.elapsed();
 
     summary
 }
