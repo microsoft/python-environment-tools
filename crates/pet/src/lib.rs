@@ -125,32 +125,24 @@ fn find_envs(
 
     if options.print_summary {
         let summary = summary.lock().unwrap();
-        if !summary.find_locators_times.is_empty() {
+        if !summary.locators.is_empty() {
             println!();
             println!("Breakdown by each locator:");
             println!("--------------------------");
-            for locator in summary.find_locators_times.iter() {
+            for locator in summary.locators.iter() {
                 println!("{:<20} : {:?}", locator.0, locator.1);
+            }
+        }
+
+        if !summary.breakdown.is_empty() {
+            println!("Breakdown for finding Environments:");
+            println!("-----------------------------------");
+            for item in summary.breakdown.iter() {
+                println!("{:<20} : {:?}", item.0, item.1);
             }
             println!();
         }
 
-        println!("Breakdown for finding Environments:");
-        println!("-----------------------------------");
-        println!(
-            "{:<20} : {:?}",
-            "Using locators", summary.find_locators_time
-        );
-        println!("{:<20} : {:?}", "PATH Variable", summary.find_path_time);
-        println!(
-            "{:<20} : {:?}",
-            "Global virtual envs", summary.find_global_virtual_envs_time
-        );
-        println!(
-            "{:<20} : {:?}",
-            "Workspace folders", summary.find_workspace_directories_time
-        );
-        println!();
         let summary = stdio_reporter.get_summary();
         if !summary.managers.is_empty() {
             println!("Managers:");

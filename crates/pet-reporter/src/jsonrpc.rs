@@ -26,7 +26,7 @@ impl Reporter for JsonRpcReporter {
     fn report_telemetry(&self, event: &TelemetryEvent) {
         let event = TelemetryData {
             event: get_telemetry_event_name(event).to_string(),
-            data: *event,
+            data: event.clone(),
         };
         trace!("Telemetry event {:?}", event.event);
         send_message("telemetry", Some(event))

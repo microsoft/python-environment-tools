@@ -6,8 +6,11 @@ use pet::resolve::resolve_environment;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
 use pet_core::python_environment::PythonEnvironment;
+use pet_core::telemetry::refresh_performance::RefreshPerformance;
+use pet_core::telemetry::TelemetryEvent;
 use pet_core::{
     os_environment::{Environment, EnvironmentApi},
+    reporter::Reporter,
     Configuration, Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
@@ -22,13 +25,15 @@ use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
 use serde_json::{self, Value};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use std::{
     ops::Deref,
     path::PathBuf,
     sync::{Arc, RwLock},
     thread,
-    time::{Duration, SystemTime},
+    time::SystemTime,
 };
 
 use crate::find::find_and_report_envs;
@@ -148,25 +153,31 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     refres_options.search_scope,
                 );
                 let summary = summary.lock().unwrap();
-                for locator in summary.find_locators_times.iter() {
+                for locator in summary.locators.iter() {
                     info!("Locator {} took {:?}", locator.0, locator.1);
                 }
-                info!(
-                    "Environments found using locators in {:?}",
-                    summary.find_locators_time
-                );
-                info!("Environments in PATH found in {:?}", summary.find_path_time);
-                info!(
-                    "Environments in global virtual env paths found in {:?}",
-                    summary.find_global_virtual_envs_time
-                );
-                info!(
-                    "Environments in workspace folders found in {:?}",
-                    summary.find_workspace_directories_time
-                );
-                trace!("Finished refreshing environments in {:?}", summary.time);
-                send_reply(id, Some(RefreshResult::new(summary.time)));
+                for item in summary.breakdown.iter() {
+                    info!("Locator {} took {:?}", item.0, item.1);
+                }
+                trace!("Finished refreshing environments in {:?}", summary.total);
+                send_reply(id, Some(RefreshResult::new(summary.total)));
 
+                let perf = RefreshPerformance {
+                    total: summary.total.as_millis(),
+                    locators: summary
+                        .locators
+                        .clone()
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.as_millis()))
+                        .collect::<BTreeMap<String, u128>>(),
+                    breakdown: summary
+                        .breakdown
+                        .clone()
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.as_millis()))
+                        .collect::<BTreeMap<String, u128>>(),
+                };
+                reporter.report_telemetry(&TelemetryEvent::RefreshPerformance(perf));
                 // Find an report missing envs for the first launch of this process.
                 if MISSING_ENVS_REPORTED
                     .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
