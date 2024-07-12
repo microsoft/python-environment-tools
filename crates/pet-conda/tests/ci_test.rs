@@ -28,27 +28,28 @@ fn detect_conda_root() {
         manager::EnvManagerType, os_environment::EnvironmentApi,
         python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::test::create_reporter;
+    use pet_reporter::collect;
 
     setup();
     let env = EnvironmentApi::new();
 
-    let reporter = create_reporter();
+    let reporter = collect::create_reporter();
     let conda = Conda::from(&env);
     conda.find(&reporter);
-    let result = reporter.get_result();
 
-    assert_eq!(result.managers.len(), 1);
+    let environments = reporter.environments.lock().unwrap().clone();
+    let managers = reporter.managers.lock().unwrap().clone();
+
+    assert_eq!(managers.len(), 1);
 
     let info = get_conda_info();
     let conda_dir = PathBuf::from(info.conda_prefix.clone());
-    let manager = &result.managers[0];
+    let manager = &managers[0];
     assert_eq!(manager.executable, conda_dir.join("bin").join("conda"));
     assert_eq!(manager.tool, EnvManagerType::Conda);
     assert_eq!(manager.version, info.conda_version.into());
 
-    let env = &result
-        .environments
+    let env = &environments
         .iter()
         .find(|e| e.name == Some("base".into()))
         .unwrap();
@@ -107,7 +108,7 @@ fn detect_new_conda_env() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::test::create_reporter;
+    use pet_reporter::collect;
     use std::path::PathBuf;
 
     setup();
@@ -119,24 +120,25 @@ fn detect_new_conda_env() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let reporter = create_reporter();
+    let reporter = collect::create_reporter();
     conda.find(&reporter);
-    let result = reporter.get_result();
 
-    assert_eq!(result.managers.len(), 1);
+    let environments = reporter.environments.lock().unwrap().clone();
+    let managers = reporter.managers.lock().unwrap().clone();
 
-    let manager = &result.managers[0];
+    assert_eq!(managers.len(), 1);
+
+    let manager = &managers[0];
 
     let info = get_conda_info();
     let conda_dir = PathBuf::from(info.conda_prefix.clone());
-    let env = result
-        .environments
+    let env = environments
         .iter()
         .find(|x| x.name == Some(env_name.into()))
         .expect(
             format!(
                 "New Environment not created, detected envs {:?}",
-                result.environments
+                environments
             )
             .as_str(),
         );
@@ -211,7 +213,7 @@ fn detect_new_conda_env_without_python() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::test::create_reporter;
+    use pet_reporter::collect;
     use std::path::PathBuf;
 
     setup();
@@ -220,24 +222,25 @@ fn detect_new_conda_env_without_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let reporter = create_reporter();
+    let reporter = collect::create_reporter();
     conda.find(&reporter);
-    let result = reporter.get_result();
 
-    assert_eq!(result.managers.len(), 1);
+    let environments = reporter.environments.lock().unwrap().clone();
+    let managers = reporter.managers.lock().unwrap().clone();
 
-    let manager = &result.managers[0];
+    assert_eq!(managers.len(), 1);
+
+    let manager = &managers[0];
 
     let info = get_conda_info();
     let conda_dir = PathBuf::from(info.conda_prefix.clone());
-    let env = result
-        .environments
+    let env = environments
         .iter()
         .find(|x| x.name == Some(env_name.into()))
         .expect(
             format!(
                 "New Environment not created, detected envs {:?}",
-                result.environments
+                environments
             )
             .as_str(),
         );
@@ -262,7 +265,7 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::test::create_reporter;
+    use pet_reporter::collect;
 
     setup();
     let env_name = "env_without_python3";
@@ -271,22 +274,23 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let reporter = create_reporter();
+    let reporter = collect::create_reporter();
     conda.find(&reporter);
-    let result = reporter.get_result();
 
-    assert_eq!(result.managers.len(), 1);
+    let environments = reporter.environments.lock().unwrap().clone();
+    let managers = reporter.managers.lock().unwrap().clone();
 
-    let manager = &result.managers[0];
+    assert_eq!(managers.len(), 1);
 
-    let env = result
-        .environments
+    let manager = &managers[0];
+
+    let env = environments
         .iter()
         .find(|x| x.prefix == Some(prefix.clone()))
         .expect(
             format!(
                 "New Environment ({:?}) not created, detected envs {:?}",
-                prefix, result.environments
+                prefix, environments
             )
             .as_str(),
         );
@@ -310,7 +314,7 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::test::create_reporter;
+    use pet_reporter::collect;
 
     setup();
     let env_name = "env_with_python3";
@@ -323,22 +327,23 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let reporter = create_reporter();
+    let reporter = collect::create_reporter();
     conda.find(&reporter);
-    let result = reporter.get_result();
 
-    assert_eq!(result.managers.len(), 1);
+    let environments = reporter.environments.lock().unwrap().clone();
+    let managers = reporter.managers.lock().unwrap().clone();
 
-    let manager = &result.managers[0];
+    assert_eq!(managers.len(), 1);
 
-    let env = result
-        .environments
+    let manager = &managers[0];
+
+    let env = environments
         .iter()
         .find(|x| x.prefix == Some(prefix.clone()))
         .expect(
             format!(
                 "New Environment not created, detected envs {:?}",
-                result.environments
+                environments
             )
             .as_str(),
         );
