@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_poetry::Poetry;
-use pet_reporter::collect;
+use pet_reporter::{cache, collect};
 
 mod common;
 
@@ -21,7 +21,7 @@ fn verify_ci_poetry_global() {
     use std::{env, path::PathBuf, sync::Arc};
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -32,7 +32,13 @@ fn verify_ci_poetry_global() {
         locator.configure(&config);
     }
 
-    find_and_report_envs(&reporter, Default::default(), &locators, &environment, None);
+    find_and_report_envs(
+        &cache::CacheReporter::new(reporter.clone()),
+        Default::default(),
+        &locators,
+        &environment,
+        None,
+    );
 
     let environments = reporter.environments.lock().unwrap().clone();
 
@@ -83,7 +89,7 @@ fn verify_ci_poetry_project() {
     use std::{env, path::PathBuf, sync::Arc};
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));

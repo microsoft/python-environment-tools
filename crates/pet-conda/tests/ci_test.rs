@@ -33,7 +33,7 @@ fn detect_conda_root() {
     setup();
     let env = EnvironmentApi::new();
 
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     let conda = Conda::from(&env);
     conda.find(&reporter);
 
@@ -118,7 +118,7 @@ fn detect_new_conda_env() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     conda.find(&reporter);
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -218,7 +218,7 @@ fn detect_new_conda_env_without_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     conda.find(&reporter);
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -268,7 +268,7 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     conda.find(&reporter);
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -319,7 +319,7 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
     let env = EnvironmentApi::new();
 
     let conda = Conda::from(&env);
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     conda.find(&reporter);
 
     let environments = reporter.environments.lock().unwrap().clone();

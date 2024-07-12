@@ -30,18 +30,18 @@ fn verify_python_in_jupyter_contaner() {
         python_environment::{PythonEnvironment, PythonEnvironmentKind},
     };
     use pet_poetry::Poetry;
-    use pet_reporter::collect;
+    use pet_reporter::{cache, collect};
     use std::{path::PathBuf, sync::Arc};
 
     setup();
 
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
-        &reporter,
+        &cache::CacheReporter::new(reporter.clone()),
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,

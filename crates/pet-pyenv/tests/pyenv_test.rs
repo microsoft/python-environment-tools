@@ -23,7 +23,7 @@ fn does_not_find_any_pyenv_envs() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     locator.find(&reporter);
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -69,7 +69,7 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     locator.find(&reporter);
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -126,7 +126,7 @@ fn find_pyenv_envs() {
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
-    let reporter = collect::create_reporter();
+    let reporter = Arc::new(collect::create_reporter());
     locator.find(&reporter);
 
     let mut environments = reporter.environments.lock().unwrap().clone();
