@@ -184,6 +184,9 @@ pub fn should_search_for_environments_in_path<P: AsRef<Path>>(path: &P) -> bool 
     // Mostly copied from https://github.com/github/gitignore/blob/main/Python.gitignore
     let folders_to_ignore = [
         "node_modules",
+        ".cargo",
+        ".devcontainer",
+        ".github",
         ".git",
         ".tox",
         ".nox",
@@ -195,6 +198,7 @@ pub fn should_search_for_environments_in_path<P: AsRef<Path>>(path: &P) -> bool 
         ".pyre",
         ".ptype",
         ".pytest_cache",
+        ".vscode",
         "__pycache__",
         "__pypackages__",
         ".mypy_cache",

@@ -9,6 +9,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Poorly named, needs to be renamed,
+/// The purpose of this reporter was to act as a cache, but since then
+/// the requirements of caching have changed and this is no longer a cache.
+/// This is merely a decorator class that ensures we do not report the same env/manager more than once.
 pub struct CacheReporter {
     reporter: Arc<dyn Reporter>,
     reported_managers: Arc<Mutex<HashMap<PathBuf, EnvManager>>>,
