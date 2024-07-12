@@ -56,7 +56,7 @@ impl Default for LinuxGlobalPython {
 }
 impl Locator for LinuxGlobalPython {
     fn get_name(&self) -> &'static str {
-        "LinuxGlobalPython"
+        "LinuxGlobalPython" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::LinuxGlobal]

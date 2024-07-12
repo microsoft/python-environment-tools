@@ -72,7 +72,7 @@ impl PipEnv {
 }
 impl Locator for PipEnv {
     fn get_name(&self) -> &'static str {
-        "PipEnv"
+        "PipEnv" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Pipenv]

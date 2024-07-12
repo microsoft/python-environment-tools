@@ -3,7 +3,6 @@
 
 use env_variables::EnvVariables;
 use environment_locations::list_environments;
-use log::error;
 use manager::PoetryManager;
 use pet_core::{
     os_environment::Environment,
@@ -15,10 +14,7 @@ use pet_python_utils::env::PythonEnv;
 use pet_virtualenv::is_virtualenv;
 use std::{
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 use telemetry::report_missing_envs;
 
@@ -43,27 +39,31 @@ pub struct Poetry {
     pub workspace_directories: Arc<Mutex<Vec<PathBuf>>>,
     pub env_vars: EnvVariables,
     pub poetry_executable: Arc<Mutex<Option<PathBuf>>>,
-    searched: AtomicBool,
     search_result: Arc<Mutex<Option<LocatorResult>>>,
 }
 
 impl Poetry {
     pub fn new(environment: &dyn Environment) -> Self {
         Poetry {
-            searched: AtomicBool::new(false),
             search_result: Arc::new(Mutex::new(None)),
             workspace_directories: Arc::new(Mutex::new(vec![])),
             env_vars: EnvVariables::from(environment),
             poetry_executable: Arc::new(Mutex::new(None)),
         }
     }
+    fn clear(&self) {
+        self.poetry_executable.lock().unwrap().take();
+        self.search_result.lock().unwrap().take();
+    }
     pub fn from(environment: &dyn Environment) -> Poetry {
         Poetry::new(environment)
     }
     fn find_with_cache(&self) -> Option<LocatorResult> {
-        if self.searched.load(Ordering::Relaxed) {
-            return self.search_result.lock().unwrap().clone();
+        let mut search_result = self.search_result.lock().unwrap();
+        if let Some(result) = search_result.clone() {
+            return Some(result);
         }
+
         // First find the manager
         let manager = manager::PoetryManager::find(
             self.poetry_executable.lock().unwrap().clone(),
@@ -76,28 +76,18 @@ impl Poetry {
         if let Some(manager) = &manager {
             result.managers.push(manager.to_manager());
         }
-        if let Ok(values) = self.workspace_directories.lock() {
-            let workspace_dirs = values.clone();
-            drop(values);
-            let envs = list_environments(&self.env_vars, &workspace_dirs.clone(), manager)
-                .unwrap_or_default();
-            result.environments.extend(envs.clone());
-        }
 
-        match self.search_result.lock().as_mut() {
-            Ok(search_result) => {
-                if result.managers.is_empty() && result.environments.is_empty() {
-                    search_result.take();
-                    None
-                } else {
-                    search_result.replace(result.clone());
-                    Some(result)
-                }
-            }
-            Err(err) => {
-                error!("Failed to cache to Poetry environments: {:?}", err);
-                None
-            }
+        let workspace_dirs = self.workspace_directories.lock().unwrap().clone();
+        let envs = list_environments(&self.env_vars, &workspace_dirs, manager).unwrap_or_default();
+        result.environments.extend(envs.clone());
+
+        // Having a value in the search result means that we have already searched for environments
+        search_result.replace(result.clone());
+
+        if result.managers.is_empty() && result.environments.is_empty() {
+            None
+        } else {
+            Some(result)
         }
     }
 }
@@ -136,7 +126,7 @@ impl PoetryLocator for Poetry {
 
 impl Locator for Poetry {
     fn get_name(&self) -> &'static str {
-        "Poetry"
+        "Poetry" // Do not change this name, as this is used in telemetry.
     }
     fn configure(&self, config: &Configuration) {
         if let Some(workspace_directories) = &config.workspace_directories {
@@ -174,6 +164,7 @@ impl Locator for Poetry {
     }
 
     fn find(&self, reporter: &dyn Reporter) {
+        self.clear();
         if let Some(result) = self.find_with_cache() {
             for manager in result.managers {
                 reporter.report_manager(&manager.clone());

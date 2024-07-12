@@ -2,22 +2,15 @@
 // Licensed under the MIT License.
 
 use lazy_static::lazy_static;
-use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
-    LocatorResult,
 };
-use pet_python_utils::executable::{find_executable, find_executables};
+use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
 use regex::Regex;
-use std::{
-    fs,
-    path::Path,
-    sync::{Arc, Mutex},
-    thread,
-};
+use std::path::Path;
 
 lazy_static! {
     // Stable Versions = like 3.10.10
@@ -32,57 +25,6 @@ lazy_static! {
     // win32 versions, rc Versions = like 3.11.0a-win32
     static ref WIN32_PYTHON_VERSION: Regex = Regex::new(r"^(\d+\.\d+.\d+\w\d+)-win32")
         .expect("error parsing Version regex for Win32 Python Version in pyenv");
-}
-
-pub fn list_pyenv_environments(
-    manager: &Option<EnvManager>,
-    versions_dir: &Path,
-    conda_locator: &Arc<dyn CondaLocator>,
-) -> Option<LocatorResult> {
-    let envs = Arc::new(Mutex::new(vec![]));
-    let managers = Arc::new(Mutex::new(vec![]));
-
-    thread::scope(|s| {
-        if let Ok(reader) = fs::read_dir(versions_dir) {
-            for path in reader.filter_map(Result::ok).map(|e| e.path()) {
-                if let Some(executable) = find_executable(&path) {
-                    let path = path.clone();
-                    let executable = executable.clone();
-                    let conda_locator = conda_locator.clone();
-                    let manager = manager.clone();
-                    let envs = envs.clone();
-                    let managers = managers.clone();
-                    s.spawn(move || {
-                        if is_conda_env(&path) {
-                            if let Some(result) = conda_locator.find_in(&path) {
-                                result.environments.iter().for_each(|e| {
-                                    envs.lock().unwrap().push(e.clone());
-                                });
-                                result.managers.iter().for_each(|e| {
-                                    managers.lock().unwrap().push(e.clone());
-                                });
-                            }
-                        } else if let Some(env) =
-                            get_virtual_env_environment(&executable, &path, &manager)
-                        {
-                            envs.lock().unwrap().push(env);
-                        } else if let Some(env) =
-                            get_generic_python_environment(&executable, &path, &manager)
-                        {
-                            envs.lock().unwrap().push(env);
-                        }
-                    });
-                }
-            }
-        }
-    });
-
-    let managers = managers.lock().unwrap();
-    let envs = envs.lock().unwrap();
-    Some(LocatorResult {
-        managers: managers.clone(),
-        environments: envs.clone(),
-    })
 }
 
 pub fn get_generic_python_environment(

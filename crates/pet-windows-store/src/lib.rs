@@ -13,8 +13,7 @@ use pet_core::reporter::Reporter;
 use pet_core::{os_environment::Environment, Locator};
 use pet_python_utils::env::PythonEnv;
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
     path.to_str().unwrap_or_default().to_string().to_lowercase()[1..]
@@ -24,45 +23,36 @@ pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
 pub struct WindowsStore {
     pub env_vars: EnvVariables,
     #[allow(dead_code)]
-    searched: AtomicBool,
-    #[allow(dead_code)]
-    environments: Arc<RwLock<Vec<PythonEnvironment>>>,
+    environments: Arc<Mutex<Option<Vec<PythonEnvironment>>>>,
 }
 
 impl WindowsStore {
     pub fn from(environment: &dyn Environment) -> WindowsStore {
         WindowsStore {
-            searched: AtomicBool::new(false),
             env_vars: EnvVariables::from(environment),
-            environments: Arc::new(RwLock::new(vec![])),
+            environments: Arc::new(Mutex::new(None)),
         }
     }
     #[cfg(windows)]
     fn find_with_cache(&self) -> Option<Vec<PythonEnvironment>> {
-        use std::sync::atomic::Ordering;
+        let mut environments = self.environments.lock().unwrap();
+        if let Some(environments) = environments.clone() {
+            return Some(environments);
+        }
 
-        if self.searched.load(Ordering::Relaxed) {
-            if let Ok(envs) = self.environments.read() {
-                return Some(envs.clone());
-            }
-        }
-        self.searched.store(false, Ordering::Relaxed);
-        if let Ok(mut envs) = self.environments.write() {
-            envs.clear();
-        }
-        let environments = list_store_pythons(&self.env_vars)?;
-        if let Ok(mut envs) = self.environments.write() {
-            envs.clear();
-            envs.extend(environments.clone());
-            self.searched.store(true, Ordering::Relaxed);
-        }
-        Some(environments)
+        let envs = list_store_pythons(&self.env_vars).unwrap_or_default();
+        environments.replace(envs.clone());
+        Some(envs)
+    }
+    #[cfg(windows)]
+    fn clear(&self) {
+        self.environments.lock().unwrap().take();
     }
 }
 
 impl Locator for WindowsStore {
     fn get_name(&self) -> &'static str {
-        "WindowsStore"
+        "WindowsStore" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::WindowsStore]
@@ -97,15 +87,12 @@ impl Locator for WindowsStore {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        self.searched
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.clear();
         if let Some(environments) = self.find_with_cache() {
             environments
                 .iter()
                 .for_each(|e| reporter.report_environment(e))
         }
-        self.searched
-            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     #[cfg(unix)]

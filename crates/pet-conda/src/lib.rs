@@ -11,7 +11,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator, LocatorResult,
+    Locator,
 };
 use pet_python_utils::env::PythonEnv;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ mod telemetry;
 pub mod utils;
 
 pub trait CondaLocator: Send + Sync {
-    fn find_in(&self, path: &Path) -> Option<LocatorResult>;
+    fn find_and_report(&self, reporter: &dyn Reporter, path: &Path);
     fn find_and_report_missing_envs(
         &self,
         reporter: &dyn Reporter,
@@ -53,8 +53,6 @@ pub struct CondaTelemetryInfo {
 }
 
 pub struct Conda {
-    /// Directories where conda environments are found (env_dirs returned from `conda info --json`)
-    pub env_dirs: Arc<Mutex<Vec<PathBuf>>>,
     pub environments: Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
     pub managers: Arc<Mutex<HashMap<PathBuf, CondaManager>>>,
     pub env_vars: EnvVariables,
@@ -63,11 +61,14 @@ pub struct Conda {
 impl Conda {
     pub fn from(env: &dyn Environment) -> Conda {
         Conda {
-            env_dirs: Arc::new(Mutex::new(vec![])),
             environments: Arc::new(Mutex::new(HashMap::new())),
             managers: Arc::new(Mutex::new(HashMap::new())),
             env_vars: EnvVariables::from(env),
         }
+    }
+    fn clear(&self) {
+        self.environments.lock().unwrap().clear();
+        self.managers.lock().unwrap().clear();
     }
 }
 
@@ -80,19 +81,6 @@ impl CondaLocator for Conda {
         // Look for environments that we couldn't find without spawning conda.
         let user_provided_conda_exe = conda_executable.is_some();
         let conda_info = CondaInfo::from(conda_executable)?;
-
-        // Keep track of these directories for next refresh
-        // This way we can search these directories again and they will be reported.
-        {
-            let mut env_dirs = self.env_dirs.lock().unwrap();
-            env_dirs.append(&mut conda_info.envs_dirs.clone());
-            conda_info.envs_dirs.iter().for_each(|p| {
-                if !env_dirs.contains(p) {
-                    env_dirs.push(p.clone());
-                }
-            });
-        }
-
         let environments = self.environments.lock().unwrap().clone();
         let new_envs = conda_info
             .envs
@@ -133,9 +121,9 @@ impl CondaLocator for Conda {
         }
     }
 
-    fn find_in(&self, conda_dir: &Path) -> Option<LocatorResult> {
+    fn find_and_report(&self, reporter: &dyn Reporter, conda_dir: &Path) {
         if !is_conda_install(conda_dir) {
-            return None;
+            return;
         }
         if let Some(manager) = CondaManager::from(conda_dir) {
             if let Some(conda_dir) = manager.conda_dir.clone() {
@@ -147,12 +135,11 @@ impl CondaLocator for Conda {
                 managers.insert(conda_dir.clone(), manager.clone());
                 drop(managers);
 
-                let mut new_environments = vec![];
-
                 // Find all the environments in the conda install folder. (under `envs` folder)
                 for conda_env in
                     get_conda_environments(&get_environments(&conda_dir), &manager.clone().into())
                 {
+                    // If reported earlier, no point processing this again.
                     let mut environments = self.environments.lock().unwrap();
                     if environments.contains_key(&conda_env.prefix) {
                         continue;
@@ -160,16 +147,11 @@ impl CondaLocator for Conda {
                     let env = conda_env
                         .to_python_environment(Some(conda_dir.clone()), Some(manager.to_manager()));
                     environments.insert(conda_env.prefix.clone(), env.clone());
-                    new_environments.push(env);
+                    reporter.report_manager(&manager.to_manager());
+                    reporter.report_environment(&env);
                 }
-
-                return Some(LocatorResult {
-                    environments: new_environments,
-                    managers: vec![manager.to_manager()],
-                });
             }
         }
-        None
     }
 }
 
@@ -192,7 +174,7 @@ impl Conda {
 
 impl Locator for Conda {
     fn get_name(&self) -> &'static str {
-        "Conda"
+        "Conda" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Conda]
@@ -261,15 +243,12 @@ impl Locator for Conda {
 
     fn find(&self, reporter: &dyn Reporter) {
         // if we're calling this again, then clear what ever cache we have.
-        let mut environments = self.environments.lock().unwrap();
-        environments.clear();
-        drop(environments);
+        self.clear();
 
         let env_vars = self.env_vars.clone();
-        let additional_paths = self.env_dirs.lock().unwrap().clone();
         thread::scope(|s| {
             // 1. Get a list of all know conda environments file paths
-            let possible_conda_envs = get_conda_environment_paths(&env_vars, &additional_paths);
+            let possible_conda_envs = get_conda_environment_paths(&env_vars);
             for path in possible_conda_envs {
                 s.spawn(move || {
                     // 2. Get the details of the conda environment
