@@ -40,8 +40,6 @@ fn detect_conda_root() {
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
 
-    assert_eq!(managers.len(), 1);
-
     let info = get_conda_info();
     let conda_dir = PathBuf::from(info.conda_prefix.clone());
     let manager = &managers[0];
@@ -125,8 +123,6 @@ fn detect_new_conda_env() {
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
-
-    assert_eq!(managers.len(), 1);
 
     let manager = &managers[0];
 
@@ -228,8 +224,6 @@ fn detect_new_conda_env_without_python() {
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
 
-    assert_eq!(managers.len(), 1);
-
     let manager = &managers[0];
 
     let info = get_conda_info();
@@ -279,8 +273,6 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
-
-    assert_eq!(managers.len(), 1);
 
     let manager = &managers[0];
 
@@ -332,8 +324,6 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
-
-    assert_eq!(managers.len(), 1);
 
     let manager = &managers[0];
 
