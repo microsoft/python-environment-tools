@@ -30,7 +30,7 @@ fn verify_python_in_jupyter_contaner() {
         python_environment::{PythonEnvironment, PythonEnvironmentKind},
     };
     use pet_poetry::Poetry;
-    use pet_reporter::{cache::{CacheReporter}, collect};
+    use pet_reporter::{cache::CacheReporter, collect};
     use std::{path::PathBuf, sync::Arc};
 
     setup();
