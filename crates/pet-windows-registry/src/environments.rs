@@ -123,7 +123,7 @@ fn get_registry_pythons_from_key_for_company(
                         // Possible this is a conda install folder.
                         if is_conda_env(&env_path) {
                             if let Some(reporter) = reporter {
-                                conda_locator.find_and_report(reporter, &env_path);
+                                conda_locator.find_and_report(*reporter, &env_path);
                             }
                             continue;
                         }

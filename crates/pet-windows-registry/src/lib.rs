@@ -36,21 +36,13 @@ impl WindowsRegistry {
             return Some(result);
         }
 
-        if let Some(registry_result) = get_registry_pythons(&self.conda_locator, &reporter) {
-            result.replace(registry_result);
-        } else {
-            result.replace(LocatorResult {
-                managers: vec![],
-                environments: vec![],
-            });
-        }
+        let registry_result = get_registry_pythons(&self.conda_locator, &reporter);
+        result.replace(registry_result.clone());
 
         Some(registry_result)
     }
     #[cfg(windows)]
     fn clear(&self) {
-        use std::sync::atomic::Ordering;
-
         let mut search_result = self.search_result.lock().unwrap();
         search_result.take();
     }

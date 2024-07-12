@@ -46,8 +46,6 @@ impl WindowsStore {
     }
     #[cfg(windows)]
     fn clear(&self) {
-        use std::sync::atomic::Ordering;
-
         self.environments.lock().unwrap().take();
     }
 }

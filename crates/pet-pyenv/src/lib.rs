@@ -61,20 +61,17 @@ impl PyEnv {
         let mut versions = self.versions_dir.lock().unwrap();
         if !self.found_pyenv.load(Ordering::Relaxed) && (managers.is_none() || versions.is_none()) {
             let pyenv_info = PyEnvInfo::from(&self.env_vars);
-            let mut manager: Option<EnvManager> = None;
             if let Some(ref exe) = pyenv_info.exe {
                 let version = pyenv_info.version.clone();
-                manager = Some(EnvManager::new(exe.clone(), EnvManagerType::Pyenv, version));
+                let manager = EnvManager::new(exe.clone(), EnvManagerType::Pyenv, version);
+                managers.replace(manager);
+            } else {
+                managers.take();
             }
             if let Some(version_path) = &pyenv_info.versions {
                 versions.replace(version_path.clone());
             } else {
                 versions.take();
-            }
-            if let Some(manager) = manager {
-                managers.replace(manager.clone());
-            } else {
-                managers.take();
             }
             self.found_pyenv.store(true, Ordering::Relaxed);
         }
@@ -135,6 +132,10 @@ impl Locator for PyEnv {
         self.clear();
 
         let (manager, versions) = self.get_manager_versions_dir();
+
+        if let Some(manager) = &manager {
+            reporter.report_manager(manager);
+        }
 
         if let Some(versions) = versions {
             let conda_locator = self.conda_locator.clone();
