@@ -100,7 +100,13 @@ fn verify_ci_poetry_project() {
         locator.configure(&config);
     }
 
-    find_and_report_envs(&reporter, Default::default(), &locators, &environment, None);
+    find_and_report_envs(
+        &cache::CacheReporter::new(reporter.clone()),
+        Default::default(),
+        &locators,
+        &environment,
+        None,
+    );
 
     let environments = reporter.environments.lock().unwrap().clone();
 
