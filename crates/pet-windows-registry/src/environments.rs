@@ -4,6 +4,8 @@
 #[cfg(windows)]
 use pet_conda::CondaLocator;
 #[cfg(windows)]
+use pet_core::reporter::Reporter;
+#[cfg(windows)]
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
