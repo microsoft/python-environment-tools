@@ -23,19 +23,21 @@ fn setup() {
 #[allow(dead_code)]
 // We should detect the conda install along with the base env
 fn detect_conda_root() {
+    use std::sync::Arc;
+
     use pet_conda::Conda;
     use pet_core::{
         manager::EnvManagerType, os_environment::EnvironmentApi,
         python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::collect;
+    use pet_reporter::{cache::CacheReporter, collect};
 
     setup();
     let env = EnvironmentApi::new();
 
     let reporter = Arc::new(collect::create_reporter());
     let conda = Conda::from(&env);
-    conda.find(&reporter);
+    conda.find(&CacheReporter::new(reporter.clone()));
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
@@ -106,8 +108,8 @@ fn detect_new_conda_env() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::collect;
-    use std::path::PathBuf;
+    use pet_reporter::{cache::CacheReporter, collect};
+    use std::{path::PathBuf, sync::Arc};
 
     setup();
     let env_name = "env_with_python";
@@ -119,7 +121,7 @@ fn detect_new_conda_env() {
 
     let conda = Conda::from(&env);
     let reporter = Arc::new(collect::create_reporter());
-    conda.find(&reporter);
+    conda.find(&CacheReporter::new(reporter.clone()));
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
@@ -209,8 +211,8 @@ fn detect_new_conda_env_without_python() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::collect;
-    use std::path::PathBuf;
+    use pet_reporter::{cache::CacheReporter, collect};
+    use std::{path::PathBuf, sync::Arc};
 
     setup();
     let env_name = "env_without_python";
@@ -219,7 +221,7 @@ fn detect_new_conda_env_without_python() {
 
     let conda = Conda::from(&env);
     let reporter = Arc::new(collect::create_reporter());
-    conda.find(&reporter);
+    conda.find(&CacheReporter::new(reporter.clone()));
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
@@ -254,12 +256,14 @@ fn detect_new_conda_env_without_python() {
 #[allow(dead_code)]
 // Detect envs created without Python in a custom directory using the -p flag
 fn detect_new_conda_env_created_with_p_flag_without_python() {
+    use std::sync::Arc;
+
     use common::resolve_test_path;
     use pet_conda::Conda;
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::collect;
+    use pet_reporter::{cache::CacheReporter, collect};
 
     setup();
     let env_name = "env_without_python3";
@@ -269,7 +273,7 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
 
     let conda = Conda::from(&env);
     let reporter = Arc::new(collect::create_reporter());
-    conda.find(&reporter);
+    conda.find(&CacheReporter::new(reporter.clone()));
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
@@ -301,12 +305,17 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
 #[allow(dead_code)]
 // Detect envs created Python in a custom directory using the -p flag
 fn detect_new_conda_env_created_with_p_flag_with_python() {
+    use std::sync::Arc;
+
     use common::resolve_test_path;
     use pet_conda::Conda;
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::collect;
+    use pet_reporter::{
+        cache::{self, CacheReporter},
+        collect,
+    };
 
     setup();
     let env_name = "env_with_python3";
@@ -320,7 +329,7 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
 
     let conda = Conda::from(&env);
     let reporter = Arc::new(collect::create_reporter());
-    conda.find(&reporter);
+    conda.find(&CacheReporter::new(reporter.clone()));
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();

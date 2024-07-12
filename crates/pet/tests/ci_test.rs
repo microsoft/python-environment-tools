@@ -87,7 +87,7 @@ fn verify_validity_of_discovered_envs() {
 
     // Find all environments on this machine.
     find_and_report_envs(
-        &cache::CacheReporter::new(reporter.clone()),
+        &CacheReporter::new(reporter.clone()),
         Default::default(),
         &locators,
         &environment,
@@ -150,7 +150,7 @@ fn check_if_virtualenvwrapper_exists() {
     let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
-        &cache::CacheReporter::new(reporter.clone()),
+        &CacheReporter::new(reporter.clone()),
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
@@ -191,7 +191,7 @@ fn check_if_pipenv_exists() {
     let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
-        &cache::CacheReporter::new(reporter.clone()),
+        &CacheReporter::new(reporter.clone()),
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
@@ -228,7 +228,7 @@ fn check_if_pyenv_virtualenv_exists() {
     let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
-        &cache::CacheReporter::new(reporter.clone()),
+        &CacheReporter::new(reporter.clone()),
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
@@ -656,7 +656,7 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
     let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
-        &cache::CacheReporter::new(reporter.clone()),
+        &CacheReporter::new(reporter.clone()),
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,

@@ -11,7 +11,7 @@ fn does_not_find_any_pyenv_envs() {
     use pet_core::{self, Locator};
     use pet_pyenv;
     use pet_pyenv::PyEnv;
-    use pet_reporter::collect;
+    use pet_reporter::{cache::CacheReporter, collect};
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
     let environment = create_test_environment(
@@ -24,7 +24,7 @@ fn does_not_find_any_pyenv_envs() {
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
     let reporter = Arc::new(collect::create_reporter());
-    locator.find(&reporter);
+    locator.find(&CacheReporter::new(reporter.clone()));
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
@@ -100,7 +100,7 @@ fn find_pyenv_envs() {
     };
     use pet_pyenv;
     use pet_pyenv::PyEnv;
-    use pet_reporter::collect;
+    use pet_reporter::{cache::CacheReporter, collect};
     use serde_json::json;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -127,7 +127,7 @@ fn find_pyenv_envs() {
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
     let reporter = Arc::new(collect::create_reporter());
-    locator.find(&reporter);
+    locator.find(&CacheReporter::new(reporter.clone()));
 
     let mut environments = reporter.environments.lock().unwrap().clone();
     let mut managers = reporter.managers.lock().unwrap().clone();

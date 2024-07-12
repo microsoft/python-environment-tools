@@ -14,7 +14,7 @@ fn verify_python_in_homebrew_contaner() {
         python_environment::{PythonEnvironment, PythonEnvironmentKind},
     };
     use pet_poetry::Poetry;
-    use pet_reporter::{cache, collect};
+    use pet_reporter::{cache::CacheReporter, collect};
     use std::{path::PathBuf, sync::Arc};
 
     let reporter = Arc::new(collect::create_reporter());
@@ -23,7 +23,7 @@ fn verify_python_in_homebrew_contaner() {
     let poetry_locator = Arc::new(Poetry::from(&environment));
 
     find_and_report_envs(
-        &cache::CacheReporter::new(reporter.clone()),
+        &CacheReporter::new(reporter.clone()),
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,

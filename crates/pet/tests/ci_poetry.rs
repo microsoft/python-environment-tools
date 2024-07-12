@@ -2,7 +2,10 @@
 // Licensed under the MIT License.
 
 use pet_poetry::Poetry;
-use pet_reporter::{cache, collect};
+use pet_reporter::{
+    cache::{self, CacheReporter},
+    collect,
+};
 
 mod common;
 
@@ -33,7 +36,7 @@ fn verify_ci_poetry_global() {
     }
 
     find_and_report_envs(
-        &cache::CacheReporter::new(reporter.clone()),
+        &CacheReporter::new(reporter.clone()),
         Default::default(),
         &locators,
         &environment,
@@ -101,7 +104,7 @@ fn verify_ci_poetry_project() {
     }
 
     find_and_report_envs(
-        &cache::CacheReporter::new(reporter.clone()),
+        &CacheReporter::new(reporter.clone()),
         Default::default(),
         &locators,
         &environment,
