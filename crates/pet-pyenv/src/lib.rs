@@ -4,7 +4,10 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
 };
 
@@ -29,6 +32,7 @@ mod manager;
 pub struct PyEnv {
     pub env_vars: EnvVariables,
     pub conda_locator: Arc<dyn CondaLocator>,
+    found_pyenv: AtomicBool,
     manager: Arc<Mutex<Option<EnvManager>>>,
     versions_dir: Arc<Mutex<Option<PathBuf>>>,
 }
@@ -39,6 +43,7 @@ impl PyEnv {
         conda_locator: Arc<dyn CondaLocator>,
     ) -> impl Locator {
         PyEnv {
+            found_pyenv: AtomicBool::new(false),
             env_vars: EnvVariables::from(environment),
             conda_locator,
             manager: Arc::new(Mutex::new(None)),
@@ -46,13 +51,15 @@ impl PyEnv {
         }
     }
     fn clear(&self) {
+        self.found_pyenv
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.manager.lock().unwrap().take();
         self.versions_dir.lock().unwrap().take();
     }
     fn get_manager_versions_dir(&self) -> (Option<EnvManager>, Option<PathBuf>) {
         let mut managers = self.manager.lock().unwrap();
         let mut versions = self.versions_dir.lock().unwrap();
-        if managers.is_none() || versions.is_none() {
+        if !self.found_pyenv.load(Ordering::Relaxed) && (managers.is_none() || versions.is_none()) {
             let pyenv_info = PyEnvInfo::from(&self.env_vars);
             let mut manager: Option<EnvManager> = None;
             if let Some(ref exe) = pyenv_info.exe {
@@ -69,7 +76,9 @@ impl PyEnv {
             } else {
                 managers.take();
             }
+            self.found_pyenv.store(true, Ordering::Relaxed);
         }
+
         (managers.clone(), versions.clone())
     }
 }
