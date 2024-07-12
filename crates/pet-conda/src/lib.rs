@@ -11,7 +11,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator, LocatorResult,
+    Locator,
 };
 use pet_python_utils::env::PythonEnv;
 use serde::{Deserialize, Serialize};

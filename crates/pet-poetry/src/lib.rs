@@ -3,7 +3,6 @@
 
 use env_variables::EnvVariables;
 use environment_locations::list_environments;
-use log::error;
 use manager::PoetryManager;
 use pet_core::{
     os_environment::Environment,
