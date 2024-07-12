@@ -52,7 +52,6 @@ impl Poetry {
         }
     }
     fn clear(&self) {
-        self.workspace_directories.lock().unwrap().clear();
         self.poetry_executable.lock().unwrap().take();
         self.search_result.lock().unwrap().take();
     }
