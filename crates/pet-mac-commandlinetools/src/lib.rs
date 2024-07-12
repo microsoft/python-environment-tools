@@ -29,7 +29,7 @@ impl Default for MacCmdLineTools {
 }
 impl Locator for MacCmdLineTools {
     fn get_name(&self) -> &'static str {
-        "MacCmdLineTools"
+        "MacCmdLineTools" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::MacCommandLineTools]

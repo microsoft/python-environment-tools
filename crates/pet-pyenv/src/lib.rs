@@ -45,11 +45,15 @@ impl PyEnv {
             versions_dir: Arc::new(Mutex::new(None)),
         }
     }
+    fn clear(&self) {
+        self.manager.lock().unwrap().take();
+        self.versions_dir.lock().unwrap().take();
+    }
 }
 
 impl Locator for PyEnv {
     fn get_name(&self) -> &'static str {
-        "PyEnv"
+        "PyEnv" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![
@@ -118,6 +122,7 @@ impl Locator for PyEnv {
     }
 
     fn find(&self, reporter: &dyn Reporter) {
+        self.clear();
         let pyenv_info = PyEnvInfo::from(&self.env_vars);
         let mut manager: Option<EnvManager> = None;
         if let Some(ref exe) = pyenv_info.exe {

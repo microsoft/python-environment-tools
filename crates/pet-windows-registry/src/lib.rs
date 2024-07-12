@@ -59,11 +59,20 @@ impl WindowsRegistry {
 
         Some(result)
     }
+    #[cfg(windows)]
+    fn clear(&self) {
+        use std::sync::atomic::Ordering;
+
+        self.searched.store(false, Ordering::Relaxed);
+        if let Ok(mut envs) = self.environments.write() {
+            envs.clear();
+        }
+    }
 }
 
 impl Locator for WindowsRegistry {
     fn get_name(&self) -> &'static str {
-        "WindowsRegistry"
+        "WindowsRegistry" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::WindowsRegistry]
@@ -100,8 +109,7 @@ impl Locator for WindowsRegistry {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        self.searched
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.clear();
         if let Some(result) = self.find_with_cache() {
             result
                 .managers

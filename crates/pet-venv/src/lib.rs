@@ -39,7 +39,7 @@ impl Default for Venv {
 }
 impl Locator for Venv {
     fn get_name(&self) -> &'static str {
-        "Venv"
+        "Venv" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Venv]

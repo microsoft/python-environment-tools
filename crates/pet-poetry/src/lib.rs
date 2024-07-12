@@ -57,6 +57,12 @@ impl Poetry {
             poetry_executable: Arc::new(Mutex::new(None)),
         }
     }
+    fn clear(&self) {
+        self.workspace_directories.lock().unwrap().clear();
+        self.poetry_executable.lock().unwrap().take();
+        self.searched.store(false, Ordering::Relaxed);
+        self.search_result.lock().unwrap().take();
+    }
     pub fn from(environment: &dyn Environment) -> Poetry {
         Poetry::new(environment)
     }
@@ -136,7 +142,7 @@ impl PoetryLocator for Poetry {
 
 impl Locator for Poetry {
     fn get_name(&self) -> &'static str {
-        "Poetry"
+        "Poetry" // Do not change this name, as this is used in telemetry.
     }
     fn configure(&self, config: &Configuration) {
         if let Some(workspace_directories) = &config.workspace_directories {
@@ -174,6 +180,7 @@ impl Locator for Poetry {
     }
 
     fn find(&self, reporter: &dyn Reporter) {
+        self.clear();
         if let Some(result) = self.find_with_cache() {
             for manager in result.managers {
                 reporter.report_manager(&manager.clone());

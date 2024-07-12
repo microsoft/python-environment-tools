@@ -30,7 +30,7 @@ impl VirtualEnvWrapper {
 
 impl Locator for VirtualEnvWrapper {
     fn get_name(&self) -> &'static str {
-        "VirtualEnvWrapper"
+        "VirtualEnvWrapper" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::VirtualEnvWrapper]

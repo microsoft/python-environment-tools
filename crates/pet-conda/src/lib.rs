@@ -69,6 +69,11 @@ impl Conda {
             env_vars: EnvVariables::from(env),
         }
     }
+    fn clear(&self) {
+        self.environments.lock().unwrap().clear();
+        self.managers.lock().unwrap().clear();
+        self.env_dirs.lock().unwrap().clear();
+    }
 }
 
 impl CondaLocator for Conda {
@@ -192,7 +197,7 @@ impl Conda {
 
 impl Locator for Conda {
     fn get_name(&self) -> &'static str {
-        "Conda"
+        "Conda" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Conda]
@@ -261,9 +266,7 @@ impl Locator for Conda {
 
     fn find(&self, reporter: &dyn Reporter) {
         // if we're calling this again, then clear what ever cache we have.
-        let mut environments = self.environments.lock().unwrap();
-        environments.clear();
-        drop(environments);
+        self.clear();
 
         let env_vars = self.env_vars.clone();
         let additional_paths = self.env_dirs.lock().unwrap().clone();

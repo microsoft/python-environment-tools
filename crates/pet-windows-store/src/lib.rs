@@ -58,11 +58,18 @@ impl WindowsStore {
         }
         Some(environments)
     }
+    #[cfg(windows)]
+    fn clear(&self) {
+        self.searched.store(false, Ordering::Relaxed);
+        if let Ok(mut envs) = self.environments.write() {
+            envs.clear();
+        }
+    }
 }
 
 impl Locator for WindowsStore {
     fn get_name(&self) -> &'static str {
-        "WindowsStore"
+        "WindowsStore" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::WindowsStore]
@@ -97,8 +104,7 @@ impl Locator for WindowsStore {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        self.searched
-            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.clear();
         if let Some(environments) = self.find_with_cache() {
             environments
                 .iter()

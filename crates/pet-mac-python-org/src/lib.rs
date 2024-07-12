@@ -28,7 +28,7 @@ impl Default for MacPythonOrg {
 }
 impl Locator for MacPythonOrg {
     fn get_name(&self) -> &'static str {
-        "MacPythonOrg"
+        "MacPythonOrg" // Do not change this name, as this is used in telemetry.
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::MacPythonOrg]
