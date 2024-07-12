@@ -122,7 +122,9 @@ fn get_registry_pythons_from_key_for_company(
 
                         // Possible this is a conda install folder.
                         if is_conda_env(&env_path) {
-                            conda_locator.find_and_report(reporter, &env_path);
+                            if let Some(reporter) = reporter {
+                                conda_locator.find_and_report(reporter, &env_path);
+                            }
                             continue;
                         }
 
@@ -186,7 +188,9 @@ fn get_registry_pythons_from_key_for_company(
                         })
                         .build();
 
-                        reporter.report_environment(&env);
+                        if let Some(reporter) = reporter {
+                            reporter.report_environment(&env);
+                        }
                         environments.push(env);
                     }
                     Err(err) => {

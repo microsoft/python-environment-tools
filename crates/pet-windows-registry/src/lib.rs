@@ -36,8 +36,14 @@ impl WindowsRegistry {
             return Some(result);
         }
 
-        let registry_result = get_registry_pythons(&self.conda_locator, &reporter)?;
-        result.replace(registry_result);
+        if let Some(registry_result) = get_registry_pythons(&self.conda_locator, &reporter) {
+            result.replace(registry_result);
+        } else {
+            result.replace(LocatorResult {
+                managers: vec![],
+                environments: vec![],
+            });
+        }
 
         Some(registry_result)
     }
@@ -45,10 +51,8 @@ impl WindowsRegistry {
     fn clear(&self) {
         use std::sync::atomic::Ordering;
 
-        self.searched.store(false, Ordering::Relaxed);
-        if let Ok(mut envs) = self.environments.write() {
-            envs.clear();
-        }
+        let mut search_result = self.search_result.lock().unwrap();
+        search_result.take();
     }
 }
 
