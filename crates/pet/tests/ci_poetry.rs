@@ -80,7 +80,6 @@ fn verify_ci_poetry_project() {
         python_environment::{PythonEnvironment, PythonEnvironmentKind},
         Configuration,
     };
-    use pet_reporter::test;
     use std::{env, path::PathBuf, sync::Arc};
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
