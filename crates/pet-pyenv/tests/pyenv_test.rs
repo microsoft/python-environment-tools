@@ -46,7 +46,7 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
     };
     use pet_pyenv;
     use pet_pyenv::PyEnv;
-    use pet_reporter::collect;
+    use pet_reporter::{cache::CacheReporter, collect};
     use serde_json::json;
     use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
@@ -70,7 +70,7 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
     let reporter = Arc::new(collect::create_reporter());
-    locator.find(&reporter);
+    locator.find(&CacheReporter::new(reporter.clone()));
 
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
