@@ -4,16 +4,14 @@
 #[cfg(windows)]
 use environments::get_registry_pythons;
 use pet_conda::{utils::is_conda_env, CondaLocator};
-#[cfg(windows)]
-use pet_core::LocatorResult;
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Locator, LocatorResult,
 };
 use pet_python_utils::env::PythonEnv;
 use pet_virtualenv::is_virtualenv;
-use std::sync::{atomic::AtomicBool, Arc, RwLock};
+use std::sync::{Arc, Mutex};
 
 mod environments;
 
@@ -21,43 +19,27 @@ pub struct WindowsRegistry {
     #[allow(dead_code)]
     conda_locator: Arc<dyn CondaLocator>,
     #[allow(dead_code)]
-    searched: AtomicBool,
-    #[allow(dead_code)]
-    environments: Arc<RwLock<Vec<PythonEnvironment>>>,
+    search_result: Arc<Mutex<Option<LocatorResult>>>,
 }
 
 impl WindowsRegistry {
     pub fn from(conda_locator: Arc<dyn CondaLocator>) -> WindowsRegistry {
         WindowsRegistry {
             conda_locator,
-            searched: AtomicBool::new(false),
-            environments: Arc::new(RwLock::new(vec![])),
+            search_result: Arc::new(Mutex::new(None)),
         }
     }
     #[cfg(windows)]
-    fn find_with_cache(&self) -> Option<LocatorResult> {
-        use std::sync::atomic::Ordering;
-
-        if self.searched.load(Ordering::Relaxed) {
-            if let Ok(envs) = self.environments.read() {
-                return Some(LocatorResult {
-                    environments: envs.clone(),
-                    managers: vec![],
-                });
-            }
-        }
-        self.searched.store(false, Ordering::Relaxed);
-        if let Ok(mut envs) = self.environments.write() {
-            envs.clear();
-        }
-        let result = get_registry_pythons(&self.conda_locator)?;
-        if let Ok(mut envs) = self.environments.write() {
-            envs.clear();
-            envs.extend(result.environments.clone());
-            self.searched.store(true, Ordering::Relaxed);
+    fn find_with_cache(&self, reporter: Option<&dyn Reporter>) -> Option<LocatorResult> {
+        let mut result = self.search_result.lock().unwrap();
+        if let Some(result) = result.clone() {
+            return Some(result);
         }
 
-        Some(result)
+        let registry_result = get_registry_pythons(&self.conda_locator, &reporter)?;
+        result.replace(registry_result);
+
+        Some(registry_result)
     }
     #[cfg(windows)]
     fn clear(&self) {
@@ -94,7 +76,7 @@ impl Locator for WindowsRegistry {
             }
         }
         #[cfg(windows)]
-        if let Some(result) = self.find_with_cache() {
+        if let Some(result) = self.find_with_cache(None) {
             // Find the same env here
             for found_env in result.environments {
                 if let Some(ref python_executable_path) = found_env.executable {
@@ -110,16 +92,7 @@ impl Locator for WindowsRegistry {
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
         self.clear();
-        if let Some(result) = self.find_with_cache() {
-            result
-                .managers
-                .iter()
-                .for_each(|m| reporter.report_manager(m));
-            result
-                .environments
-                .iter()
-                .for_each(|e| reporter.report_environment(e));
-        }
+        let _ = self.find_with_cache(Some(reporter));
     }
     #[cfg(unix)]
     fn find(&self, _reporter: &dyn Reporter) {

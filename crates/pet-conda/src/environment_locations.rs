@@ -17,17 +17,13 @@ use std::{
 
 const APP_NAME: &str = "conda";
 
-pub fn get_conda_environment_paths(
-    env_vars: &EnvVariables,
-    additional_env_dirs: &Vec<PathBuf>,
-) -> Vec<PathBuf> {
+pub fn get_conda_environment_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
     let mut env_paths = thread::scope(|s| {
         let mut envs = vec![];
         for thread in [
             s.spawn(|| get_conda_envs_from_environment_txt(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_conda_rc(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_known_paths(env_vars)),
-            s.spawn(|| get_conda_environment_paths_from_additional_paths(additional_env_dirs)),
             s.spawn(|| get_known_conda_install_locations(env_vars)),
         ] {
             if let Ok(mut env_paths) = thread.join() {
@@ -118,25 +114,6 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
     }
     env_paths.append(&mut env_vars.known_global_search_locations.clone());
     trace!("Conda environments in known paths {:?}", env_paths);
-    env_paths
-}
-
-fn get_conda_environment_paths_from_additional_paths(
-    additional_env_dirs: &Vec<PathBuf>,
-) -> Vec<PathBuf> {
-    let mut env_paths: Vec<PathBuf> = vec![];
-    for path in additional_env_dirs {
-        if let Ok(entries) = fs::read_dir(path) {
-            for entry in entries.filter_map(Result::ok) {
-                let path = entry.path();
-                if path.is_dir() {
-                    env_paths.push(path);
-                }
-            }
-        }
-    }
-    env_paths.append(&mut additional_env_dirs.clone());
-    trace!("Conda environments in additional paths {:?}", env_paths);
     env_paths
 }
 

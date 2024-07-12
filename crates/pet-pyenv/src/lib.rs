@@ -2,14 +2,14 @@
 // Licensed under the MIT License.
 
 use std::{
+    fs,
     path::PathBuf,
     sync::{Arc, Mutex},
+    thread,
 };
 
 use env_variables::EnvVariables;
-use environments::{
-    get_generic_python_environment, get_virtual_env_environment, list_pyenv_environments,
-};
+use environments::{get_generic_python_environment, get_virtual_env_environment};
 use manager::PyEnvInfo;
 use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{
@@ -19,7 +19,7 @@ use pet_core::{
     reporter::Reporter,
     Locator,
 };
-use pet_python_utils::env::PythonEnv;
+use pet_python_utils::{env::PythonEnv, executable::find_executable};
 
 pub mod env_variables;
 mod environment_locations;
@@ -48,6 +48,29 @@ impl PyEnv {
     fn clear(&self) {
         self.manager.lock().unwrap().take();
         self.versions_dir.lock().unwrap().take();
+    }
+    fn get_manager_versions_dir(&self) -> (Option<EnvManager>, Option<PathBuf>) {
+        let mut managers = self.manager.lock().unwrap();
+        let mut versions = self.versions_dir.lock().unwrap();
+        if managers.is_none() || versions.is_none() {
+            let pyenv_info = PyEnvInfo::from(&self.env_vars);
+            let mut manager: Option<EnvManager> = None;
+            if let Some(ref exe) = pyenv_info.exe {
+                let version = pyenv_info.version.clone();
+                manager = Some(EnvManager::new(exe.clone(), EnvManagerType::Pyenv, version));
+            }
+            if let Some(version_path) = &pyenv_info.versions {
+                versions.replace(version_path.clone());
+            } else {
+                versions.take();
+            }
+            if let Some(manager) = manager {
+                managers.replace(manager.clone());
+            } else {
+                managers.take();
+            }
+        }
+        (managers.clone(), versions.clone())
     }
 }
 
@@ -81,31 +104,9 @@ impl Locator for PyEnv {
         // If exe is Scripts/python.exe or bin/python.exe
         // Then env path is parent of Scripts or bin
         // & in pyenv case thats a directory inside `versions` folder.
-        let mut binding_manager = self.manager.lock();
-        let managers = binding_manager.as_mut().unwrap();
-        let mut binding_versions = self.versions_dir.lock();
-        let versions = binding_versions.as_mut().unwrap();
-        if managers.is_none() || versions.is_none() {
-            let pyenv_info = PyEnvInfo::from(&self.env_vars);
-            let mut manager: Option<EnvManager> = None;
-            if let Some(ref exe) = pyenv_info.exe {
-                let version = pyenv_info.version.clone();
-                manager = Some(EnvManager::new(exe.clone(), EnvManagerType::Pyenv, version));
-            }
-            if let Some(version_path) = &pyenv_info.versions {
-                versions.replace(version_path.clone());
-            } else {
-                versions.take();
-            }
-            if let Some(manager) = manager {
-                managers.replace(manager.clone());
-            } else {
-                managers.take();
-            }
-        }
 
-        if let Some(versions) = versions.clone() {
-            let manager = managers.clone();
+        let (manager, versions) = self.get_manager_versions_dir();
+        if let Some(versions) = versions {
             if env.executable.starts_with(versions) {
                 let env_path = env.prefix.clone()?;
                 if let Some(env) = get_virtual_env_environment(&env.executable, &env_path, &manager)
@@ -123,23 +124,35 @@ impl Locator for PyEnv {
 
     fn find(&self, reporter: &dyn Reporter) {
         self.clear();
-        let pyenv_info = PyEnvInfo::from(&self.env_vars);
-        let mut manager: Option<EnvManager> = None;
-        if let Some(ref exe) = pyenv_info.exe {
-            let version = pyenv_info.version.clone();
-            let mgr = EnvManager::new(exe.clone(), EnvManagerType::Pyenv, version);
-            reporter.report_manager(&mgr);
-            manager = Some(mgr);
-        }
-        if let Some(ref versions) = &pyenv_info.versions {
-            if let Some(envs) = list_pyenv_environments(&manager, versions, &self.conda_locator) {
-                for mgr in envs.managers {
-                    reporter.report_manager(&mgr);
+
+        let (manager, versions) = self.get_manager_versions_dir();
+
+        if let Some(versions) = versions {
+            let conda_locator = self.conda_locator.clone();
+            thread::scope(|s| {
+                if let Ok(reader) = fs::read_dir(versions) {
+                    for path in reader.filter_map(Result::ok).map(|e| e.path()) {
+                        let conda_locator = conda_locator.clone();
+                        let manager = manager.clone();
+                        let path = path.clone();
+                        s.spawn(move || {
+                            if let Some(executable) = find_executable(&path) {
+                                if is_conda_env(&path) {
+                                    conda_locator.find_and_report(reporter, &path);
+                                } else if let Some(env) =
+                                    get_virtual_env_environment(&executable, &path, &manager)
+                                {
+                                    reporter.report_environment(&env)
+                                } else if let Some(env) =
+                                    get_generic_python_environment(&executable, &path, &manager)
+                                {
+                                    reporter.report_environment(&env)
+                                }
+                            }
+                        });
+                    }
                 }
-                for env in envs.environments {
-                    reporter.report_environment(&env);
-                }
-            }
+            });
         }
     }
 }

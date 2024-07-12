@@ -18,7 +18,10 @@ use std::{path::PathBuf, sync::Arc};
 use winreg::RegKey;
 
 #[cfg(windows)]
-pub fn get_registry_pythons(conda_locator: &Arc<dyn CondaLocator>) -> Option<LocatorResult> {
+pub fn get_registry_pythons(
+    conda_locator: &Arc<dyn CondaLocator>,
+    reporter: &Option<&dyn Reporter>,
+) -> LocatorResult {
     use log::{trace, warn};
 
     let mut environments = vec![];
@@ -45,15 +48,15 @@ pub fn get_registry_pythons(conda_locator: &Arc<dyn CondaLocator>) -> Option<Loc
                     trace!("Searching {}\\Software\\Python\\{}", name, company);
                     match python_key.open_subkey(&company) {
                         Ok(company_key) => {
-                            if let Some(result) = get_registry_pythons_from_key_for_company(
+                            let result = get_registry_pythons_from_key_for_company(
                                 name,
                                 &company_key,
                                 &company,
                                 conda_locator,
-                            ) {
-                                managers.extend(result.managers);
-                                environments.extend(result.environments);
-                            }
+                                reporter,
+                            );
+                            managers.extend(result.managers);
+                            environments.extend(result.environments);
                         }
                         Err(err) => {
                             warn!(
@@ -69,10 +72,10 @@ pub fn get_registry_pythons(conda_locator: &Arc<dyn CondaLocator>) -> Option<Loc
             }
         }
     }
-    Some(LocatorResult {
+    LocatorResult {
         environments,
         managers,
-    })
+    }
 }
 
 #[cfg(windows)]
@@ -81,11 +84,12 @@ fn get_registry_pythons_from_key_for_company(
     company_key: &RegKey,
     company: &str,
     conda_locator: &Arc<dyn CondaLocator>,
-) -> Option<LocatorResult> {
+    reporter: &Option<&dyn Reporter>,
+) -> LocatorResult {
     use log::{trace, warn};
+    use pet_conda::utils::is_conda_env;
     use pet_fs::path::norm_case;
 
-    let mut managers: Vec<EnvManager> = vec![];
     let mut environments = vec![];
     // let company_display_name: Option<String> = company_key.get_value("DisplayName").ok();
     for installed_python in company_key.enum_keys().filter_map(Result::ok) {
@@ -115,25 +119,8 @@ fn get_registry_pythons_from_key_for_company(
                         );
 
                         // Possible this is a conda install folder.
-                        if let Some(conda_result) = conda_locator.find_in(&env_path) {
-                            for manager in conda_result.managers {
-                                // let mgr = manager.clone();
-                                // mgr.company = Some(company.to_string());
-                                // mgr.company_display_name = company_display_name.clone();
-                                managers.push(manager.clone())
-                            }
-                            for env in conda_result.environments {
-                                // let env = env.clone();
-                                // env.company = Some(company.to_string());
-                                // env.company_display_name = company_display_name.clone();
-                                // if let Some(mgr) = env.manager {
-                                //     let mut mgr = mgr.clone();
-                                //     // mgr.company = Some(company.to_string());
-                                //     // mgr.company_display_name = company_display_name.clone();
-                                //     env.manager = Some(mgr);
-                                // }
-                                environments.push(env.clone());
-                            }
+                        if is_conda_env(&env_path) {
+                            conda_locator.find_and_report(reporter, &env_path);
                             continue;
                         }
 
@@ -196,8 +183,8 @@ fn get_registry_pythons_from_key_for_company(
                             None
                         })
                         .build();
-                        // env.company = Some(company.to_string());
-                        // env.company_display_name = company_display_name.clone();
+
+                        reporter.report_environment(&env);
                         environments.push(env);
                     }
                     Err(err) => {
@@ -217,8 +204,8 @@ fn get_registry_pythons_from_key_for_company(
         }
     }
 
-    Some(LocatorResult {
+    LocatorResult {
         environments,
-        managers,
-    })
+        managers: vec![],
+    }
 }
