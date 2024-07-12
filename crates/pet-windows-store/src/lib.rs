@@ -60,6 +60,8 @@ impl WindowsStore {
     }
     #[cfg(windows)]
     fn clear(&self) {
+        use std::sync::atomic::Ordering;
+
         self.searched.store(false, Ordering::Relaxed);
         if let Ok(mut envs) = self.environments.write() {
             envs.clear();
