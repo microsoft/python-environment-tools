@@ -4,7 +4,8 @@
 use conda_info::CondaInfo;
 use env_variables::EnvVariables;
 use environment_locations::{
-    get_conda_environment_paths, get_conda_envs_from_environment_txt, get_environments,
+    get_conda_dir_from_exe, get_conda_environment_paths, get_conda_envs_from_environment_txt,
+    get_environments,
 };
 use environments::{get_conda_environment_info, CondaEnvironment};
 use log::error;
@@ -15,6 +16,7 @@ use pet_core::{
     reporter::Reporter,
     Locator,
 };
+use pet_fs::path::norm_case;
 use pet_python_utils::env::PythonEnv;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -54,6 +56,7 @@ pub struct CondaTelemetryInfo {
     pub env_dirs: Vec<PathBuf>,
     pub environments_txt: Option<PathBuf>,
     pub environments_txt_exists: Option<bool>,
+    pub user_provided_env_found: Option<bool>,
     pub environments_from_txt: Vec<PathBuf>,
 }
 
@@ -61,6 +64,7 @@ pub struct Conda {
     pub environments: Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
     pub managers: Arc<Mutex<HashMap<PathBuf, CondaManager>>>,
     pub env_vars: EnvVariables,
+    conda_executable: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl Conda {
@@ -69,6 +73,7 @@ impl Conda {
             environments: Arc::new(Mutex::new(HashMap::new())),
             managers: Arc::new(Mutex::new(HashMap::new())),
             env_vars: EnvVariables::from(env),
+            conda_executable: Arc::new(Mutex::new(None)),
         }
     }
     fn clear(&self) {
@@ -127,10 +132,19 @@ impl CondaLocator for Conda {
             environments_txt = Some(file);
         }
 
+        let conda_exe = &self.conda_executable.lock().unwrap().clone();
+        let envs_found = get_conda_environment_paths(&self.env_vars, conda_exe);
+        let mut user_provided_env_found = None;
+        if let Some(conda_dir) = get_conda_dir_from_exe(conda_exe) {
+            let conda_dir = norm_case(conda_dir);
+            user_provided_env_found = Some(envs_found.contains(&conda_dir));
+        }
+
         CondaTelemetryInfo {
             can_spawn_conda,
             conda_rcs,
             env_dirs,
+            user_provided_env_found,
             environments_txt,
             environments_txt_exists,
             environments_from_txt: get_conda_envs_from_environment_txt(&self.env_vars),
@@ -191,6 +205,12 @@ impl Conda {
 impl Locator for Conda {
     fn get_name(&self) -> &'static str {
         "Conda" // Do not change this name, as this is used in telemetry.
+    }
+    fn configure(&self, config: &pet_core::Configuration) {
+        if let Some(ref conda_exe) = config.conda_executable {
+            let mut conda_executable = self.conda_executable.lock().unwrap();
+            conda_executable.replace(conda_exe.clone());
+        }
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Conda]
@@ -262,9 +282,10 @@ impl Locator for Conda {
         self.clear();
 
         let env_vars = self.env_vars.clone();
+        let executable = self.conda_executable.lock().unwrap().clone();
         thread::scope(|s| {
             // 1. Get a list of all know conda environments file paths
-            let possible_conda_envs = get_conda_environment_paths(&env_vars);
+            let possible_conda_envs = get_conda_environment_paths(&env_vars, &executable);
             for path in possible_conda_envs {
                 s.spawn(move || {
                     // 2. Get the details of the conda environment
