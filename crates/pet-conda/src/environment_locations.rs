@@ -191,7 +191,10 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
 }
 
 #[cfg(windows)]
-pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
+pub fn get_known_conda_install_locations(
+    env_vars: &EnvVariables,
+    conda_executable: &Option<PathBuf>,
+) -> Vec<PathBuf> {
     use pet_fs::path::norm_case;
 
     let user_profile = env_vars.userprofile.clone().unwrap_or_default();
@@ -249,6 +252,9 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     // We do not want to have duplicates in different cases.
     // & we'd like to preserve the case of the original path as on disc.
     known_paths = known_paths.iter().map(norm_case).collect();
+    if let Some(conda_dir) = get_conda_dir_from_exe(conda_executable) {
+        known_paths.push(conda_dir);
+    }
     known_paths.sort();
     known_paths.dedup();
 
