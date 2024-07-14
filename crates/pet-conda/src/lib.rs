@@ -3,7 +3,9 @@
 
 use conda_info::CondaInfo;
 use env_variables::EnvVariables;
-use environment_locations::{get_conda_environment_paths, get_environments};
+use environment_locations::{
+    get_conda_environment_paths, get_conda_envs_from_environment_txt, get_environments,
+};
 use environments::{get_conda_environment_info, CondaEnvironment};
 use log::error;
 use manager::CondaManager;
@@ -50,6 +52,9 @@ pub struct CondaTelemetryInfo {
     pub can_spawn_conda: bool,
     pub conda_rcs: Vec<PathBuf>,
     pub env_dirs: Vec<PathBuf>,
+    pub environments_txt: Option<PathBuf>,
+    pub environments_txt_exists: Option<bool>,
+    pub environments_from_txt: Vec<PathBuf>,
 }
 
 pub struct Conda {
@@ -114,10 +119,21 @@ impl CondaLocator for Conda {
             .into_values()
             .collect::<Vec<PythonEnvironment>>();
         let (conda_rcs, env_dirs) = get_conda_rcs_and_env_dirs(&self.env_vars, &environments);
+        let mut environments_txt = None;
+        let mut environments_txt_exists = None;
+        if let Some(ref home) = self.env_vars.home {
+            let file = Path::new(&home).join(".conda").join("environments.txt");
+            environments_txt_exists = Some(file.exists());
+            environments_txt = Some(file);
+        }
+
         CondaTelemetryInfo {
             can_spawn_conda,
             conda_rcs,
             env_dirs,
+            environments_txt,
+            environments_txt_exists,
+            environments_from_txt: get_conda_envs_from_environment_txt(&self.env_vars),
         }
     }
 
