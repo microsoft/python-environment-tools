@@ -17,14 +17,17 @@ use std::{
 
 const APP_NAME: &str = "conda";
 
-pub fn get_conda_environment_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
+pub fn get_conda_environment_paths(
+    env_vars: &EnvVariables,
+    conda_executable: &Option<PathBuf>,
+) -> Vec<PathBuf> {
     let mut env_paths = thread::scope(|s| {
         let mut envs = vec![];
         for thread in [
             s.spawn(|| get_conda_envs_from_environment_txt(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_conda_rc(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_known_paths(env_vars)),
-            s.spawn(|| get_known_conda_install_locations(env_vars)),
+            s.spawn(|| get_known_conda_install_locations(env_vars, conda_executable)),
         ] {
             if let Ok(mut env_paths) = thread.join() {
                 envs.append(&mut env_paths);
@@ -188,7 +191,10 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
 }
 
 #[cfg(windows)]
-pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
+pub fn get_known_conda_install_locations(
+    env_vars: &EnvVariables,
+    conda_executable: &Option<PathBuf>,
+) -> Vec<PathBuf> {
     use pet_fs::path::norm_case;
 
     let user_profile = env_vars.userprofile.clone().unwrap_or_default();
@@ -246,6 +252,9 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
     // We do not want to have duplicates in different cases.
     // & we'd like to preserve the case of the original path as on disc.
     known_paths = known_paths.iter().map(norm_case).collect();
+    if let Some(conda_dir) = get_conda_dir_from_exe(conda_executable) {
+        known_paths.push(conda_dir);
+    }
     known_paths.sort();
     known_paths.dedup();
 
@@ -253,7 +262,10 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
 }
 
 #[cfg(unix)]
-pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf> {
+pub fn get_known_conda_install_locations(
+    env_vars: &EnvVariables,
+    conda_executable: &Option<PathBuf>,
+) -> Vec<PathBuf> {
     let mut known_paths = vec![];
     let home_value = env_vars.clone().home.unwrap_or_default();
     let directories_to_look_in = [
@@ -294,8 +306,41 @@ pub fn get_known_conda_install_locations(env_vars: &EnvVariables) -> Vec<PathBuf
         known_paths.push(home.clone().join("micromamba"));
         known_paths.push(home.join(".conda"));
     }
+    if let Some(conda_dir) = get_conda_dir_from_exe(conda_executable) {
+        known_paths.push(conda_dir);
+    }
     known_paths.sort();
     known_paths.dedup();
 
     known_paths
+}
+
+pub fn get_conda_dir_from_exe(conda_executable: &Option<PathBuf>) -> Option<PathBuf> {
+    if let Some(conda_executable) = conda_executable {
+        if conda_executable.is_file() {
+            if let Some(conda_dir) = conda_executable.parent() {
+                // Possible exe is in the install (root prefix) directory.
+                if is_conda_env(conda_dir) {
+                    return Some(conda_dir.to_path_buf());
+                } else if let Some(conda_dir) = conda_dir.parent() {
+                    // Possible the exe is in the `bin` or `Scripts` directory.
+                    if is_conda_env(conda_dir) {
+                        return Some(conda_dir.to_path_buf());
+                    }
+                }
+            }
+        } else {
+            let conda_dir = conda_executable.clone();
+            // Possible exe is in the install (root prefix) directory.
+            if is_conda_env(&conda_dir) {
+                return Some(conda_dir.to_path_buf());
+            } else if let Some(conda_dir) = conda_dir.parent() {
+                // Possible the exe is in the `bin` or `Scripts` directory.
+                if is_conda_env(conda_dir) {
+                    return Some(conda_dir.to_path_buf());
+                }
+            }
+        }
+    }
+    None
 }
