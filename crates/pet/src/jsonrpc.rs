@@ -3,11 +3,8 @@
 
 use log::{error, info, trace};
 use pet::resolve::resolve_environment;
-use pet_cache::get_cache_directory;
-use pet_cache::set_cache_directory;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
-use pet_core::cache::Cache;
 use pet_core::python_environment::PythonEnvironment;
 use pet_core::telemetry::refresh_performance::RefreshPerformance;
 use pet_core::telemetry::TelemetryEvent;
@@ -23,6 +20,7 @@ use pet_jsonrpc::{
 };
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
+use pet_python_utils::cache::set_cache_directory;
 use pet_reporter::collect;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;

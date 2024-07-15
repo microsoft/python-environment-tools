@@ -22,7 +22,7 @@ pub struct InterpreterInfo {
     pub is64_bit: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResolvedPythonEnv {
     pub executable: PathBuf,
     pub prefix: PathBuf,
@@ -53,29 +53,9 @@ impl ResolvedPythonEnv {
         let cache = create_cache(executable.to_path_buf());
         let entry = cache.lock().unwrap();
         if let Some(env) = entry.get() {
-            if let (Some(exe), Some(prefix), Some(version)) =
-                (env.executable, env.prefix, env.version)
-            {
-                // Ensure the given exe is in the list of symlinks.
-                if env
-                    .symlinks
-                    .clone()
-                    .unwrap_or_default()
-                    .contains(&executable.to_path_buf())
-                {
-                    return Some(ResolvedPythonEnv {
-                        executable: exe,
-                        is64_bit: false,
-                        prefix,
-                        symlinks: env.symlinks.clone(),
-                        version,
-                    });
-                }
-            }
-        }
-
-        if let Some(env) = get_interpreter_details(executable) {
-            entry.store(env);
+            Some(env)
+        } else if let Some(env) = get_interpreter_details(executable) {
+            entry.store(executable.to_path_buf(), env.clone());
             Some(env)
         } else {
             None

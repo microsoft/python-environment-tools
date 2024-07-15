@@ -14,3 +14,4 @@ pet-core = { path = "../pet-core" }
 serde = { version = "1.0.152", features = ["derive"] }
 log = "0.4.21"
 serde_json = "1.0.93"
+sha2 = "0.10.6"

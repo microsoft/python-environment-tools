@@ -5,15 +5,25 @@ use lazy_static::lazy_static;
 use pet_fs::path::norm_case;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap, path::PathBuf, sync::{Arc, Mutex}
+    collections::{hash_map::Entry, HashMap},
+    path::PathBuf,
+    sync::{Arc, Mutex},
 };
+
+use crate::env::ResolvedPythonEnv;
 
 lazy_static! {
     static ref CACHE: FSCache = FSCache::new(None);
 }
 
+pub trait CacheEntry: Send + Sync {
+    fn get(&self) -> Option<ResolvedPythonEnv>;
+    fn store(&self, executable: PathBuf, environment: ResolvedPythonEnv);
+    fn track_symlinks(&self, executable: PathBuf, symlinks: Option<Vec<PathBuf>>);
+}
+
 pub fn create_cache(executable: PathBuf) -> Arc<Mutex<Box<dyn CacheEntry>>> {
-    CACHE.get(executable)
+    CACHE.create_cache(executable)
 }
 
 pub fn get_cache_directory() -> Option<PathBuf> {
@@ -33,16 +43,18 @@ pub fn generate_hash(executable: &PathBuf) -> String {
     format!("{:x}", h_bytes)[..16].to_string()
 }
 
+pub type LockableCacheEntry = Arc<Mutex<Box<dyn CacheEntry>>>;
+
 struct FSCache {
     cache_dir: Arc<Mutex<Option<PathBuf>>>,
-    locks: Mutex<HashMap<PathBuf, Arc<Mutex<Box<dyn CacheEntry>>>>>,
+    locks: Mutex<HashMap<PathBuf, LockableCacheEntry>>,
 }
 
 impl FSCache {
     pub fn new(cache_dir: Option<PathBuf>) -> FSCache {
         FSCache {
             cache_dir: Arc::new(Mutex::new(cache_dir)),
-            locks: Mutex::new(HashMap::<PathBuf, Arc<Mutex<Box<dyn CacheEntry>>>>::new()),
+            locks: Mutex::new(HashMap::<PathBuf, LockableCacheEntry>::new()),
         }
     }
 
@@ -55,11 +67,11 @@ impl FSCache {
     pub fn set_cache_directory(&self, cache_dir: PathBuf) {
         self.cache_dir.lock().unwrap().replace(cache_dir);
     }
-    pub fn create_cache(&self, executable: PathBuf) -> Arc<Mutex<Box<dyn CacheEntry>>> {
+    pub fn create_cache(&self, executable: PathBuf) -> LockableCacheEntry {
         match self.locks.lock().unwrap().entry(executable.clone()) {
             Entry::Occupied(lock) => lock.get().clone(),
             Entry::Vacant(lock) => {
-                let cache = Box::new(FSCacheEntry::new()) as Box<(dyn CacheEntry + 'static)>;
+                let cache = Box::new(FSCacheEntry::create()) as Box<(dyn CacheEntry + 'static)>;
                 lock.insert(Arc::new(Mutex::new(cache))).clone()
             }
         }
@@ -67,22 +79,27 @@ impl FSCache {
 }
 
 struct FSCacheEntry {
-    envoronment: Arc<Mutex<Option<PythonEnvironment>>>,
+    envoronment: Arc<Mutex<Option<ResolvedPythonEnv>>>,
 }
 impl FSCacheEntry {
-    pub fn new() -> impl CacheEntry {
+    pub fn create() -> impl CacheEntry {
         FSCacheEntry {
             envoronment: Arc::new(Mutex::new(None)),
         }
     }
 }
+
 impl CacheEntry for FSCacheEntry {
-    fn get(&self) -> Option<PythonEnvironment> {
+    fn get(&self) -> Option<ResolvedPythonEnv> {
         self.envoronment.lock().unwrap().clone()
     }
 
-    fn store(&self, environment: PythonEnvironment) {
+    fn store(&self, _executable: PathBuf, environment: ResolvedPythonEnv) {
         self.envoronment.lock().unwrap().replace(environment);
+    }
+
+    fn track_symlinks(&self, _executable: PathBuf, _symlinks: Option<Vec<PathBuf>>) {
+        todo!()
     }
 }
 
