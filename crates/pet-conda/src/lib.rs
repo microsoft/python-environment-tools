@@ -18,7 +18,6 @@ use pet_core::{
     Locator,
 };
 use pet_fs::path::norm_case;
-use pet_python_utils::env::PythonEnv;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
