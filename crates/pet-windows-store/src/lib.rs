@@ -8,10 +8,10 @@ mod environments;
 use crate::env_variables::EnvVariables;
 #[cfg(windows)]
 use environments::list_store_pythons;
+use pet_core::env::PythonEnv;
 use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_core::reporter::Reporter;
 use pet_core::{os_environment::Environment, Locator};
-use pet_python_utils::env::PythonEnv;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 

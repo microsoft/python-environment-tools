@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use env_variables::EnvVariables;
+use pet_core::env::PythonEnv;
 use pet_core::os_environment::Environment;
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
@@ -9,7 +10,6 @@ use pet_core::{
     Locator,
 };
 use pet_fs::path::norm_case;
-use pet_python_utils::env::PythonEnv;
 use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
 use std::path::Path;

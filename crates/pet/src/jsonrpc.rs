@@ -20,6 +20,7 @@ use pet_jsonrpc::{
 };
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
+use pet_python_utils::cache::set_cache_directory;
 use pet_reporter::collect;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
@@ -88,6 +89,8 @@ pub struct ConfigureOptions {
     /// Custom locations where environments can be found. Generally global locations where virtualenvs & the like can be found.
     /// Workspace directories should not be included into this list.
     pub environment_directories: Option<Vec<PathBuf>>,
+    /// Directory to cache the Python environment details.
+    pub cache_directory: Option<PathBuf>,
 }
 
 pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
@@ -100,6 +103,11 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                 cfg.conda_executable = configure_options.conda_executable;
                 cfg.environment_directories = configure_options.environment_directories;
                 cfg.poetry_executable = configure_options.poetry_executable;
+                // We will not support changing the cache directories once set.
+                // No point, supporting such a use case.
+                if let Some(cache_directory) = configure_options.cache_directory {
+                    set_cache_directory(cache_directory)
+                }
                 trace!("Configuring locators: {:?}", cfg);
                 drop(cfg);
                 let config = context.configuration.read().unwrap().clone();

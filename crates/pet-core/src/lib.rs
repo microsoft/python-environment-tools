@@ -3,15 +3,17 @@
 
 use std::path::PathBuf;
 
+use env::PythonEnv;
 use manager::EnvManager;
-use pet_python_utils::env::PythonEnv;
 use python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use reporter::Reporter;
 
 pub mod arch;
+pub mod env;
 pub mod manager;
 pub mod os_environment;
 pub mod python_environment;
+pub mod pyvenv_cfg;
 pub mod reporter;
 pub mod telemetry;
 

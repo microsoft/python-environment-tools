@@ -8,8 +8,10 @@ mod common;
 fn find_conda_env_without_manager() {
     use common::{create_test_environment, resolve_test_path};
     use pet_conda::Conda;
-    use pet_core::{self, arch::Architecture, python_environment::PythonEnvironmentKind, Locator};
-    use pet_python_utils::env::PythonEnv;
+    use pet_core::{
+        self, arch::Architecture, env::PythonEnv, python_environment::PythonEnvironmentKind,
+        Locator,
+    };
     use std::collections::HashMap;
 
     let environment = create_test_environment(HashMap::new(), None, vec![], None);
@@ -38,8 +40,10 @@ fn find_conda_env_without_manager() {
 fn find_conda_env_without_manager_but_detect_manager_from_history() {
     use common::{create_test_environment, resolve_test_path};
     use pet_conda::Conda;
-    use pet_core::{self, arch::Architecture, python_environment::PythonEnvironmentKind, Locator};
-    use pet_python_utils::env::PythonEnv;
+    use pet_core::{
+        self, arch::Architecture, env::PythonEnv, python_environment::PythonEnvironmentKind,
+        Locator,
+    };
     use std::{
         collections::HashMap,
         fs::{self},

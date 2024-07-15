@@ -5,12 +5,12 @@ use env_variables::EnvVariables;
 use environment_locations::list_environments;
 use manager::PoetryManager;
 use pet_core::{
+    env::PythonEnv,
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Configuration, Locator, LocatorResult,
 };
-use pet_python_utils::env::PythonEnv;
 use pet_virtualenv::is_virtualenv;
 use std::{
     path::PathBuf,

@@ -11,15 +11,13 @@ use std::{
 
 use pet_core::{
     arch::Architecture,
+    env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
 use pet_fs::path::resolve_symlink;
-use pet_python_utils::{
-    env::{PythonEnv, ResolvedPythonEnv},
-    executable::find_executables,
-};
+use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executables};
 use pet_virtualenv::is_virtualenv;
 
 pub struct LinuxGlobalPython {

@@ -6,12 +6,13 @@ use std::{path::PathBuf, sync::Arc};
 use log::{trace, warn};
 use pet_core::{
     arch::Architecture,
+    env::PythonEnv,
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder},
     Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
-use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
+use pet_python_utils::env::ResolvedPythonEnv;
 
 use crate::locators::identify_python_environment_using_locators;
 
@@ -45,7 +46,7 @@ pub fn resolve_environment(
                 let discovered = env.clone();
                 let mut symlinks = env.symlinks.clone().unwrap_or_default();
                 symlinks.push(info.executable.clone());
-                symlinks.append(&mut info.symlink.clone().unwrap_or_default());
+                symlinks.append(&mut info.symlinks.clone().unwrap_or_default());
                 symlinks.sort();
                 symlinks.dedup();
 

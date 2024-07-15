@@ -16,13 +16,14 @@ use environments::{get_generic_python_environment, get_virtual_env_environment};
 use manager::PyEnvInfo;
 use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{
+    env::PythonEnv,
     manager::{EnvManager, EnvManagerType},
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
-use pet_python_utils::{env::PythonEnv, executable::find_executable};
+use pet_python_utils::executable::find_executable;
 
 pub mod env_variables;
 mod environment_locations;
