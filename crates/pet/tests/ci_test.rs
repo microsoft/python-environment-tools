@@ -12,11 +12,11 @@ use pet::{
 };
 use pet_core::{
     arch::Architecture,
+    env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_poetry::Poetry;
-use pet_python_utils::env::PythonEnv;
 use pet_reporter::{
     cache::{self, CacheReporter},
     collect,

@@ -372,13 +372,13 @@ fn resolve_pyenv_environment() {
     use pet_conda::Conda;
     use pet_core::{
         self,
+        env::PythonEnv,
         manager::{EnvManager, EnvManagerType},
         python_environment::{PythonEnvironment, PythonEnvironmentKind},
         Locator,
     };
     use pet_pyenv;
     use pet_pyenv::PyEnv;
-    use pet_python_utils::env::PythonEnv;
     use std::{collections::HashMap, sync::Arc};
 
     let home = resolve_test_path(&["unix", "pyenv", "user_home"]);

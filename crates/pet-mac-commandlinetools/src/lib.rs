@@ -2,16 +2,14 @@
 // Licensed under the MIT License.
 
 use pet_core::{
+    env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::version;
-use pet_python_utils::{
-    env::{PythonEnv, ResolvedPythonEnv},
-    executable::find_executables,
-};
+use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executables};
 use pet_virtualenv::is_virtualenv;
 use std::path::PathBuf;
 

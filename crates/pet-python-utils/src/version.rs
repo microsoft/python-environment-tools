@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::{headers::Headers, pyvenv_cfg::PyVenvCfg};
+use crate::headers::Headers;
 use log::{trace, warn};
+use pet_core::pyvenv_cfg::PyVenvCfg;
 use pet_fs::path::resolve_symlink;
 use std::{
     path::{Path, PathBuf},

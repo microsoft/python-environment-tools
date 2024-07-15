@@ -11,6 +11,7 @@ use environments::{get_conda_environment_info, CondaEnvironment};
 use log::error;
 use manager::CondaManager;
 use pet_core::{
+    env::PythonEnv,
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,

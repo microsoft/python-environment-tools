@@ -5,11 +5,11 @@
 use environments::get_registry_pythons;
 use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{
+    env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Locator, LocatorResult,
 };
-use pet_python_utils::env::PythonEnv;
 use pet_virtualenv::is_virtualenv;
 use std::sync::{Arc, Mutex};
 

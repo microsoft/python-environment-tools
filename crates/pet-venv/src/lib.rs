@@ -4,13 +4,14 @@
 use std::path::Path;
 
 use pet_core::{
+    env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
+    pyvenv_cfg::PyVenvCfg,
     reporter::Reporter,
     Locator,
 };
-use pet_python_utils::pyvenv_cfg::PyVenvCfg;
+use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
-use pet_python_utils::{env::PythonEnv, executable::find_executables};
 
 fn is_venv_internal(env: &PythonEnv) -> Option<bool> {
     // env path cannot be empty.

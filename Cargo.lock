@@ -370,19 +370,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pet-cache"
-version = "0.1.0"
-dependencies = [
- "log",
- "msvc_spectre_libs",
- "pet-core",
- "pet-fs",
- "pet-python-utils",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "pet-conda"
 version = "0.1.0"
 dependencies = [
@@ -408,7 +395,6 @@ dependencies = [
  "log",
  "msvc_spectre_libs",
  "pet-fs",
- "pet-python-utils",
  "regex",
  "serde",
  "serde_json",
@@ -581,6 +567,7 @@ dependencies = [
  "lazy_static",
  "log",
  "msvc_spectre_libs",
+ "pet-core",
  "pet-fs",
  "regex",
  "serde",

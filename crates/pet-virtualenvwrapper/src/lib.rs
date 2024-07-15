@@ -4,13 +4,14 @@
 use env_variables::EnvVariables;
 use environments::{get_project, is_virtualenvwrapper};
 use pet_core::{
+    env::PythonEnv,
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
+use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
-use pet_python_utils::{env::PythonEnv, executable::find_executables};
 
 mod env_variables;
 mod environment_locations;

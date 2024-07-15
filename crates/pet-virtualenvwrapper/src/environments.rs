@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use crate::{env_variables::EnvVariables, environment_locations::get_work_on_home_path};
+use pet_core::env::PythonEnv;
 use pet_fs::path::norm_case;
-use pet_python_utils::env::PythonEnv;
 use pet_virtualenv::is_virtualenv;
 use std::{fs, path::PathBuf};
 

@@ -5,13 +5,14 @@ use env_variables::EnvVariables;
 use environment_locations::get_homebrew_prefix_bin;
 use environments::get_python_info;
 use pet_core::{
+    env::PythonEnv,
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     Locator,
 };
 use pet_fs::path::resolve_symlink;
-use pet_python_utils::{env::PythonEnv, executable::find_executables};
+use pet_python_utils::executable::find_executables;
 use pet_virtualenv::is_virtualenv;
 use std::{fs, path::PathBuf, thread};
 use sym_links::is_homebrew_python;

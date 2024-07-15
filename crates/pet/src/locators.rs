@@ -4,6 +4,7 @@
 use log::{info, trace};
 use pet_conda::Conda;
 use pet_core::arch::Architecture;
+use pet_core::env::PythonEnv;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::{
     PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind,
@@ -16,7 +17,7 @@ use pet_mac_xcode::MacXCode;
 use pet_pipenv::PipEnv;
 use pet_poetry::Poetry;
 use pet_pyenv::PyEnv;
-use pet_python_utils::env::{PythonEnv, ResolvedPythonEnv};
+use pet_python_utils::env::ResolvedPythonEnv;
 use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
@@ -121,7 +122,7 @@ pub fn identify_python_environment_using_locators(
 
             // If one of the symlinks are in the PATH variable, then we can treat this as a GlobalPath kind.
             let symlinks = [
-                resolved_env.symlink.clone().unwrap_or_default(),
+                resolved_env.symlinks.clone().unwrap_or_default(),
                 vec![resolved_env.executable.clone(), executable.clone()],
             ]
             .concat();
