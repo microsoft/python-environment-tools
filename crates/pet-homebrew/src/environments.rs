@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 lazy_static! {
     static ref PYTHON_VERSION: Regex =
-        Regex::new(r"/(\d+\.\d+\.\d+)/").expect("error parsing Version regex for Homebrew");
+        Regex::new(r"/(\d+\.\d+\.\d+)").expect("error parsing Version regex for Homebrew");
 }
 
 pub fn get_python_info(
