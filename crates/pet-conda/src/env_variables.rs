@@ -25,6 +25,10 @@ pub struct EnvVariables {
     /// https://docs.conda.io/projects/conda/en/22.11.x/user-guide/configuration/use-condarc.html
     pub conda_envs_path: Option<String>,
     pub condarc: Option<String>,
+    // https://anaconda-project.readthedocs.io/en/latest/config.html
+    pub anaconda_project_envs_path: Option<String>,
+    // https://anaconda-project.readthedocs.io/en/latest/config.html
+    pub project_dir: Option<String>,
     pub xdg_config_home: Option<String>,
     pub known_global_search_locations: Vec<PathBuf>,
 }
@@ -44,6 +48,8 @@ impl EnvVariables {
             conda: env.get_env_var("CONDA".to_string()),
             conda_prefix: env.get_env_var("CONDA_PREFIX".to_string()),
             conda_envs_path: env.get_env_var("CONDA_ENVS_PATH".to_string()),
+            anaconda_project_envs_path: env.get_env_var("ANACONDA_PROJECT_ENVS_PATH".to_string()),
+            project_dir: env.get_env_var("PROJECT_DIR".to_string()),
             condarc: env.get_env_var("CONDARC".to_string()),
             xdg_config_home: env.get_env_var("XDG_CONFIG_HOME".to_string()),
             known_global_search_locations: env.get_know_global_search_locations(),

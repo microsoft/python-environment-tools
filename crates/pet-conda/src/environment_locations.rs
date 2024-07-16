@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::{
-    conda_rc::Condarc,
+    conda_rc::{get_conda_rc_search_paths, Condarc},
     env_variables::EnvVariables,
     utils::{is_conda_env, is_conda_install},
 };
@@ -66,13 +66,25 @@ pub fn get_conda_environment_paths(
  * <user home>/AppData/Local/conda/conda/envs
  */
 fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<PathBuf> {
+    // Use the conda rc directories as well.
+    let mut env_dirs = vec![];
+    for rc_file_dir in get_conda_rc_search_paths(env_vars) {
+        if rc_file_dir.is_dir() {
+            env_dirs.push(rc_file_dir);
+        } else if rc_file_dir.is_file() {
+            if let Some(dir) = rc_file_dir.parent() {
+                env_dirs.push(dir.to_path_buf());
+            }
+        }
+    }
+
     if let Some(conda_rc) = Condarc::from(env_vars) {
         trace!("Conda environments in .condarc {:?}", conda_rc.env_dirs);
-        conda_rc.env_dirs
+        env_dirs.append(&mut conda_rc.env_dirs.clone());
     } else {
         trace!("No Conda environments in .condarc");
-        vec![]
     }
+    env_dirs
 }
 
 fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
@@ -103,6 +115,16 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
             for path in env::split_paths(&conda_envs_path) {
                 known_conda_paths.push(expand_path(path));
             }
+        }
+        // https://anaconda-project.readthedocs.io/en/latest/config.html
+        if let Some(conda_envs_path) = &env_vars.anaconda_project_envs_path {
+            for path in env::split_paths(&conda_envs_path) {
+                known_conda_paths.push(expand_path(path));
+            }
+        }
+        // https://anaconda-project.readthedocs.io/en/latest/config.html
+        if let Some(project_dir) = &env_vars.project_dir {
+            known_conda_paths.push(expand_path(PathBuf::from(project_dir)));
         }
 
         for path in known_conda_paths {
@@ -226,8 +248,11 @@ pub fn get_known_conda_install_locations(
     if let Some(ref conda_prefix) = env_vars.conda_prefix {
         known_paths.push(expand_path(PathBuf::from(conda_prefix.clone())));
     }
+    if let Some(ref conda_dir) = env_vars.conda_dir {
+        known_paths.push(expand_path(PathBuf::from(conda_dir.clone())));
+    }
     if let Some(ref conda) = env_vars.conda {
-        known_paths.push(PathBuf::from(conda));
+        known_paths.push(expand_path(PathBuf::from(conda)));
     }
     if let Some(home) = env_vars.clone().home {
         for prefix in [
@@ -340,6 +365,7 @@ pub fn get_known_conda_install_locations(
             known_paths.push(prefix.clone().join("micromamba"));
         }
 
+        known_paths.push(PathBuf::from("/opt").join("conda"));
         known_paths.push(home.join(".conda"));
         known_paths.push(home.join(".local"));
     }
