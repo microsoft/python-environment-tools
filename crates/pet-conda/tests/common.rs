@@ -32,6 +32,8 @@ pub fn create_env_variables(home: PathBuf, root: PathBuf) -> EnvVariables {
         xdg_config_home: None,
         conda_envs_path: None,
         conda_dir: None,
+        anaconda_project_envs_path: None,
+        project_dir: None,
     }
 }
 
