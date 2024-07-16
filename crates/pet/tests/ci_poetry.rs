@@ -2,10 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_poetry::Poetry;
-use pet_reporter::{
-    cache::{self, CacheReporter},
-    collect,
-};
+use pet_reporter::{cache::CacheReporter, collect};
 
 mod common;
 

@@ -95,6 +95,8 @@ impl Locator for MacXCode {
             }
         }
 
+        let mut resolved_environments = vec![];
+
         // We know /usr/bin/python3 can end up pointing to this same Python exe as well
         // Hence look for those symlinks as well.
         // Unfortunately /usr/bin/python3 is not a real symlink
@@ -103,6 +105,7 @@ impl Locator for MacXCode {
             if !symlinks.contains(&possible_exes) {
                 if let Some(resolved_env) = ResolvedPythonEnv::from(&possible_exes) {
                     if symlinks.contains(&resolved_env.executable) {
+                        resolved_environments.push(resolved_env.clone());
                         symlinks.push(possible_exes);
                         // Use the latest accurate information we have.
                         version = Some(resolved_env.version);
@@ -150,19 +153,27 @@ impl Locator for MacXCode {
         }
         if version.is_none() || prefix.is_none() {
             if let Some(resolved_env) = ResolvedPythonEnv::from(&env.executable) {
+                resolved_environments.push(resolved_env.clone());
                 version = Some(resolved_env.version);
                 prefix = Some(resolved_env.prefix);
             }
         }
 
-        Some(
-            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::MacXCode))
-                .executable(Some(env.executable.clone()))
-                .version(version)
-                .prefix(prefix)
-                .symlinks(Some(symlinks))
-                .build(),
-        )
+        let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::MacXCode))
+            .executable(Some(env.executable.clone()))
+            .version(version)
+            .prefix(prefix)
+            .symlinks(Some(symlinks))
+            .build();
+
+        // If we had spawned Python, then ensure we cache the details.
+        // We do this here, to ensure we keep track of the symlinks as well,
+        // I.e. if any of the symlinks change, then the cache is invalidated.
+        for resolved_env in resolved_environments {
+            resolved_env.add_to_cache(env.clone());
+        }
+
+        Some(env)
     }
 
     fn find(&self, _reporter: &dyn Reporter) {

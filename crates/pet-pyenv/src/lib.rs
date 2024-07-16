@@ -4,15 +4,13 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     thread,
 };
 
 use env_variables::EnvVariables;
 use environments::{get_generic_python_environment, get_virtual_env_environment};
+use log::trace;
 use manager::PyEnvInfo;
 use pet_conda::{utils::is_conda_env, CondaLocator};
 use pet_core::{
@@ -33,7 +31,6 @@ mod manager;
 pub struct PyEnv {
     pub env_vars: EnvVariables,
     pub conda_locator: Arc<dyn CondaLocator>,
-    found_pyenv: AtomicBool,
     manager: Arc<Mutex<Option<EnvManager>>>,
     versions_dir: Arc<Mutex<Option<PathBuf>>>,
 }
@@ -44,7 +41,6 @@ impl PyEnv {
         conda_locator: Arc<dyn CondaLocator>,
     ) -> impl Locator {
         PyEnv {
-            found_pyenv: AtomicBool::new(false),
             env_vars: EnvVariables::from(environment),
             conda_locator,
             manager: Arc::new(Mutex::new(None)),
@@ -52,16 +48,15 @@ impl PyEnv {
         }
     }
     fn clear(&self) {
-        self.found_pyenv
-            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.manager.lock().unwrap().take();
         self.versions_dir.lock().unwrap().take();
     }
     fn get_manager_versions_dir(&self) -> (Option<EnvManager>, Option<PathBuf>) {
         let mut managers = self.manager.lock().unwrap();
         let mut versions = self.versions_dir.lock().unwrap();
-        if !self.found_pyenv.load(Ordering::Relaxed) && (managers.is_none() || versions.is_none()) {
+        if managers.is_none() || versions.is_none() {
             let pyenv_info = PyEnvInfo::from(&self.env_vars);
+            trace!("PyEnv Info {:?}", pyenv_info);
             if let Some(ref exe) = pyenv_info.exe {
                 let version = pyenv_info.version.clone();
                 let manager = EnvManager::new(exe.clone(), EnvManagerType::Pyenv, version);
@@ -74,9 +69,7 @@ impl PyEnv {
             } else {
                 versions.take();
             }
-            self.found_pyenv.store(true, Ordering::Relaxed);
         }
-
         (managers.clone(), versions.clone())
     }
 }
@@ -164,6 +157,8 @@ impl Locator for PyEnv {
                     }
                 }
             });
+        } else {
+            trace!("PyEnv versions directory not found");
         }
     }
 }

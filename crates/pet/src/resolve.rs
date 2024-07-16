@@ -50,8 +50,8 @@ pub fn resolve_environment(
                 symlinks.sort();
                 symlinks.dedup();
 
-                let version = Some(info.version);
-                let prefix = Some(info.prefix);
+                let version = Some(info.version.clone());
+                let prefix = Some(info.prefix.clone());
                 let arch = Some(if info.is64_bit {
                     Architecture::X64
                 } else {
@@ -61,7 +61,7 @@ pub fn resolve_environment(
                 let resolved = PythonEnvironmentBuilder::new(env.kind)
                     .arch(arch)
                     .display_name(env.display_name)
-                    .executable(Some(info.executable))
+                    .executable(Some(info.executable.clone()))
                     .manager(env.manager)
                     .name(env.name)
                     .prefix(prefix)
@@ -69,6 +69,8 @@ pub fn resolve_environment(
                     .symlinks(Some(symlinks))
                     .version(version)
                     .build();
+
+                info.add_to_cache(resolved.clone());
 
                 Some(ResolvedEnvironment {
                     discovered,
