@@ -76,6 +76,7 @@ pub fn start_jsonrpc_server() {
     handlers.add_request_handler("resolve", handle_resolve);
     handlers.add_request_handler("find", handle_find);
     handlers.add_request_handler("condaInfo", handle_conda_telemetry);
+    handlers.add_request_handler("clearCache", handle_clear_cache);
     start_server(&handlers)
 }
 
@@ -106,7 +107,8 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                 // We will not support changing the cache directories once set.
                 // No point, supporting such a use case.
                 if let Some(cache_directory) = configure_options.cache_directory {
-                    set_cache_directory(cache_directory)
+                    set_cache_directory(cache_directory.clone());
+                    cfg.cache_directory = Some(cache_directory);
                 }
                 trace!("Configuring locators: {:?}", cfg);
                 drop(cfg);
@@ -368,5 +370,31 @@ pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
             .clone();
         let info = conda_locator.get_info_for_telemetry(conda_executable);
         send_reply(id, info.into());
+    });
+}
+
+pub fn handle_clear_cache(context: Arc<Context>, id: u32, _params: Value) {
+    thread::spawn(move || {
+        if let Some(cache_directory) = context
+            .configuration
+            .read()
+            .unwrap()
+            .cache_directory
+            .clone()
+        {
+            if let Err(e) = std::fs::remove_dir_all(&cache_directory) {
+                error!("Failed to clear cache {:?}: {}", cache_directory, e);
+                send_error(
+                    Some(id),
+                    -4,
+                    format!("Failed to clear cache {:?}: {}", cache_directory, e),
+                );
+            } else {
+                info!("Cleared cache {:?}", cache_directory);
+                send_reply(id, None::<()>);
+            }
+        } else {
+            send_reply(id, None::<()>);
+        }
     });
 }
