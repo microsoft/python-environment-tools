@@ -64,20 +64,14 @@ impl CacheImpl {
         self.cache_dir.lock().unwrap().replace(cache_dir);
     }
     fn create_cache(&self, executable: PathBuf) -> LockableCacheEntry {
-        if let Some(cache_directory) = self.cache_dir.lock().unwrap().as_ref() {
-            match self.locks.lock().unwrap().entry(executable.clone()) {
-                Entry::Occupied(lock) => lock.get().clone(),
-                Entry::Vacant(lock) => {
-                    let cache =
-                        Box::new(CacheEntryImpl::create(cache_directory.clone(), executable))
-                            as Box<(dyn CacheEntry + 'static)>;
-                    lock.insert(Arc::new(Mutex::new(cache))).clone()
-                }
+        let cache_directory = self.cache_dir.lock().unwrap().clone();
+        match self.locks.lock().unwrap().entry(executable.clone()) {
+            Entry::Occupied(lock) => lock.get().clone(),
+            Entry::Vacant(lock) => {
+                let cache = Box::new(CacheEntryImpl::create(cache_directory.clone(), executable))
+                    as Box<(dyn CacheEntry + 'static)>;
+                lock.insert(Arc::new(Mutex::new(cache))).clone()
             }
-        } else {
-            Arc::new(Mutex::new(Box::new(CacheEntryImpl::empty(
-                executable.clone(),
-            ))))
         }
     }
 }
@@ -92,17 +86,9 @@ struct CacheEntryImpl {
     symlinks: Arc<Mutex<Vec<FilePathWithMTimeCTime>>>,
 }
 impl CacheEntryImpl {
-    pub fn create(cache_directory: PathBuf, executable: PathBuf) -> impl CacheEntry {
+    pub fn create(cache_directory: Option<PathBuf>, executable: PathBuf) -> impl CacheEntry {
         CacheEntryImpl {
-            cache_directory: Some(cache_directory),
-            executable,
-            envoronment: Arc::new(Mutex::new(None)),
-            symlinks: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-    pub fn empty(executable: PathBuf) -> impl CacheEntry {
-        CacheEntryImpl {
-            cache_directory: None,
+            cache_directory,
             executable,
             envoronment: Arc::new(Mutex::new(None)),
             symlinks: Arc::new(Mutex::new(Vec::new())),
