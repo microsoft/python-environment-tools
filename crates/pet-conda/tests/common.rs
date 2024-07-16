@@ -34,6 +34,8 @@ pub fn create_env_variables(home: PathBuf, root: PathBuf) -> EnvVariables {
         conda_dir: None,
         anaconda_project_envs_path: None,
         project_dir: None,
+        mamba_root_prefix: None,
+        mambarc: None,
     }
 }
 

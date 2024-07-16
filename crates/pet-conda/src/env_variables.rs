@@ -22,9 +22,11 @@ pub struct EnvVariables {
     pub conda_dir: Option<String>,
     pub conda: Option<String>,
     pub conda_prefix: Option<String>,
+    pub mamba_root_prefix: Option<String>,
     /// https://docs.conda.io/projects/conda/en/22.11.x/user-guide/configuration/use-condarc.html
     pub conda_envs_path: Option<String>,
     pub condarc: Option<String>,
+    pub mambarc: Option<String>,
     // https://anaconda-project.readthedocs.io/en/latest/config.html
     pub anaconda_project_envs_path: Option<String>,
     // https://anaconda-project.readthedocs.io/en/latest/config.html
@@ -47,10 +49,12 @@ impl EnvVariables {
             conda_root: env.get_env_var("CONDA_ROOT".to_string()),
             conda: env.get_env_var("CONDA".to_string()),
             conda_prefix: env.get_env_var("CONDA_PREFIX".to_string()),
+            mamba_root_prefix: env.get_env_var("MAMBA_ROOT_PREFIX".to_string()),
             conda_envs_path: env.get_env_var("CONDA_ENVS_PATH".to_string()),
             anaconda_project_envs_path: env.get_env_var("ANACONDA_PROJECT_ENVS_PATH".to_string()),
             project_dir: env.get_env_var("PROJECT_DIR".to_string()),
             condarc: env.get_env_var("CONDARC".to_string()),
+            mambarc: env.get_env_var("MAMBARC".to_string()),
             xdg_config_home: env.get_env_var("XDG_CONFIG_HOME".to_string()),
             known_global_search_locations: env.get_know_global_search_locations(),
         }

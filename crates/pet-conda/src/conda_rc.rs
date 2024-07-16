@@ -40,6 +40,7 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
                 "C:\\ProgramData\\conda\\.condarc",
                 "C:\\ProgramData\\conda\\condarc",
                 "C:\\ProgramData\\conda\\condarc.d",
+                "C:\\ProgramData\\conda\\.mambarc",
                 format!(
                     "{}:\\ProgramData\\conda\\.condarc",
                     env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
@@ -66,9 +67,11 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
                 "/etc/conda/.condarc",
                 "/etc/conda/condarc",
                 "/etc/conda/condarc.d",
+                "/etc/conda/mambarc",
                 "/var/lib/conda/.condarc",
                 "/var/lib/conda/condarc",
                 "/var/lib/conda/condarc.d",
+                "/var/lib/conda/.mambarc",
             ]
             .iter()
             .map(PathBuf::from)
@@ -83,6 +86,7 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
             conda_root.join(".condarc"),
             conda_root.join("condarc"),
             conda_root.join(".condarc.d"),
+            conda_root.join(".mambarc"),
         ]);
     }
     if let Some(ref xdg_config_home) = env_vars.xdg_config_home {
@@ -90,6 +94,7 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
             PathBuf::from(xdg_config_home.clone()).join(".condarc"),
             PathBuf::from(xdg_config_home.clone()).join("condarc"),
             PathBuf::from(xdg_config_home.clone()).join(".condarc.d"),
+            PathBuf::from(xdg_config_home.clone()).join(".mambarc"),
         ]);
     }
     if let Some(ref home) = env_vars.home {
@@ -101,6 +106,9 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
             home.join(".conda").join("condarc"),
             home.join(".conda").join("condarc.d"),
             home.join(".condarc"),
+            home.join("condarc"),
+            home.join("condarc.d"),
+            home.join(".mambarc"),
         ]);
     }
     if let Some(ref conda_prefix) = env_vars.conda_prefix {
@@ -109,6 +117,7 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
             conda_prefix.join(".condarc"),
             conda_prefix.join("condarc"),
             conda_prefix.join(".condarc.d"),
+            conda_prefix.join(".mamabarc"),
         ]);
     }
     if let Some(ref conda_dir) = env_vars.conda_dir {
@@ -121,6 +130,9 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
     }
     if let Some(ref condarc) = env_vars.condarc {
         search_paths.append(&mut vec![expand_path(PathBuf::from(condarc))]);
+    }
+    if let Some(ref mambarc) = env_vars.mambarc {
+        search_paths.append(&mut vec![expand_path(PathBuf::from(mambarc))]);
     }
 
     let search_paths: HashSet<_> = search_paths.into_iter().collect();
