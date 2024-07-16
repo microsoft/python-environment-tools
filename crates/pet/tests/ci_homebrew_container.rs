@@ -1,7 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::sync::Once;
+
 mod common;
+
+static INIT: Once = Once::new();
+
+/// Setup function that is only run once, even if called multiple times.
+fn setup() {
+    INIT.call_once(|| {
+        env_logger::builder()
+            .filter(None, log::LevelFilter::Trace)
+            .init();
+    });
+}
 
 #[cfg(unix)]
 #[cfg_attr(feature = "ci-homebrew-container", test)]
@@ -16,6 +29,8 @@ fn verify_python_in_homebrew_contaner() {
     use pet_poetry::Poetry;
     use pet_reporter::{cache::CacheReporter, collect};
     use std::{path::PathBuf, sync::Arc};
+
+    setup();
 
     let reporter = Arc::new(collect::create_reporter());
     let environment = EnvironmentApi::new();

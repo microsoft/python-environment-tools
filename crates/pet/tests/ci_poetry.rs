@@ -1,10 +1,23 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use std::sync::Once;
+
 use pet_poetry::Poetry;
 use pet_reporter::{cache::CacheReporter, collect};
 
 mod common;
+
+static INIT: Once = Once::new();
+
+/// Setup function that is only run once, even if called multiple times.
+fn setup() {
+    INIT.call_once(|| {
+        env_logger::builder()
+            .filter(None, log::LevelFilter::Trace)
+            .init();
+    });
+}
 
 #[cfg_attr(any(feature = "ci-poetry-global", feature = "ci-poetry-custom"), test)]
 #[allow(dead_code)]
@@ -19,6 +32,8 @@ fn verify_ci_poetry_global() {
         Configuration,
     };
     use std::{env, path::PathBuf, sync::Arc};
+
+    setup();
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = Arc::new(collect::create_reporter());
@@ -87,6 +102,8 @@ fn verify_ci_poetry_project() {
         Configuration,
     };
     use std::{env, path::PathBuf, sync::Arc};
+
+    setup();
 
     let workspace_dir = PathBuf::from(env::var("GITHUB_WORKSPACE").unwrap_or_default());
     let reporter = Arc::new(collect::create_reporter());
