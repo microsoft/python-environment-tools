@@ -3,6 +3,7 @@
 
 use crate::sym_links::get_known_symlinks;
 use lazy_static::lazy_static;
+use log::trace;
 use pet_core::python_environment::{
     PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind,
 };
@@ -19,6 +20,11 @@ pub fn get_python_info(
     python_exe_from_bin_dir: &Path,
     resolved_exe: &Path,
 ) -> Option<PythonEnvironment> {
+    trace!(
+        "Getting homebrew python info for {:?} => {:?}",
+        python_exe_from_bin_dir,
+        resolved_exe
+    );
     // let user_friendly_exe = python_exe_from_bin_dir;
     let python_version = resolved_exe.to_string_lossy().to_string();
     let version = match PYTHON_VERSION.captures(&python_version) {
