@@ -4,10 +4,7 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     thread,
 };
 
@@ -73,7 +70,6 @@ impl PyEnv {
                 versions.take();
             }
         }
-        trace!("PyEnv Manager {:?} and versions {:?}", managers, versions);
         (managers.clone(), versions.clone())
     }
 }
