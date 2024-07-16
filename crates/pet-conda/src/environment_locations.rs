@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use crate::{
-    conda_rc::Condarc,
+    conda_rc::{get_conda_rc_search_paths, Condarc},
     env_variables::EnvVariables,
     utils::{is_conda_env, is_conda_install},
 };
@@ -10,7 +10,7 @@ use log::trace;
 use pet_fs::path::{expand_path, norm_case};
 use pet_python_utils::platform_dirs::Platformdirs;
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     thread,
 };
@@ -66,13 +66,25 @@ pub fn get_conda_environment_paths(
  * <user home>/AppData/Local/conda/conda/envs
  */
 fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<PathBuf> {
+    // Use the conda rc directories as well.
+    let mut env_dirs = vec![];
+    for rc_file_dir in get_conda_rc_search_paths(env_vars) {
+        if rc_file_dir.is_dir() {
+            env_dirs.push(rc_file_dir);
+        } else if rc_file_dir.is_file() {
+            if let Some(dir) = rc_file_dir.parent() {
+                env_dirs.push(dir.to_path_buf());
+            }
+        }
+    }
+
     if let Some(conda_rc) = Condarc::from(env_vars) {
         trace!("Conda environments in .condarc {:?}", conda_rc.env_dirs);
-        conda_rc.env_dirs
+        env_dirs.append(&mut conda_rc.env_dirs.clone());
     } else {
         trace!("No Conda environments in .condarc");
-        vec![]
     }
+    env_dirs
 }
 
 fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
@@ -100,8 +112,19 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
         // Expland variables in some of these
         // https://docs.conda.io/projects/conda/en/4.13.x/user-guide/configuration/use-condarc.html#expansion-of-environment-variables
         if let Some(conda_envs_path) = &env_vars.conda_envs_path {
-            let conda_envs_path = expand_path(PathBuf::from(conda_envs_path.clone()));
-            known_conda_paths.push(conda_envs_path);
+            for path in env::split_paths(&conda_envs_path) {
+                known_conda_paths.push(expand_path(path));
+            }
+        }
+        // https://anaconda-project.readthedocs.io/en/latest/config.html
+        if let Some(conda_envs_path) = &env_vars.anaconda_project_envs_path {
+            for path in env::split_paths(&conda_envs_path) {
+                known_conda_paths.push(expand_path(path));
+            }
+        }
+        // https://anaconda-project.readthedocs.io/en/latest/config.html
+        if let Some(project_dir) = &env_vars.project_dir {
+            known_conda_paths.push(expand_path(PathBuf::from(project_dir)));
         }
 
         for path in known_conda_paths {
@@ -225,17 +248,53 @@ pub fn get_known_conda_install_locations(
     if let Some(ref conda_prefix) = env_vars.conda_prefix {
         known_paths.push(expand_path(PathBuf::from(conda_prefix.clone())));
     }
-    if let Some(ref conda) = env_vars.conda {
-        known_paths.push(PathBuf::from(conda));
+    if let Some(ref conda_dir) = env_vars.conda_dir {
+        known_paths.push(expand_path(PathBuf::from(conda_dir.clone())));
     }
+    if let Some(ref conda) = env_vars.conda {
+        known_paths.push(expand_path(PathBuf::from(conda)));
+    }
+    let app_data = PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default());
     if let Some(home) = env_vars.clone().home {
-        known_paths.push(home.clone().join("anaconda3"));
-        known_paths.push(home.clone().join("miniconda3"));
-        known_paths.push(home.clone().join("miniforge3"));
-        known_paths.push(home.clone().join("micromamba"));
+        for prefix in [
+            home.clone(),
+            // https://stackoverflow.com/questions/35709497/anaconda-python-where-are-the-virtual-environments-stored
+            home.join(".conda"),
+            // https://stackoverflow.com/questions/35709497/anaconda-python-where-are-the-virtual-environments-stored
+            home.join(".local"),
+            // https://stackoverflow.com/questions/35709497/anaconda-python-where-are-the-virtual-environments-stored
+            PathBuf::from("C:\\ProgramData"),
+            PathBuf::from(format!(
+                "{}:\\ProgramData",
+                env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+            )),
+            // https://docs.conda.io/projects/conda/en/latest/user-guide/concepts/environments.html
+            PathBuf::from("C:\\"),
+            PathBuf::from(format!(
+                "{}:\\",
+                env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+            )),
+            // https://community.anaconda.cloud/t/conda-update-anaconda/43656/7
+            app_data.clone(),
+        ] {
+            known_paths.push(prefix.clone().join("anaconda"));
+            known_paths.push(prefix.clone().join("anaconda3"));
+            known_paths.push(prefix.clone().join("miniconda"));
+            known_paths.push(prefix.clone().join("miniconda3"));
+            known_paths.push(prefix.clone().join("miniforge3"));
+            known_paths.push(prefix.clone().join("micromamba"));
+        }
+        // From ./conda/base/constants.py (conda repo)
+        known_paths.push(PathBuf::from("C:\\ProgramData\\conda\\conda"));
+        known_paths.push(PathBuf::from(format!(
+            "{}:\\ProgramData\\conda\\conda",
+            env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+        )));
         // E.g. C:\Users\user name\.conda where we have `envs`` under this directory.
         known_paths.push(home.join(".conda"));
+        known_paths.push(home.join(".local"));
         // E.g. C:\Users\user name\AppData\Local\conda\conda\envs
+        known_paths.push(app_data.join("conda").join("conda"));
         known_paths.push(
             home.join("AppData")
                 .join("Local")
@@ -266,30 +325,24 @@ pub fn get_known_conda_install_locations(
     env_vars: &EnvVariables,
     conda_executable: &Option<PathBuf>,
 ) -> Vec<PathBuf> {
-    let mut known_paths = vec![];
-    let home_value = env_vars.clone().home.unwrap_or_default();
-    let directories_to_look_in = [
-        "/opt",
-        "/usr/share",
-        "/usr/local",
-        "/usr",
-        home_value.to_str().unwrap_or_default(),
-        "", // We need to look in `/anaconda3` and `/miniconda3` as well.
+    let mut known_paths = vec![
+        // We need to look in `/anaconda3` and `/miniconda3` as well.
+        PathBuf::from("/anaconda"),
+        PathBuf::from("/anaconda3"),
+        PathBuf::from("/miniconda"),
+        PathBuf::from("/miniconda3"),
+        PathBuf::from("/miniforge"),
+        PathBuf::from("/miniforge3"),
+        PathBuf::from("/micromamba"),
     ];
-    for directory in directories_to_look_in.iter() {
-        known_paths.push(PathBuf::from(format!("{directory}/anaconda")));
-        known_paths.push(PathBuf::from(format!("{directory}/anaconda3")));
-        known_paths.push(PathBuf::from(format!("{directory}/miniconda")));
-        known_paths.push(PathBuf::from(format!("{directory}/miniconda3")));
-        known_paths.push(PathBuf::from(format!("{directory}/miniforge")));
-        known_paths.push(PathBuf::from(format!("{directory}/miniforge3")));
-        known_paths.push(PathBuf::from(format!("{directory}/micromamba")));
-    }
     if let Some(ref conda_root) = env_vars.conda_root {
         known_paths.push(expand_path(PathBuf::from(conda_root.clone())));
     }
     if let Some(ref conda_prefix) = env_vars.conda_prefix {
         known_paths.push(expand_path(PathBuf::from(conda_prefix.clone())));
+    }
+    if let Some(ref mamba_root_prefix) = env_vars.mamba_root_prefix {
+        known_paths.push(expand_path(PathBuf::from(mamba_root_prefix.clone())));
     }
     if let Some(ref conda_dir) = env_vars.conda_dir {
         known_paths.push(expand_path(PathBuf::from(conda_dir.clone())));
@@ -297,14 +350,33 @@ pub fn get_known_conda_install_locations(
     if let Some(ref conda) = env_vars.conda {
         known_paths.push(expand_path(PathBuf::from(conda)));
     }
-    if let Some(ref home) = env_vars.home {
-        known_paths.push(home.clone().join("anaconda"));
-        known_paths.push(home.clone().join("anaconda3"));
-        known_paths.push(home.clone().join("miniconda"));
-        known_paths.push(home.clone().join("miniconda3"));
-        known_paths.push(home.clone().join("miniforge3"));
-        known_paths.push(home.clone().join("micromamba"));
+    if let Some(home) = env_vars.home.clone() {
+        // https://stackoverflow.com/questions/35709497/anaconda-python-where-are-the-virtual-environments-stored
+        for prefix in [
+            home.clone(),
+            // https://towardsdatascience.com/manage-your-python-virtual-environment-with-conda-a0d2934d5195
+            home.join("opt"),
+            home.join(".conda"),
+            home.join(".local"),
+            // https://docs.conda.io/projects/conda/en/latest/user-guide/concepts/environments.html
+            PathBuf::from("/opt"),
+            PathBuf::from("/usr/share"),
+            PathBuf::from("/usr/local"),
+            PathBuf::from("/usr"),
+            PathBuf::from("/opt/homebrew"),
+            PathBuf::from("/home/linuxbrew/.linuxbrew"),
+        ] {
+            known_paths.push(prefix.clone().join("anaconda"));
+            known_paths.push(prefix.clone().join("anaconda3"));
+            known_paths.push(prefix.clone().join("miniconda"));
+            known_paths.push(prefix.clone().join("miniconda3"));
+            known_paths.push(prefix.clone().join("miniforge3"));
+            known_paths.push(prefix.clone().join("micromamba"));
+        }
+
+        known_paths.push(PathBuf::from("/opt").join("conda"));
         known_paths.push(home.join(".conda"));
+        known_paths.push(home.join(".local"));
     }
     if let Some(conda_dir) = get_conda_dir_from_exe(conda_executable) {
         known_paths.push(conda_dir);
