@@ -33,6 +33,8 @@ pub struct Configuration {
     /// These are different from search_paths, as these are specific directories where environments are expected.
     /// environment_directories on the other hand can be any directory such as a workspace folder, where envs might never exist.
     pub environment_directories: Option<Vec<PathBuf>>,
+    /// Directory to cache the Python environment details.
+    pub cache_directory: Option<PathBuf>,
 }
 
 pub trait Locator: Send + Sync {
