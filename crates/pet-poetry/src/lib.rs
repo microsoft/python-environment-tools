@@ -3,6 +3,7 @@
 
 use env_variables::EnvVariables;
 use environment_locations::list_environments;
+use log::trace;
 use manager::PoetryManager;
 use pet_core::{
     env::PythonEnv,
@@ -69,6 +70,7 @@ impl Poetry {
             self.poetry_executable.lock().unwrap().clone(),
             &self.env_vars,
         );
+        trace!("Poetry Manager {:?}", manager);
         let mut result = LocatorResult {
             managers: vec![],
             environments: vec![],

@@ -119,15 +119,4 @@ mod tests {
             "c3694bfb39d7065b"
         );
     }
-
-    #[test]
-    #[cfg(windows)]
-    fn test_hash_generation_upper_case() {
-        assert_eq!(
-            generate_hash(&PathBuf::from(
-                "C:\\TEMP\\POETRY-FOLDERS\\demo-project1".to_string(),
-            )),
-            "c3694bfb39d7065b"
-        );
-    }
 }

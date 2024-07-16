@@ -226,6 +226,7 @@ fn check_if_pyenv_virtualenv_exists() {
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
+    trace!("Checking for pyenv-virtualenv");
 
     find_and_report_envs(
         &CacheReporter::new(reporter.clone()),
