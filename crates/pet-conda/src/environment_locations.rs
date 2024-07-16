@@ -101,7 +101,7 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
         // https://docs.conda.io/projects/conda/en/4.13.x/user-guide/configuration/use-condarc.html#expansion-of-environment-variables
         if let Some(conda_envs_path) = &env_vars.conda_envs_path {
             for path in env::split_paths(&conda_envs_path) {
-                known_conda_paths.push(expand_path(PathBuf::from(path.clone())));
+                known_conda_paths.push(expand_path(path));
             }
         }
 
