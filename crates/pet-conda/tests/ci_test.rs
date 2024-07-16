@@ -310,10 +310,7 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
     use pet_core::{
         os_environment::EnvironmentApi, python_environment::PythonEnvironmentKind, Locator,
     };
-    use pet_reporter::{
-        cache::{self, CacheReporter},
-        collect,
-    };
+    use pet_reporter::{cache::CacheReporter, collect};
 
     setup();
     let env_name = "env_with_python3";
