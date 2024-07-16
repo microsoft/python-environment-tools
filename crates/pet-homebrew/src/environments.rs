@@ -20,18 +20,15 @@ pub fn get_python_info(
     python_exe_from_bin_dir: &Path,
     resolved_exe: &Path,
 ) -> Option<PythonEnvironment> {
+    let version = get_version(resolved_exe);
+
     trace!(
-        "Getting homebrew python info for {:?} => {:?}",
+        "Getting homebrew python info for {:?} => {:?} with version {:?}",
         python_exe_from_bin_dir,
-        resolved_exe
+        resolved_exe,
+        version
     );
-    // let user_friendly_exe = python_exe_from_bin_dir;
-    let python_version = resolved_exe.to_string_lossy().to_string();
-    let version = match PYTHON_VERSION.captures(&python_version) {
-        Some(captures) => captures.get(1).map(|version| version.as_str().to_string()),
-        None => None,
-    };
-    println!("version: {:?}", version);
+
     let mut symlinks = vec![
         python_exe_from_bin_dir.to_path_buf(),
         resolved_exe.to_path_buf(),
@@ -62,6 +59,14 @@ pub fn get_python_info(
         .build();
     println!("env: {:?}", env);
     Some(env)
+}
+
+fn get_version(resolved_exe: &Path) -> Option<String> {
+    let python_version = resolved_exe.to_string_lossy().to_string();
+    match PYTHON_VERSION.captures(&python_version) {
+        Some(captures) => captures.get(1).map(|version| version.as_str().to_string()),
+        None => None,
+    }
 }
 
 fn get_prefix(_resolved_file: &Path) -> Option<PathBuf> {
@@ -141,4 +146,27 @@ fn get_prefix(_resolved_file: &Path) -> Option<PathBuf> {
     //     };
     // }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn extract_version() {
+        assert_eq!(
+            get_version(&PathBuf::from(
+                "/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3"
+            )),
+            Some("3.12.4".to_string())
+        );
+
+        assert_eq!(
+            get_version(&PathBuf::from(
+                "/home/linuxbrew/.linuxbrew/Cellar/python@3.11/3.11.9_1/bin/python3.11"
+            )),
+            Some("3.11.9".to_string())
+        );
+    }
 }
