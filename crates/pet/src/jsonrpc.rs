@@ -1,6 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::find::find_and_report_envs;
+use crate::find::find_python_environments_in_workspace_folder_recursive;
+use crate::find::identify_python_executables_using_locators;
+use crate::find::SearchScope;
+use crate::locators::create_locators;
+use lazy_static::lazy_static;
 use log::{error, info, trace};
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
@@ -29,6 +35,7 @@ use serde_json::json;
 use serde_json::{self, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use std::{
     ops::Deref,
@@ -38,11 +45,10 @@ use std::{
     time::SystemTime,
 };
 
-use crate::find::find_and_report_envs;
-use crate::find::find_python_environments_in_workspace_folder_recursive;
-use crate::find::identify_python_executables_using_locators;
-use crate::find::SearchScope;
-use crate::locators::create_locators;
+lazy_static! {
+    /// Used to ensure we can have only one refreh at a time.
+    static ref REFRESH_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
+}
 
 pub struct Context {
     configuration: RwLock<Configuration>,
@@ -154,6 +160,9 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
         Ok(refres_options) => {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
+                // Ensure we can have only one refresh at a time.
+                let lock = REFRESH_LOCK.lock().unwrap();
+
                 let config = context.configuration.read().unwrap().clone();
                 let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter())));
 
@@ -233,6 +242,8 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                         Some(())
                     });
                 }
+
+                drop(lock);
             });
         }
         Err(e) => {
