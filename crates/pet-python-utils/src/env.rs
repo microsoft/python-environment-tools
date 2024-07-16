@@ -2,8 +2,8 @@
 // Licensed under the MIT License.
 
 use log::{error, trace};
-use pet_core::env::PythonEnv;
-use serde::Deserialize;
+use pet_core::{arch::Architecture, env::PythonEnv, python_environment::PythonEnvironment};
+use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     time::SystemTime,
@@ -22,7 +22,8 @@ pub struct InterpreterInfo {
     pub is64_bit: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ResolvedPythonEnv {
     pub executable: PathBuf,
     pub prefix: PathBuf,
@@ -41,6 +42,26 @@ impl ResolvedPythonEnv {
         env.symlinks.clone_from(&self.symlinks);
         env
     }
+    pub fn add_to_cache(&self, environment: PythonEnvironment) {
+        // Verify whether we have been given the right exe.
+        let arch = Some(if self.is64_bit {
+            Architecture::X64
+        } else {
+            Architecture::X86
+        });
+        let symlinks = environment.symlinks.clone().unwrap_or_default();
+        if symlinks.contains(&self.executable)
+            && environment.version.clone().unwrap_or_default() == self.version
+            && environment.prefix.clone().unwrap_or_default() == self.prefix
+            && environment.arch == arch
+        {
+            let cache = create_cache(self.executable.clone());
+            let entry = cache.lock().unwrap();
+            entry.track_symlinks(symlinks)
+        } else {
+            error!("Invalid Python environment being cached: {:?}", environment);
+        }
+    }
     /// Given the executable path, resolve the python environment by spawning python.
     /// If we had previously spawned Python and we have the symlinks to this as well,
     /// & all of them are the same as when this exe was previously spawned,
@@ -55,7 +76,7 @@ impl ResolvedPythonEnv {
         if let Some(env) = entry.get() {
             Some(env)
         } else if let Some(env) = get_interpreter_details(executable) {
-            entry.store(executable.to_path_buf(), env.clone());
+            entry.store(env.clone());
             Some(env)
         } else {
             None
@@ -82,16 +103,18 @@ fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
             );
             if let Some((_, output)) = output.split_once(PYTHON_INFO_JSON_SEPARATOR) {
                 if let Ok(info) = serde_json::from_str::<InterpreterInfo>(output) {
+                    let mut symlinks = vec![
+                        PathBuf::from(executable),
+                        PathBuf::from(info.executable.clone()),
+                    ];
+                    symlinks.sort();
+                    symlinks.dedup();
                     Some(ResolvedPythonEnv {
                         executable: PathBuf::from(info.executable.clone()),
                         prefix: PathBuf::from(info.sys_prefix),
                         version: info.version.trim().to_string(),
                         is64_bit: info.is64_bit,
-                        symlinks: if info.executable == executable {
-                            None
-                        } else {
-                            Some(vec![PathBuf::from(executable)])
-                        },
+                        symlinks: Some(symlinks),
                     })
                 } else {
                     error!(

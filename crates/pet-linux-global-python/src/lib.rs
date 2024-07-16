@@ -115,6 +115,7 @@ fn find_and_report_global_pythons_in(
         }
         if let Some(resolved) = ResolvedPythonEnv::from(exe) {
             if let Some(env) = get_python_in_bin(&resolved.to_python_env(), resolved.is64_bit) {
+                resolved.add_to_cache(env.clone());
                 let mut reported_executables = reported_executables.lock().unwrap();
                 // env.symlinks = Some([symlinks, env.symlinks.clone().unwrap_or_default()].concat());
                 if let Some(symlinks) = &env.symlinks {

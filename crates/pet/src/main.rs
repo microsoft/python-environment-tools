@@ -31,6 +31,10 @@ enum Commands {
         #[arg(short, long)]
         list: bool,
 
+        /// Directory to cache the environment information after spawning Python.
+        #[arg(short, long)]
+        cache_directory: Option<PathBuf>,
+
         /// Display verbose output (defaults to warnings).
         #[arg(short, long)]
         verbose: bool,
@@ -55,6 +59,10 @@ enum Commands {
         #[arg(value_name = "PYTHON EXE")]
         executable: PathBuf,
 
+        /// Directory to cache the environment information after spawning Python.
+        #[arg(short, long)]
+        cache_directory: Option<PathBuf>,
+
         /// Whether to display verbose output (defaults to warnings).
         #[arg(short, long)]
         verbose: bool,
@@ -73,6 +81,7 @@ fn main() {
         workspace_dirs: None,
         workspace_only: false,
         global_only: false,
+        cache_directory: None,
     }) {
         Commands::Find {
             list,
@@ -81,6 +90,7 @@ fn main() {
             workspace_dirs,
             workspace_only,
             global_only,
+            cache_directory,
         } => find_and_report_envs_stdio(FindOptions {
             print_list: list,
             print_summary: true,
@@ -89,11 +99,13 @@ fn main() {
             workspace_dirs,
             workspace_only,
             global_only,
+            cache_directory,
         }),
         Commands::Resolve {
             executable,
             verbose,
-        } => resolve_report_stdio(executable, verbose),
+            cache_directory,
+        } => resolve_report_stdio(executable, verbose, cache_directory),
         Commands::Server => start_jsonrpc_server(),
     }
 }

@@ -14,6 +14,7 @@ use pet_core::{os_environment::EnvironmentApi, reporter::Reporter, Configuration
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
+use pet_python_utils::cache::set_cache_directory;
 use pet_reporter::collect;
 use pet_reporter::{self, cache::CacheReporter, stdio};
 use resolve::resolve_environment;
@@ -33,6 +34,7 @@ pub struct FindOptions {
     pub workspace_dirs: Option<Vec<PathBuf>>,
     pub workspace_only: bool,
     pub global_only: bool,
+    pub cache_directory: Option<PathBuf>,
 }
 
 pub fn find_and_report_envs_stdio(options: FindOptions) {
@@ -49,6 +51,10 @@ pub fn find_and_report_envs_stdio(options: FindOptions) {
     } else {
         None
     };
+
+    if let Some(cache_directory) = options.cache_directory.clone() {
+        set_cache_directory(cache_directory);
+    }
     let (config, executable_to_find) = create_config(&options);
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
@@ -220,13 +226,18 @@ fn find_env(
     }
 }
 
-pub fn resolve_report_stdio(executable: PathBuf, verbose: bool) {
+pub fn resolve_report_stdio(executable: PathBuf, verbose: bool, cache_directory: Option<PathBuf>) {
     stdio::initialize_logger(if verbose {
         log::LevelFilter::Trace
     } else {
         log::LevelFilter::Warn
     });
     let now = SystemTime::now();
+
+    if let Some(cache_directory) = cache_directory.clone() {
+        set_cache_directory(cache_directory);
+    }
+
     let stdio_reporter = Arc::new(stdio::create_reporter(true));
     let reporter = CacheReporter::new(stdio_reporter.clone());
     let environment = EnvironmentApi::new();
