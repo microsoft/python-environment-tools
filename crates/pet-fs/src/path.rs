@@ -79,6 +79,24 @@ pub fn expand_path(path: PathBuf) -> PathBuf {
             }
         }
     }
+
+    // Specifically for https://docs.conda.io/projects/conda/en/23.1.x/user-guide/configuration/use-condarc.html#expansion-of-environment-variables
+    if path.to_str().unwrap_or_default().contains("${USERNAME}")
+        || path.to_str().unwrap_or_default().contains("${HOME}")
+    {
+        let username = env::var("USERNAME")
+            .or(env::var("USER"))
+            .unwrap_or_default();
+        let home = env::var("HOME")
+            .or_else(|_| env::var("USERPROFILE"))
+            .unwrap_or_default();
+        return PathBuf::from(
+            path.to_str()
+                .unwrap()
+                .replace("${USERNAME}", &username)
+                .replace("${HOME}", &home),
+        );
+    }
     path
 }
 

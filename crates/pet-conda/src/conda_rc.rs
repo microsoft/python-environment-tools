@@ -186,13 +186,14 @@ fn get_conda_conda_rc_from_path(conda_rc: &PathBuf) -> Option<Condarc> {
 
 fn parse_conda_rc(conda_rc: &Path) -> Option<Condarc> {
     let reader = fs::read_to_string(conda_rc).ok()?;
-    trace!("Possible conda_rc: {:?}", conda_rc);
     if let Some(cfg) = parse_conda_rc_contents(&reader) {
+        trace!("conda_rc: {:?} with env_dirs {:?}", conda_rc, cfg.env_dirs);
         Some(Condarc {
             env_dirs: cfg.env_dirs,
             files: vec![conda_rc.to_path_buf()],
         })
     } else {
+        trace!("Failed to parse or empty conda_rc: {:?}", conda_rc);
         Some(Condarc {
             env_dirs: vec![],
             files: vec![conda_rc.to_path_buf()],
@@ -220,7 +221,9 @@ fn parse_conda_rc_contents(contents: &str) -> Option<Condarc> {
                 if item_str.is_empty() {
                     continue;
                 }
-                env_dirs.push(expand_path(PathBuf::from(item_str.trim())));
+                let env_dir = expand_path(PathBuf::from(item_str.trim()));
+                trace!("env_dir: {:?} parsed as {:?}", item_str.trim(), env_dir);
+                env_dirs.push(env_dir);
             }
         }
         if let Some(items) = doc["envs_path"].as_vec() {
@@ -229,7 +232,9 @@ fn parse_conda_rc_contents(contents: &str) -> Option<Condarc> {
                 if item_str.is_empty() {
                     continue;
                 }
-                env_dirs.push(expand_path(PathBuf::from(item_str.trim())));
+                let env_dir = expand_path(PathBuf::from(item_str.trim()));
+                trace!("env_path: {:?} parsed as {:?}", item_str.trim(), env_dir);
+                env_dirs.push(env_dir);
             }
         }
     }
