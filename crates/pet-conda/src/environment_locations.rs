@@ -356,6 +356,8 @@ pub fn get_known_conda_install_locations(
             PathBuf::from("/usr/share"),
             PathBuf::from("/usr/local"),
             PathBuf::from("/usr"),
+            PathBuf::from("/opt/homebrew"),
+            PathBuf::from("/home/linuxbrew/.linuxbrew"),
         ] {
             known_paths.push(prefix.clone().join("anaconda"));
             known_paths.push(prefix.clone().join("anaconda3"));
