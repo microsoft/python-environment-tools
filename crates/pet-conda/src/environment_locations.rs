@@ -254,6 +254,7 @@ pub fn get_known_conda_install_locations(
     if let Some(ref conda) = env_vars.conda {
         known_paths.push(expand_path(PathBuf::from(conda)));
     }
+    let app_data = PathBuf::from(env::var("LOCALAPPDATA").unwrap_or_default());
     if let Some(home) = env_vars.clone().home {
         for prefix in [
             home.clone(),
@@ -273,6 +274,8 @@ pub fn get_known_conda_install_locations(
                 "{}:\\",
                 env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
             )),
+            // https://community.anaconda.cloud/t/conda-update-anaconda/43656/7
+            app_data.clone(),
         ] {
             known_paths.push(prefix.clone().join("anaconda"));
             known_paths.push(prefix.clone().join("anaconda3"));
@@ -291,6 +294,7 @@ pub fn get_known_conda_install_locations(
         known_paths.push(home.join(".conda"));
         known_paths.push(home.join(".local"));
         // E.g. C:\Users\user name\AppData\Local\conda\conda\envs
+        known_paths.push(app_data.join("conda").join("conda"));
         known_paths.push(
             home.join("AppData")
                 .join("Local")
