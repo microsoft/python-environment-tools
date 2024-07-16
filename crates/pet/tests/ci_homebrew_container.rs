@@ -79,6 +79,7 @@ fn verify_python_in_homebrew_contaner() {
     };
 
     assert_eq!(environments.len(), 2);
+    println!("Discovered environments: {:?}", environments);
 
     for env in [python3_11, python3_12].iter() {
         let python_env = environments
