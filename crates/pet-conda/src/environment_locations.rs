@@ -10,7 +10,7 @@ use log::trace;
 use pet_fs::path::{expand_path, norm_case};
 use pet_python_utils::platform_dirs::Platformdirs;
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     thread,
 };
@@ -100,8 +100,9 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
         // Expland variables in some of these
         // https://docs.conda.io/projects/conda/en/4.13.x/user-guide/configuration/use-condarc.html#expansion-of-environment-variables
         if let Some(conda_envs_path) = &env_vars.conda_envs_path {
-            let conda_envs_path = expand_path(PathBuf::from(conda_envs_path.clone()));
-            known_conda_paths.push(conda_envs_path);
+            for path in env::split_paths(&conda_envs_path) {
+                known_conda_paths.push(expand_path(PathBuf::from(path.clone())));
+            }
         }
 
         for path in known_conda_paths {
