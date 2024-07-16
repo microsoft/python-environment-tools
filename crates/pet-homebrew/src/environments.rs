@@ -31,7 +31,7 @@ pub fn get_python_info(
         Some(captures) => captures.get(1).map(|version| version.as_str().to_string()),
         None => None,
     };
-
+    println!("version: {:?}", version);
     let mut symlinks = vec![
         python_exe_from_bin_dir.to_path_buf(),
         resolved_exe.to_path_buf(),
@@ -60,6 +60,7 @@ pub fn get_python_info(
         .prefix(get_prefix(resolved_exe))
         .symlinks(Some(symlinks))
         .build();
+    println!("env: {:?}", env);
     Some(env)
 }
 
