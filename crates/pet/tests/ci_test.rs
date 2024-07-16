@@ -17,10 +17,7 @@ use pet_core::{
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_poetry::Poetry;
-use pet_reporter::{
-    cache::{self, CacheReporter},
-    collect,
-};
+use pet_reporter::{cache::CacheReporter, collect};
 use regex::Regex;
 use serde::Deserialize;
 

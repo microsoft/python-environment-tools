@@ -78,7 +78,13 @@ pub fn find_and_report_envs(
                         let summary = summary.clone();
                         s.spawn(move || {
                             let start = std::time::Instant::now();
+                            trace!("Searching using locator: {}", locator.get_name());
                             locator.find(reporter);
+                            trace!(
+                                "Completed searching using locator: {} in {:?}",
+                                locator.get_name(),
+                                start.elapsed()
+                            );
                             summary
                                 .lock()
                                 .unwrap()
