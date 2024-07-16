@@ -114,7 +114,7 @@ mod tests {
     fn test_hash_generation() {
         assert_eq!(
             generate_hash(&PathBuf::from(
-                &"C:\\temp\\poetry-folders\\demo-project1".into(),
+                "C:\\temp\\poetry-folders\\demo-project1".to_string(),
             )),
             "e72c82125e7281e2"
         );
