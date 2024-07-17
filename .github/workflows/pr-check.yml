@@ -82,402 +82,402 @@ jobs:
           conda create -p ./prefix-envs/.conda-nopy -y
 
 
-      # - name: Upload conda dir
-      #   uses: actions/upload-artifact@v3
-      #   with:
-      #     name: conda
-      #     path: "C:\\Miniconda"
-      #     retention-days: 1
-
-      - name: Install pipenv
-        run: pip install pipenv
-
-      - name: Check pipenv version
-        run: pipenv --version
-
-      - name: Create a Pipenv Environment
-        run: pipenv install
-
-      - name: Install virtualenvwrapper
-        # Activation of the script doesn't work on mac for some reason (didn't check why yet)
-        # But linux is sufficient for the tests
-        if: startsWith( matrix.os, 'ubuntu')
-        run: |
-          pip install virtualenvwrapper
-          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
-          mkdir -p $HOME/.virtualenvs
-          source virtualenvwrapper.sh
-          mkvirtualenv venv_wrapper_env1
-        shell: bash
-
-      - name: Install virtualenvwrapper-win
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          pip install virtualenvwrapper-win
-          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Install pyenv
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          choco install pyenv-win -y
-          echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
-          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Install pyenv and pyenv-virtualenv
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          curl https://pyenv.run | bash
-          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
-          echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Check Pyenv version
-        run: pyenv --version
-        shell: bash
-
-      - name: Install Pyenv Python(s)
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          pyenv install --list
-          pyenv install 3.12.4 3.8.19
-        shell: bash
-
-        # pyenv-win install list has not updated for a while
-      - name: Install Pyenv Python(s)
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          pyenv install --list
-          pyenv install 3.10.5 3.8.10
-        shell: bash
-
-      - name: Create pyenv-virtualenv envs
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          eval "$(pyenv virtualenv-init -)"
-          pyenv virtualenv 3.12 pyenv-virtualenv-env1
-        shell: bash
-
-      # region venv
-      - name: Create .venv
-        # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          python -m venv .venv
-        shell: bash
-
-      - name: Create .venv2
-        # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          python -m venv .venv2
-        shell: bash
-
-      # endregion venv
-
-      # Rust
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
+      - name: Upload conda dir
+        uses: actions/upload-artifact@v3
         with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+          name: conda
+          path: "C:\\Miniconda"
+          retention-days: 1
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Install pipenv
+  #       run: pip install pipenv
 
-      - name: Find Environments
-        if: matrix.run_cli == 'yes'
-        run: cargo run --release --target ${{ matrix.target }}
-        shell: bash
+  #     - name: Check pipenv version
+  #       run: pipenv --version
 
-      - name: Run Tests
-        # Run integration tests in a single thread,
-        # We end up creating conda envs and running multiple tests in parallel
-        # that creat conda envs simultaneously causes issues (sometimes the conda envs do not seem to get created)
-        # Similar issues were identified in vscode-jupyter tests as well (something to do with conda lock files or the like)
-        run: cargo test --frozen --features ci -- --nocapture --test-threads=1
-        env:
-          RUST_BACKTRACE: 1
-          RUST_LOG: trace
-        shell: bash
+  #     - name: Create a Pipenv Environment
+  #       run: pipenv install
 
-  isolated-tests:
-    # Some of these tests are very specific and need to be run in isolation.
-    # E.g. we need to ensure we have a poetry project setup correctly (without .venv created using `pip -m venv .venv`).
-    # We can try to use the previous `tests` job, but that gets very complicated.
-    name: Env Tests
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - feature: ci-poetry-global # Poetry tests with envs stored in standard location
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - feature: ci-poetry-project # Poetry tests, with poetry envs in project
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - feature: ci-poetry-global # Poetry tests with envs stored in standard location
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - feature: ci-poetry-project # Poetry tests, with poetry envs in project
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  #     - name: Install virtualenvwrapper
+  #       # Activation of the script doesn't work on mac for some reason (didn't check why yet)
+  #       # But linux is sufficient for the tests
+  #       if: startsWith( matrix.os, 'ubuntu')
+  #       run: |
+  #         pip install virtualenvwrapper
+  #         echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+  #         mkdir -p $HOME/.virtualenvs
+  #         source virtualenvwrapper.sh
+  #         mkvirtualenv venv_wrapper_env1
+  #       shell: bash
 
-      # region Setup Poetry
-      - name: Set Python 3.x to PATH
-        if: startsWith( matrix.feature, 'ci-poetry')
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
+  #     - name: Install virtualenvwrapper-win
+  #       if: startsWith( matrix.os, 'windows')
+  #       run: |
+  #         pip install virtualenvwrapper-win
+  #         echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Set Python 3.12 to PATH
-        if: startsWith( matrix.feature, 'ci-poetry')
-        id: setupPython312
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+  #     - name: Install pyenv
+  #       if: startsWith( matrix.os, 'windows')
+  #       run: |
+  #         choco install pyenv-win -y
+  #         echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
+  #         echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Set Python 3.11 to PATH
-        if: startsWith( matrix.feature, 'ci-poetry')
-        id: setupPython311
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+  #     - name: Install pyenv and pyenv-virtualenv
+  #       if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         curl https://pyenv.run | bash
+  #         echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+  #         echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
-        run: echo "PYTHON_3_12_PATH=${{ steps.setupPython312.outputs.python-path }}" >> $GITHUB_ENV
-        shell: bash
+  #     - name: Check Pyenv version
+  #       run: pyenv --version
+  #       shell: bash
 
-      - name: Python 3.12 Path
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
-        run: echo $PYTHON_3_12_PATH
-        shell: bash
+  #     - name: Install Pyenv Python(s)
+  #       if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         pyenv install --list
+  #         pyenv install 3.12.4 3.8.19
+  #       shell: bash
 
-      - name: Python 3.11 Path
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
-        run: echo "PYTHON_3_11_PATH=${{ steps.setupPython311.outputs.python-path }}" >> $GITHUB_ENV
-        shell: bash
+  #       # pyenv-win install list has not updated for a while
+  #     - name: Install Pyenv Python(s)
+  #       if: startsWith( matrix.os, 'windows')
+  #       run: |
+  #         pyenv install --list
+  #         pyenv install 3.10.5 3.8.10
+  #       shell: bash
 
-      - name: Install Poetry (envs globally)
-        if: startsWith( matrix.feature, 'ci-poetry-global')
-        uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: false
-          installer-parallel: true
+  #     - name: Create pyenv-virtualenv envs
+  #       if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         eval "$(pyenv virtualenv-init -)"
+  #         pyenv virtualenv 3.12 pyenv-virtualenv-env1
+  #       shell: bash
 
-      - name: Install Poetry (env locally)
-        if: startsWith( matrix.feature, 'ci-poetry-project')
-        uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-          installer-parallel: true
+  #     # region venv
+  #     - name: Create .venv
+  #       # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         python -m venv .venv
+  #       shell: bash
 
-      - name: Install Poetry (env locally)
-        if: startsWith( matrix.feature, 'ci-poetry-custom')
-        uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: false
-          virtualenvs-path: ~/my-custom-path
-          installer-parallel: true
+  #     - name: Create .venv2
+  #       # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         python -m venv .venv2
+  #       shell: bash
 
-      - name: Petry exe
-        if: startsWith( matrix.feature, 'ci-poetry')
-        run: which poetry
-        shell: bash
+  #     # endregion venv
 
-      - name: Petry config
-        if: startsWith( matrix.feature, 'ci-poetry')
-        run: poetry config --list
-        shell: bash
+  #     # Rust
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
 
-      - name: Petry setup
-        if: startsWith( matrix.feature, 'ci-poetry')
-        # We want to have 2 envs for this poetry project 3.12 and 3.11.
-        run: poetry init --name=pet-test --python=^3.11 -q -n
-        shell: bash
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
 
-      - name: Petry virtual env setup 3.12
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
-        run: poetry env use 3.12
-        shell: bash
+  #     - name: Find Environments
+  #       if: matrix.run_cli == 'yes'
+  #       run: cargo run --release --target ${{ matrix.target }}
+  #       shell: bash
 
-      - name: Petry virtual env setup 3.12
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
-        run: poetry env use $PYTHON_3_12_PATH
-        shell: bash
+  #     - name: Run Tests
+  #       # Run integration tests in a single thread,
+  #       # We end up creating conda envs and running multiple tests in parallel
+  #       # that creat conda envs simultaneously causes issues (sometimes the conda envs do not seem to get created)
+  #       # Similar issues were identified in vscode-jupyter tests as well (something to do with conda lock files or the like)
+  #       run: cargo test --frozen --features ci -- --nocapture --test-threads=1
+  #       env:
+  #         RUST_BACKTRACE: 1
+  #         RUST_LOG: trace
+  #       shell: bash
 
-      - name: Petry virtual env setup 3.11
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
-        run: poetry env use 3.11
-        shell: bash
+  # isolated-tests:
+  #   # Some of these tests are very specific and need to be run in isolation.
+  #   # E.g. we need to ensure we have a poetry project setup correctly (without .venv created using `pip -m venv .venv`).
+  #   # We can try to use the previous `tests` job, but that gets very complicated.
+  #   name: Env Tests
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - feature: ci-poetry-global # Poetry tests with envs stored in standard location
+  #           os: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #         - feature: ci-poetry-project # Poetry tests, with poetry envs in project
+  #           os: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #         - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
+  #           os: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #         - feature: ci-poetry-global # Poetry tests with envs stored in standard location
+  #           os: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #         - feature: ci-poetry-project # Poetry tests, with poetry envs in project
+  #           os: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #         - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
+  #           os: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      - name: Petry virtual env setup 3.11
-        if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
-        run: poetry env use $PYTHON_3_11_PATH
-        shell: bash
+  #     # region Setup Poetry
+  #     - name: Set Python 3.x to PATH
+  #       if: startsWith( matrix.feature, 'ci-poetry')
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.x"
 
-      - name: Petry list envs
-        if: startsWith( matrix.feature, 'ci-poetry')
-        run: poetry env list
-        shell: bash
+  #     - name: Set Python 3.12 to PATH
+  #       if: startsWith( matrix.feature, 'ci-poetry')
+  #       id: setupPython312
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.12"
 
-      - name: Petry pyproject.toml
-        if: startsWith( matrix.feature, 'ci-poetry')
-        run: cat pyproject.toml
-        shell: bash
+  #     - name: Set Python 3.11 to PATH
+  #       if: startsWith( matrix.feature, 'ci-poetry')
+  #       id: setupPython311
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.11"
 
-      # # Dump env vars
-      # - name: Env
-      #   run: set
-      #   shell: bash
+  #     - name: Python 3.12 Path
+  #       if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+  #       run: echo "PYTHON_3_12_PATH=${{ steps.setupPython312.outputs.python-path }}" >> $GITHUB_ENV
+  #       shell: bash
 
-      # endregion
+  #     - name: Python 3.12 Path
+  #       if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+  #       run: echo $PYTHON_3_12_PATH
+  #       shell: bash
 
-      # Rust
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+  #     - name: Python 3.11 Path
+  #       if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+  #       run: echo "PYTHON_3_11_PATH=${{ steps.setupPython311.outputs.python-path }}" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Install Poetry (envs globally)
+  #       if: startsWith( matrix.feature, 'ci-poetry-global')
+  #       uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
+  #       with:
+  #         virtualenvs-create: true
+  #         virtualenvs-in-project: false
+  #         installer-parallel: true
 
-      - name: Find Environments
-        run: cargo run --release --target ${{ matrix.target }}
-        shell: bash
+  #     - name: Install Poetry (env locally)
+  #       if: startsWith( matrix.feature, 'ci-poetry-project')
+  #       uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
+  #       with:
+  #         virtualenvs-create: true
+  #         virtualenvs-in-project: true
+  #         installer-parallel: true
 
-      - name: Run Tests
-        # Run integration tests in a single thread,
-        # We end up creating conda envs and running multiple tests in parallel
-        # that creat conda envs simultaneously causes issues (sometimes the conda envs do not seem to get created)
-        # Similar issues were identified in vscode-jupyter tests as well (something to do with conda lock files or the like)
-        run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture --test-threads=1
-        env:
-          RUST_BACKTRACE: 1
-          RUST_LOG: trace
-        shell: bash
+  #     - name: Install Poetry (env locally)
+  #       if: startsWith( matrix.feature, 'ci-poetry-custom')
+  #       uses: snok/install-poetry@93ada01c735cc8a383ce0ce2ae205a21c415379b
+  #       with:
+  #         virtualenvs-create: true
+  #         virtualenvs-in-project: false
+  #         virtualenvs-path: ~/my-custom-path
+  #         installer-parallel: true
 
-  container-tests:
-    # These tests are required as its not easy/possible to use the previous jobs.
-    # E.g. we need to test against the jupyter container, as we found some issues specific to that env.
-    name: Tests in Containers
-    container:
-      image: ${{ matrix.image }}
-      options: --user=root
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - feature: ci-jupyter-container
-            os: ubuntu-latest
-            # For Tests again the container used in https://github.com/github/codespaces-jupyter
-            image: mcr.microsoft.com/devcontainers/universal:2.11.1
-            target: x86_64-unknown-linux-musl
-          - feature: ci-homebrew-container
-            os: ubuntu-latest
-            # For Homebrew in Ubuntu
-            image: homebrew/brew
-            target: x86_64-unknown-linux-musl
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  #     - name: Petry exe
+  #       if: startsWith( matrix.feature, 'ci-poetry')
+  #       run: which poetry
+  #       shell: bash
 
-      # Homebrew
-      - name: Homebrew Python
-        if: startsWith( matrix.image, 'homebrew')
-        run: brew install python@3.12 python@3.11
-        shell: bash
+  #     - name: Petry config
+  #       if: startsWith( matrix.feature, 'ci-poetry')
+  #       run: poetry config --list
+  #       shell: bash
 
-      # Rust
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+  #     - name: Petry setup
+  #       if: startsWith( matrix.feature, 'ci-poetry')
+  #       # We want to have 2 envs for this poetry project 3.12 and 3.11.
+  #       run: poetry init --name=pet-test --python=^3.11 -q -n
+  #       shell: bash
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Petry virtual env setup 3.12
+  #       if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
+  #       run: poetry env use 3.12
+  #       shell: bash
 
-      - name: Find Environments
-        run: cargo run --release --target ${{ matrix.target }}
-        shell: bash
+  #     - name: Petry virtual env setup 3.12
+  #       if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+  #       run: poetry env use $PYTHON_3_12_PATH
+  #       shell: bash
 
-      - name: Run Tests
-        run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture
-        shell: bash
+  #     - name: Petry virtual env setup 3.11
+  #       if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
+  #       run: poetry env use 3.11
+  #       shell: bash
 
-  builds:
-    name: Builds
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: arm-unknown-linux-gnueabihf
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            run_cli: "yes"
-          - os: macos-14
-            target: aarch64-apple-darwin
-            run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: x86_64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-musl
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  #     - name: Petry virtual env setup 3.11
+  #       if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
+  #       run: poetry env use $PYTHON_3_11_PATH
+  #       shell: bash
 
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+  #     - name: Petry list envs
+  #       if: startsWith( matrix.feature, 'ci-poetry')
+  #       run: poetry env list
+  #       shell: bash
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Petry pyproject.toml
+  #       if: startsWith( matrix.feature, 'ci-poetry')
+  #       run: cat pyproject.toml
+  #       shell: bash
 
-      - name: Run Tests
-        # We do not want to run all features, CI is only for tests with Python
-        # Thats a separate job.
-        run: cargo test --frozen
-        shell: bash
+  #     # # Dump env vars
+  #     # - name: Env
+  #     #   run: set
+  #     #   shell: bash
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-        shell: bash
+  #     # endregion
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pet-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/pet*
+  #     # Rust
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
+
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
+
+  #     - name: Find Environments
+  #       run: cargo run --release --target ${{ matrix.target }}
+  #       shell: bash
+
+  #     - name: Run Tests
+  #       # Run integration tests in a single thread,
+  #       # We end up creating conda envs and running multiple tests in parallel
+  #       # that creat conda envs simultaneously causes issues (sometimes the conda envs do not seem to get created)
+  #       # Similar issues were identified in vscode-jupyter tests as well (something to do with conda lock files or the like)
+  #       run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture --test-threads=1
+  #       env:
+  #         RUST_BACKTRACE: 1
+  #         RUST_LOG: trace
+  #       shell: bash
+
+  # container-tests:
+  #   # These tests are required as its not easy/possible to use the previous jobs.
+  #   # E.g. we need to test against the jupyter container, as we found some issues specific to that env.
+  #   name: Tests in Containers
+  #   container:
+  #     image: ${{ matrix.image }}
+  #     options: --user=root
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - feature: ci-jupyter-container
+  #           os: ubuntu-latest
+  #           # For Tests again the container used in https://github.com/github/codespaces-jupyter
+  #           image: mcr.microsoft.com/devcontainers/universal:2.11.1
+  #           target: x86_64-unknown-linux-musl
+  #         - feature: ci-homebrew-container
+  #           os: ubuntu-latest
+  #           # For Homebrew in Ubuntu
+  #           image: homebrew/brew
+  #           target: x86_64-unknown-linux-musl
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+
+  #     # Homebrew
+  #     - name: Homebrew Python
+  #       if: startsWith( matrix.image, 'homebrew')
+  #       run: brew install python@3.12 python@3.11
+  #       shell: bash
+
+  #     # Rust
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
+
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
+
+  #     - name: Find Environments
+  #       run: cargo run --release --target ${{ matrix.target }}
+  #       shell: bash
+
+  #     - name: Run Tests
+  #       run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture
+  #       shell: bash
+
+  # builds:
+  #   name: Builds
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - os: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #         - os: windows-latest
+  #           target: aarch64-pc-windows-msvc
+  #         - os: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #           run_cli: "yes"
+  #         #   - os: ubuntu-latest
+  #         #     target: aarch64-unknown-linux-gnu
+  #         #   - os: ubuntu-latest
+  #         #     target: arm-unknown-linux-gnueabihf
+  #         - os: macos-latest
+  #           target: x86_64-apple-darwin
+  #           run_cli: "yes"
+  #         - os: macos-14
+  #           target: aarch64-apple-darwin
+  #           run_cli: "yes"
+  #         #   - os: ubuntu-latest
+  #         #     target: x86_64-unknown-linux-gnu
+  #         #   - os: ubuntu-latest
+  #         #     target: aarch64-unknown-linux-musl
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
+
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
+
+  #     - name: Run Tests
+  #       # We do not want to run all features, CI is only for tests with Python
+  #       # Thats a separate job.
+  #       run: cargo test --frozen
+  #       shell: bash
+
+  #     - name: Build
+  #       run: cargo build --release --target ${{ matrix.target }}
+  #       shell: bash
+
+  #     - name: Upload Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: pet-${{ matrix.target }}
+  #         path: target/${{ matrix.target }}/release/pet*
