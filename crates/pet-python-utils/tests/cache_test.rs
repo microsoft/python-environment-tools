@@ -5,6 +5,7 @@ mod common;
 use std::{path::PathBuf, sync::Once};
 
 use common::resolve_test_path;
+use log::trace;
 
 static INIT: Once = Once::new();
 
@@ -19,7 +20,7 @@ fn setup() {
 
 #[cfg_attr(
     any(
-        feature = "ci",
+        feature = "ci", // Try to run this in all ci jobs/environments
         feature = "ci-jupyter-container",
         feature = "ci-homebrew-container",
         feature = "ci-poetry-global",
@@ -43,7 +44,7 @@ fn verify_cache() {
     let cache_dir = env::temp_dir().join("pet_cache");
     set_cache_directory(cache_dir.clone());
 
-    let prefix: PathBuf = resolve_test_path(&["unix", "cache", ".venv"]).into();
+    let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv"]).into();
     let bin = prefix.join("bin");
     let python = bin.join("python");
     let python3 = bin.join("python3");
@@ -92,7 +93,7 @@ fn verify_cache() {
 
 #[cfg_attr(
     any(
-        feature = "ci",
+        feature = "ci", // Try to run this in all ci jobs/environments
         feature = "ci-jupyter-container",
         feature = "ci-homebrew-container",
         feature = "ci-poetry-global",
@@ -116,7 +117,7 @@ fn verify_invalidating_cache() {
     let cache_dir = env::temp_dir().join("pet_cache");
     set_cache_directory(cache_dir.clone());
 
-    let prefix: PathBuf = resolve_test_path(&["unix", "cache", ".venv"]).into();
+    let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv"]).into();
     let bin = prefix.join("bin");
     let python = bin.join("python");
     let python3 = bin.join("python3");
@@ -150,7 +151,7 @@ fn verify_invalidating_cache() {
 
 #[cfg_attr(
     any(
-        feature = "ci",
+        feature = "ci", // Try to run this in all ci jobs/environments
         feature = "ci-jupyter-container",
         feature = "ci-homebrew-container",
         feature = "ci-poetry-global",
@@ -174,7 +175,7 @@ fn verify_invalidating_cache_due_to_hash_conflicts() {
     let cache_dir = env::temp_dir().join("pet_cache");
     set_cache_directory(cache_dir.clone());
 
-    let prefix: PathBuf = resolve_test_path(&["unix", "cache", ".venv"]).into();
+    let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv"]).into();
     let bin = prefix.join("bin");
     let python = bin.join("python");
     let python3 = bin.join("python3");

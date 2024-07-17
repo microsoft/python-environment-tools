@@ -66,14 +66,18 @@ impl CacheImpl {
     /// Once a cache directory has been set, you cannot change it.
     /// No point supporting such a scenario.
     fn set_cache_directory(&self, cache_dir: PathBuf) {
-        if self.cache_dir.lock().unwrap().is_some() {
-            warn!("Cache directory has already been set. Cannot change it now.");
+        if let Some(cache_dir) = self.cache_dir.lock().unwrap().clone() {
+            warn!(
+                "Cache directory has already been set to {:?}. Cannot change it now.",
+                cache_dir
+            );
             return;
         }
         trace!("Setting cache directory to {:?}", cache_dir);
         self.cache_dir.lock().unwrap().replace(cache_dir);
     }
     fn clear(&self) -> io::Result<()> {
+        trace!("Clearing cache");
         self.locks.lock().unwrap().clear();
         if let Some(cache_directory) = self.cache_dir.lock().unwrap().clone() {
             std::fs::remove_dir_all(cache_directory)
@@ -94,7 +98,7 @@ impl CacheImpl {
     }
 }
 
-type FilePathWithMTimeCTime = (PathBuf, Option<SystemTime>, Option<SystemTime>);
+type FilePathWithMTimeCTime = (PathBuf, SystemTime, SystemTime);
 
 struct CacheEntryImpl {
     cache_directory: Option<PathBuf>,
@@ -116,9 +120,17 @@ impl CacheEntryImpl {
         // Check if any of the exes have changed since we last cached this.
         for symlink_info in self.symlinks.lock().unwrap().iter() {
             if let Ok(metadata) = symlink_info.0.metadata() {
-                if metadata.modified().ok() != symlink_info.1
-                    || metadata.created().ok() != symlink_info.2
+                if metadata.modified().ok() != Some(symlink_info.1)
+                    || metadata.created().ok() != Some(symlink_info.2)
                 {
+                    trace!(
+                        "Symlink {:?} has changed since we last cached it. original mtime & ctime {:?}, {:?}, current mtime & ctime {:?}, {:?}",
+                        symlink_info.0,
+                        symlink_info.1,
+                        symlink_info.2,
+                        metadata.modified().ok(),
+                        metadata.created().ok()
+                    );
                     self.envoronment.lock().unwrap().take();
                     if let Some(cache_directory) = &self.cache_directory {
                         delete_cache_file(cache_directory, &self.executable);
@@ -156,11 +168,12 @@ impl CacheEntry for CacheEntryImpl {
         let mut symlinks = vec![];
         for symlink in environment.symlinks.clone().unwrap_or_default().iter() {
             if let Ok(metadata) = symlink.metadata() {
-                symlinks.push((
-                    symlink.clone(),
-                    metadata.modified().ok(),
-                    metadata.created().ok(),
-                ));
+                // We only care if we have the information
+                if let (Some(modified), Some(created)) =
+                    (metadata.modified().ok(), metadata.created().ok())
+                {
+                    symlinks.push((symlink.clone(), modified, created));
+                }
             }
         }
 
@@ -174,8 +187,9 @@ impl CacheEntry for CacheEntryImpl {
             .unwrap()
             .replace(environment.clone());
 
+        trace!("Caching interpreter info for {:?}", self.executable);
+
         if let Some(ref cache_directory) = self.cache_directory {
-            trace!("Storing cache for {:?}", self.executable);
             store_cache_in_file(cache_directory, &self.executable, &environment, symlinks)
         }
     }
