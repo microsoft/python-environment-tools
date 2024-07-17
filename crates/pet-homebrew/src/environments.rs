@@ -57,7 +57,6 @@ pub fn get_python_info(
         .prefix(get_prefix(resolved_exe))
         .symlinks(Some(symlinks))
         .build();
-    println!("env: {:?}", env);
     Some(env)
 }
 
