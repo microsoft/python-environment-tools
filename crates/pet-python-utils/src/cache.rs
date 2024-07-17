@@ -70,6 +70,7 @@ impl CacheImpl {
             warn!("Cache directory has already been set. Cannot change it now.");
             return;
         }
+        trace!("Setting cache directory to {:?}", cache_dir);
         self.cache_dir.lock().unwrap().replace(cache_dir);
     }
     fn clear(&self) -> io::Result<()> {
