@@ -2,12 +2,33 @@
 // Licensed under the MIT License.
 
 mod common;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Once};
 
 use common::resolve_test_path;
 
-#[cfg(unix)]
-#[test]
+static INIT: Once = Once::new();
+
+/// Setup function that is only run once, even if called multiple times.
+fn setup() {
+    INIT.call_once(|| {
+        env_logger::builder()
+            .filter(None, log::LevelFilter::Trace)
+            .init();
+    });
+}
+
+#[cfg_attr(
+    any(
+        feature = "ci",
+        feature = "ci-jupyter-container",
+        feature = "ci-homebrew-container",
+        feature = "ci-poetry-global",
+        feature = "ci-poetry-project",
+        feature = "ci-poetry-custom",
+    ),
+    test
+)]
+#[allow(dead_code)]
 fn verify_cache() {
     use std::{env, fs};
 
@@ -16,6 +37,8 @@ fn verify_cache() {
         env::ResolvedPythonEnv,
         fs_cache::generate_cache_file,
     };
+
+    setup();
 
     let cache_dir = env::temp_dir().join("pet_cache");
     set_cache_directory(cache_dir.clone());
@@ -67,8 +90,18 @@ fn verify_cache() {
     assert!(!cache_file.exists());
 }
 
-#[cfg(unix)]
-#[test]
+#[cfg_attr(
+    any(
+        feature = "ci",
+        feature = "ci-jupyter-container",
+        feature = "ci-homebrew-container",
+        feature = "ci-poetry-global",
+        feature = "ci-poetry-project",
+        feature = "ci-poetry-custom",
+    ),
+    test
+)]
+#[allow(dead_code)]
 fn verify_invalidating_cache() {
     use std::{env, fs, time::SystemTime};
 
@@ -77,6 +110,8 @@ fn verify_invalidating_cache() {
         env::ResolvedPythonEnv,
         fs_cache::generate_cache_file,
     };
+
+    setup();
 
     let cache_dir = env::temp_dir().join("pet_cache");
     set_cache_directory(cache_dir.clone());
@@ -113,8 +148,18 @@ fn verify_invalidating_cache() {
     assert!(!cache_file.exists());
 }
 
-#[cfg(unix)]
-#[test]
+#[cfg_attr(
+    any(
+        feature = "ci",
+        feature = "ci-jupyter-container",
+        feature = "ci-homebrew-container",
+        feature = "ci-poetry-global",
+        feature = "ci-poetry-project",
+        feature = "ci-poetry-custom",
+    ),
+    test
+)]
+#[allow(dead_code)]
 fn verify_invalidating_cache_due_to_hash_conflicts() {
     use std::{env, fs};
 
@@ -123,6 +168,8 @@ fn verify_invalidating_cache_due_to_hash_conflicts() {
         env::ResolvedPythonEnv,
         fs_cache::generate_cache_file,
     };
+
+    setup();
 
     let cache_dir = env::temp_dir().join("pet_cache");
     set_cache_directory(cache_dir.clone());
