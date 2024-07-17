@@ -83,7 +83,7 @@ pub fn start_jsonrpc_server() {
     handlers.add_request_handler("resolve", handle_resolve);
     handlers.add_request_handler("find", handle_find);
     handlers.add_request_handler("condaInfo", handle_conda_telemetry);
-    handlers.add_request_handler("clearCache", handle_clear_cache);
+    handlers.add_request_handler("clear", handle_clear_cache);
     start_server(&handlers)
 }
 
@@ -320,6 +320,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FindOptions {
     /// Search path, can be a directory or a Python executable as well.
     /// If passing a directory, the assumption is that its a project directory (workspace folder).
