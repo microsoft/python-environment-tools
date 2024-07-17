@@ -39,6 +39,8 @@ pub fn get_conda_environment_paths(
     env_paths = env_paths.iter().map(norm_case).collect();
     env_paths.sort();
     env_paths.dedup();
+
+    trace!("get_conda_environment_paths {:?}", env_paths);
     // For each env, check if we have a conda install directory in them and
     // & then iterate through the list of envs in the envs directory.
     // let env_paths = vec![];
@@ -147,6 +149,7 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
     let mut envs: Vec<PathBuf> = vec![];
 
     if is_conda_install(conda_dir) {
+        trace!("get_environments.is_conda_install {:?}", conda_dir);
         envs.push(conda_dir.to_path_buf());
 
         if let Ok(entries) = fs::read_dir(conda_dir.join("envs")) {
@@ -163,8 +166,10 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
             envs.append(&mut conda_rc.env_dirs);
         }
     } else if is_conda_env(conda_dir) {
+        trace!("get_environments.is_conda_env {:?}", conda_dir);
         envs.push(conda_dir.to_path_buf());
     } else if conda_dir.join("envs").exists() {
+        trace!("get_environments.envs {:?}", conda_dir);
         // This could be a directory where conda environments are stored.
         // I.e. its not necessarily the root conda install directory.
         // E.g. C:\Users\donjayamanne\.conda
@@ -178,6 +183,7 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
             );
         }
     } else {
+        trace!("get_environments.enumerate {:?}", conda_dir);
         // The dir could already be the `envs` directory.
         if let Ok(entries) = fs::read_dir(conda_dir) {
             envs.append(
