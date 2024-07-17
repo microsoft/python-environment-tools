@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 use lazy_static::lazy_static;
-use log::trace;
+use log::{trace, warn};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
+    io,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -12,7 +13,7 @@ use std::{
 
 use crate::{
     env::ResolvedPythonEnv,
-    fs_cache::{get_cache_from_file, store_cache_in_file},
+    fs_cache::{delete_cache_file, get_cache_from_file, store_cache_in_file},
 };
 
 lazy_static! {
@@ -23,6 +24,10 @@ pub trait CacheEntry: Send + Sync {
     fn get(&self) -> Option<ResolvedPythonEnv>;
     fn store(&self, environment: ResolvedPythonEnv);
     fn track_symlinks(&self, symlinks: Vec<PathBuf>);
+}
+
+pub fn clear_cache() -> io::Result<()> {
+    CACHE.clear()
 }
 
 pub fn create_cache(executable: PathBuf) -> Arc<Mutex<Box<dyn CacheEntry>>> {
@@ -61,28 +66,39 @@ impl CacheImpl {
     /// Once a cache directory has been set, you cannot change it.
     /// No point supporting such a scenario.
     fn set_cache_directory(&self, cache_dir: PathBuf) {
+        if let Some(cache_dir) = self.cache_dir.lock().unwrap().clone() {
+            warn!(
+                "Cache directory has already been set to {:?}. Cannot change it now.",
+                cache_dir
+            );
+            return;
+        }
+        trace!("Setting cache directory to {:?}", cache_dir);
         self.cache_dir.lock().unwrap().replace(cache_dir);
     }
-    fn create_cache(&self, executable: PathBuf) -> LockableCacheEntry {
-        if let Some(cache_directory) = self.cache_dir.lock().unwrap().as_ref() {
-            match self.locks.lock().unwrap().entry(executable.clone()) {
-                Entry::Occupied(lock) => lock.get().clone(),
-                Entry::Vacant(lock) => {
-                    let cache =
-                        Box::new(CacheEntryImpl::create(cache_directory.clone(), executable))
-                            as Box<(dyn CacheEntry + 'static)>;
-                    lock.insert(Arc::new(Mutex::new(cache))).clone()
-                }
-            }
+    fn clear(&self) -> io::Result<()> {
+        trace!("Clearing cache");
+        self.locks.lock().unwrap().clear();
+        if let Some(cache_directory) = self.cache_dir.lock().unwrap().clone() {
+            std::fs::remove_dir_all(cache_directory)
         } else {
-            Arc::new(Mutex::new(Box::new(CacheEntryImpl::empty(
-                executable.clone(),
-            ))))
+            Ok(())
+        }
+    }
+    fn create_cache(&self, executable: PathBuf) -> LockableCacheEntry {
+        let cache_directory = self.cache_dir.lock().unwrap().clone();
+        match self.locks.lock().unwrap().entry(executable.clone()) {
+            Entry::Occupied(lock) => lock.get().clone(),
+            Entry::Vacant(lock) => {
+                let cache = Box::new(CacheEntryImpl::create(cache_directory.clone(), executable))
+                    as Box<(dyn CacheEntry + 'static)>;
+                lock.insert(Arc::new(Mutex::new(cache))).clone()
+            }
         }
     }
 }
 
-type FilePathWithMTimeCTime = (PathBuf, Option<SystemTime>, Option<SystemTime>);
+type FilePathWithMTimeCTime = (PathBuf, SystemTime, SystemTime);
 
 struct CacheEntryImpl {
     cache_directory: Option<PathBuf>,
@@ -92,17 +108,9 @@ struct CacheEntryImpl {
     symlinks: Arc<Mutex<Vec<FilePathWithMTimeCTime>>>,
 }
 impl CacheEntryImpl {
-    pub fn create(cache_directory: PathBuf, executable: PathBuf) -> impl CacheEntry {
+    pub fn create(cache_directory: Option<PathBuf>, executable: PathBuf) -> impl CacheEntry {
         CacheEntryImpl {
-            cache_directory: Some(cache_directory),
-            executable,
-            envoronment: Arc::new(Mutex::new(None)),
-            symlinks: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-    pub fn empty(executable: PathBuf) -> impl CacheEntry {
-        CacheEntryImpl {
-            cache_directory: None,
+            cache_directory,
             executable,
             envoronment: Arc::new(Mutex::new(None)),
             symlinks: Arc::new(Mutex::new(Vec::new())),
@@ -112,10 +120,21 @@ impl CacheEntryImpl {
         // Check if any of the exes have changed since we last cached this.
         for symlink_info in self.symlinks.lock().unwrap().iter() {
             if let Ok(metadata) = symlink_info.0.metadata() {
-                if metadata.modified().ok() != symlink_info.1
-                    || metadata.created().ok() != symlink_info.2
+                if metadata.modified().ok() != Some(symlink_info.1)
+                    || metadata.created().ok() != Some(symlink_info.2)
                 {
+                    trace!(
+                        "Symlink {:?} has changed since we last cached it. original mtime & ctime {:?}, {:?}, current mtime & ctime {:?}, {:?}",
+                        symlink_info.0,
+                        symlink_info.1,
+                        symlink_info.2,
+                        metadata.modified().ok(),
+                        metadata.created().ok()
+                    );
                     self.envoronment.lock().unwrap().take();
+                    if let Some(cache_directory) = &self.cache_directory {
+                        delete_cache_file(cache_directory, &self.executable);
+                    }
                 }
             }
         }
@@ -149,11 +168,12 @@ impl CacheEntry for CacheEntryImpl {
         let mut symlinks = vec![];
         for symlink in environment.symlinks.clone().unwrap_or_default().iter() {
             if let Ok(metadata) = symlink.metadata() {
-                symlinks.push((
-                    symlink.clone(),
-                    metadata.modified().ok(),
-                    metadata.created().ok(),
-                ));
+                // We only care if we have the information
+                if let (Some(modified), Some(created)) =
+                    (metadata.modified().ok(), metadata.created().ok())
+                {
+                    symlinks.push((symlink.clone(), modified, created));
+                }
             }
         }
 
@@ -167,8 +187,9 @@ impl CacheEntry for CacheEntryImpl {
             .unwrap()
             .replace(environment.clone());
 
+        trace!("Caching interpreter info for {:?}", self.executable);
+
         if let Some(ref cache_directory) = self.cache_directory {
-            trace!("Storing cache for {:?}", self.executable);
             store_cache_in_file(cache_directory, &self.executable, &environment, symlinks)
         }
     }
