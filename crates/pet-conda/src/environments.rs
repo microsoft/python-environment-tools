@@ -25,6 +25,7 @@ pub struct CondaEnvironment {
     pub arch: Option<Architecture>,
 }
 
+#[allow(dead_code)]
 impl CondaEnvironment {
     pub fn from(path: &Path, manager: &Option<CondaManager>) -> Option<Self> {
         get_conda_environment_info(path, manager)
