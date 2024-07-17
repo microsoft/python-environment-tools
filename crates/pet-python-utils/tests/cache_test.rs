@@ -141,6 +141,12 @@ fn verify_invalidating_cache() {
     // Next update the executable, so as to cause the mtime to change.
     // As a result of this the cache should no longer be valid.
     let _ = fs::write(python.clone(), format!("{:?}", SystemTime::now()));
+    println!(
+        "UPDATED EXECUTABLE: {:?}, mtime and ctime are {:?} and {:?}",
+        python,
+        python.metadata().unwrap().modified().unwrap(),
+        python.metadata().unwrap().created().unwrap()
+    );
     assert!(cache.get().is_none());
     assert!(!cache_file.exists());
 }
