@@ -141,12 +141,6 @@ fn verify_invalidating_cache() {
     // Next update the executable, so as to cause the mtime to change.
     // As a result of this the cache should no longer be valid.
     let _ = fs::write(python.clone(), format!("{:?}", SystemTime::now()));
-    println!(
-        "UPDATED EXECUTABLE: {:?}, mtime and ctime are {:?} and {:?}",
-        python,
-        python.metadata().unwrap().modified().unwrap(),
-        python.metadata().unwrap().created().unwrap()
-    );
     assert!(cache.get().is_none());
     assert!(!cache_file.exists());
 }
@@ -231,10 +225,6 @@ fn verify_invalidating_cache_due_to_hash_conflicts() {
     let _ = clear_cache(); // Clear in memory cache as well as the files..
     let _ = fs::create_dir_all(&cache_dir).unwrap();
     let _ = fs::write(&cache_file, contents.clone()); // Create the cache file with the invalid details.
-    println!(
-        "UPDATED CACHE CONTENTS: {:?} with {:?}",
-        cache_file, contents
-    );
     let cache = create_cache(resolve_env.executable.clone());
     let cache = cache.lock().unwrap();
 

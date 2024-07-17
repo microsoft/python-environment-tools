@@ -120,14 +120,6 @@ impl CacheEntryImpl {
         // Check if any of the exes have changed since we last cached this.
         for symlink_info in self.symlinks.lock().unwrap().iter() {
             if let Ok(metadata) = symlink_info.0.metadata() {
-                println!(
-                    "Mtime and ctime for {:?} is {:?} & {:?} and expected {:?} & {:?}",
-                    metadata.modified().ok(),
-                    metadata.created().ok(),
-                    symlink_info.0,
-                    symlink_info.1,
-                    symlink_info.2
-                );
                 if metadata.modified().ok() != Some(symlink_info.1)
                     || metadata.created().ok() != Some(symlink_info.2)
                 {
