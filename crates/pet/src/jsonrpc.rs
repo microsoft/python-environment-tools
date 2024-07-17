@@ -26,6 +26,7 @@ use pet_jsonrpc::{
 };
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
+use pet_python_utils::cache::clear_cache;
 use pet_python_utils::cache::set_cache_directory;
 use pet_reporter::collect;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
@@ -384,27 +385,13 @@ pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
     });
 }
 
-pub fn handle_clear_cache(context: Arc<Context>, id: u32, _params: Value) {
+pub fn handle_clear_cache(_context: Arc<Context>, id: u32, _params: Value) {
     thread::spawn(move || {
-        if let Some(cache_directory) = context
-            .configuration
-            .read()
-            .unwrap()
-            .cache_directory
-            .clone()
-        {
-            if let Err(e) = std::fs::remove_dir_all(&cache_directory) {
-                error!("Failed to clear cache {:?}: {}", cache_directory, e);
-                send_error(
-                    Some(id),
-                    -4,
-                    format!("Failed to clear cache {:?}: {}", cache_directory, e),
-                );
-            } else {
-                info!("Cleared cache {:?}", cache_directory);
-                send_reply(id, None::<()>);
-            }
+        if let Err(e) = clear_cache() {
+            error!("Failed to clear cache {:?}", e);
+            send_error(Some(id), -4, format!("Failed to clear cache {:?}", e));
         } else {
+            info!("Cleared cache");
             send_reply(id, None::<()>);
         }
     });

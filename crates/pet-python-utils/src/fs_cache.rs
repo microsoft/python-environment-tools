@@ -23,8 +23,13 @@ struct CacheEntry {
     pub symlinks: Vec<FilePathWithMTimeCTime>,
 }
 
-fn generate_cache_file(cache_directory: &Path, executable: &PathBuf) -> PathBuf {
+pub fn generate_cache_file(cache_directory: &Path, executable: &PathBuf) -> PathBuf {
     cache_directory.join(format!("{}.1.json", generate_hash(executable)))
+}
+
+pub fn delete_cache_file(cache_directory: &Path, executable: &PathBuf) {
+    let cache_file = generate_cache_file(cache_directory, executable);
+    let _ = fs::remove_file(cache_file);
 }
 
 pub fn get_cache_from_file(
@@ -35,6 +40,24 @@ pub fn get_cache_from_file(
     let file = File::open(cache_file.clone()).ok()?;
     let reader = BufReader::new(file);
     let cache: CacheEntry = serde_json::from_reader(reader).ok()?;
+
+    // Account for conflicts in the cache file
+    // i.e. the hash generated is same for another file, remember we only take the first 16 chars.
+    if !cache
+        .environment
+        .clone()
+        .symlinks
+        .unwrap_or_default()
+        .contains(executable)
+    {
+        trace!(
+            "Cache file {:?} {:?}, does not match executable {:?} (possible hash collision)",
+            cache_file,
+            cache.environment,
+            executable
+        );
+        return None;
+    }
 
     // Check if any of the exes have changed since we last cached them.
     let cache_is_valid = cache.symlinks.iter().all(|symlink| {

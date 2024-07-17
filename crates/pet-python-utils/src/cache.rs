@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 use lazy_static::lazy_static;
-use log::trace;
+use log::{trace, warn};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
+    io,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -12,7 +13,7 @@ use std::{
 
 use crate::{
     env::ResolvedPythonEnv,
-    fs_cache::{get_cache_from_file, store_cache_in_file},
+    fs_cache::{delete_cache_file, get_cache_from_file, store_cache_in_file},
 };
 
 lazy_static! {
@@ -23,6 +24,10 @@ pub trait CacheEntry: Send + Sync {
     fn get(&self) -> Option<ResolvedPythonEnv>;
     fn store(&self, environment: ResolvedPythonEnv);
     fn track_symlinks(&self, symlinks: Vec<PathBuf>);
+}
+
+pub fn clear_cache() -> io::Result<()> {
+    CACHE.clear()
 }
 
 pub fn create_cache(executable: PathBuf) -> Arc<Mutex<Box<dyn CacheEntry>>> {
@@ -61,7 +66,19 @@ impl CacheImpl {
     /// Once a cache directory has been set, you cannot change it.
     /// No point supporting such a scenario.
     fn set_cache_directory(&self, cache_dir: PathBuf) {
+        if self.cache_dir.lock().unwrap().is_some() {
+            warn!("Cache directory has already been set. Cannot change it now.");
+            return;
+        }
         self.cache_dir.lock().unwrap().replace(cache_dir);
+    }
+    fn clear(&self) -> io::Result<()> {
+        self.locks.lock().unwrap().clear();
+        if let Some(cache_directory) = self.cache_dir.lock().unwrap().clone() {
+            std::fs::remove_dir_all(&cache_directory)
+        } else {
+            Ok(())
+        }
     }
     fn create_cache(&self, executable: PathBuf) -> LockableCacheEntry {
         let cache_directory = self.cache_dir.lock().unwrap().clone();
@@ -102,6 +119,9 @@ impl CacheEntryImpl {
                     || metadata.created().ok() != symlink_info.2
                 {
                     self.envoronment.lock().unwrap().take();
+                    if let Some(cache_directory) = &self.cache_directory {
+                        delete_cache_file(cache_directory, &self.executable);
+                    }
                 }
             }
         }
