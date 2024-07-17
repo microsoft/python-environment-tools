@@ -6,6 +6,7 @@ const {
   StreamMessageReader,
   StreamMessageWriter,
 } = require("vscode-jsonrpc/node");
+const path = require("path");
 const { spawn } = require("child_process");
 const { PassThrough } = require("stream");
 
@@ -41,7 +42,7 @@ function handleLogMessages(connection) {
   connection.onNotification("log", (data) => {
     switch (data.level) {
       case "info":
-        // console.info('PET: ', data.message);
+        // console.info("PET: ", data.message);
         break;
       case "warning":
         console.warn("PET: ", data.message);
@@ -50,10 +51,10 @@ function handleLogMessages(connection) {
         console.error("PET: ", data.message);
         break;
       case "debug":
-        // consol.debug('PET: ', data.message);
+        // console.debug('PET: ', data.message);
         break;
       default:
-      // console.trace('PET: ', data.message);
+        console.log("PET: ", data.message);
     }
   });
 }
@@ -71,38 +72,58 @@ function handleDiscoveryMessages(connection) {
 }
 
 /**
- * Refresh the environment
+ * Configurating the server.
  *
  * @param {import("vscode-jsonrpc").MessageConnection} connection
  */
-async function refresh(connection) {
+async function configure(connection) {
+  // Cache directory to store information about the environments.
+  // This is optional, but recommended (e.g. spawning conda can be very slow, sometimes upto 30s).
+  const cacheDir = path.join(
+    process.env.TMPDIR || process.env.TEMP || path.join(process.cwd(), "temp"),
+    "cache"
+  );
+
   const configuration = {
     // List of fully qualified paths to look for Environments,
     // Generally this maps to workspace folders opened in the client, such as VS Code.
-    project_directories: [process.cwd()],
+    workspaceDirectories: [process.cwd()],
     // List of fully qualified paths to look for virtual environments.
     // Leave empty, if not applicable.
     // In VS Code, users can configure custom locations where virtual environments are created.
-    environment_directories: [],
-    // Fully qualified path to the conda executable.
-    // Leave emtpy, if not applicable.
-    // In VS Code, users can provide the path to the executable as a hint to the location of where Conda is installed.
-    // Note: This should only be used if its known that PET is unable to find some Conda envs.
-    // However thats only a work around, ideally the issue should be reported to PET and fixed
-    conda_executable: undefined,
-    // Fully qualified path to the poetry executable.
-    // Leave emtpy, if not applicable.
-    // In VS Code, users can provide the path to the executable as a hint to the location of where Poetry is installed.
-    // Note: This should only be used if its known that PET is unable to find some Poetry envs.
-    // However thats only a work around, ideally the issue should be reported to PET and fixed
-    poetry_executable: undefined,
+    environmentDirectories: [],
+    // Cache directory to store information about the environments.
+    cacheDirectory: path.join(process.cwd(), "temp/cache"),
   };
+  // This must always be the first request to the server.
+  // There's no need to send this every time, unless the configuration changes.
+  await connection.sendRequest("configure", configuration);
+}
 
-  return connection
-    .sendRequest("refresh", configuration)
-    .then(({ duration }) =>
-      console.log(`Found ${environments.length} environments in ${duration}ms.`)
-    );
+/**
+ * Refresh the environment
+ *
+ * @param {import("vscode-jsonrpc").MessageConnection} connection
+ * @param {undefined | 'global' | 'workspace'} searchScope
+ */
+async function refresh(connection, searchScope) {
+  environments.length = 0;
+  const { duration } = await connection.sendRequest("refresh", { searchScope });
+  const scope = searchScope
+    ? ` (in ${searchScope} scope)`
+    : "(in machine scope)";
+  console.log(
+    `Found ${environments.length} environments in ${duration}ms ${scope}`
+  );
+}
+
+/**
+ * Clear the cache
+ *
+ * @param {import("vscode-jsonrpc").MessageConnection} connection
+ */
+async function clear(connection, searchScope) {
+  await connection.sendRequest("clear");
 }
 
 /**
@@ -115,17 +136,14 @@ async function refresh(connection) {
  * If on the other hand, all of the information is already available, then there's no need to call this method.
  * In fact it would be better to avoid calling this method, as it will spawn a new process & consume resouces.
  *
- * @param {String} executable Fully qualified path to the Python executable.
  * @param {import("vscode-jsonrpc").MessageConnection} connection
+ * @param {String} executable Fully qualified path to the Python executable.
  */
-async function resolve(executable, connection) {
+async function resolve(connection, executable) {
   try {
-    const { environment, duration } = await connection.sendRequest(
-      "resolve",
-      executable
-    );
+    const environment = await connection.sendRequest("resolve", { executable });
     console.log(
-      `Resolved (${environment.kind}, ${environment.version}) ${environment.executable} in ${duration}ms`
+      `Resolved (${environment.kind}, ${environment.version}) ${environment.executable}`
     );
     return environment;
   } catch (ex) {
@@ -133,13 +151,48 @@ async function resolve(executable, connection) {
   }
 }
 
+/**
+ * Gets all possible information about the Python executable provided.
+ * This will spawn the Python executable (if not already done in the past).
+ * This must be used only if some of the information already avaialble is not sufficient.
+ *
+ * E.g. if a Python env was discovered and the version information is not know,
+ * but is requried, then call this method.
+ * If on the other hand, all of the information is already available, then there's no need to call this method.
+ * In fact it would be better to avoid calling this method, as it will spawn a new process & consume resouces.
+ *
+ * @param {String} searchPath Workspace Directory, directory with environments, Python environment path or python executable.
+ * @param {import("vscode-jsonrpc").MessageConnection} connection
+ */
+async function find(connection, searchPath) {
+  const environments = await connection.sendRequest("find", { searchPath });
+  console.log(`Found ${environments.length} environments in ${searchPath}`);
+}
+
 async function main() {
   const connection = await start();
+
+  // First request to the server, to configure the server.
+  await configure(connection);
+
   await refresh(connection);
+  // Search for environments in the defined workspace folders.
+  await refresh(connection, "workspace");
+
+  // Search for environments in the specified folders.
+  // This could be a folder thats not part of the workspace and not in any known location
+  // I.e. it could contain environments that have not been discovered (due to the fact that its not a common/known location).
+  await find(connection, "/Users/user_name/temp");
+  // Search for environments in the specified python environment directory.
+  await find(connection, "/Users/user_name/demo/.venv");
+  await find(connection, "/Users/user_name/demo/.venv/bin");
+
   // Possible this env was discovered, and the version or prefix information is not known.
-  const env = await resolve("/usr/local/bin/python3", connection);
+  await resolve(connection, "/usr/local/bin/python3");
+  await resolve(connection, "/usr/local/bin/python3"); // With cache directory provided, the Python exe will be spawned only once and cached info will be used.
+
   // Possible we have an enviornment that was never discovered and we need information about that.
-  const env2 = await resolve("<some Path>/.venv/bin/python", connection);
+  await resolve(connection, "/Users/user_name/demo/.venv/bin/python");
 
   connection.end();
   process.exit(0);
