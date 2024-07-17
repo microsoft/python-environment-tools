@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 mod common;
-use std::{env, path::PathBuf, sync::Once, time::SystemTime};
+use std::{env, path::PathBuf, sync::Once};
 
 use common::resolve_test_path;
 use pet_python_utils::cache::{get_cache_directory, set_cache_directory};
@@ -224,8 +224,11 @@ fn verify_invalidating_cache_due_to_hash_conflicts() {
 
     let _ = clear_cache(); // Clear in memory cache as well as the files..
     let _ = fs::create_dir_all(&cache_dir).unwrap();
-    let _ = fs::write(&cache_file, contents); // Create the cache file with the invalid details.
-    println!("UPDATED CACHE CONTENTS: {:?}", cache_file);
+    let _ = fs::write(&cache_file, contents.clone()); // Create the cache file with the invalid details.
+    println!(
+        "UPDATED CACHE CONTENTS: {:?} with {:?}",
+        cache_file, contents
+    );
     let cache = create_cache(resolve_env.executable.clone());
     let cache = cache.lock().unwrap();
 
