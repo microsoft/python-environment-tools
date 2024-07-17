@@ -113,7 +113,7 @@ fn verify_invalidating_cache() {
     setup();
 
     let cache_dir = get_cache_directory().unwrap();
-    let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv2"]).into();
+    let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv"]).into();
     let bin = prefix.join("bin");
     let python = bin.join("python");
     let python3 = bin.join("python3");
@@ -175,7 +175,7 @@ fn verify_invalidating_cache_due_to_hash_conflicts() {
     setup();
 
     let cache_dir = get_cache_directory().unwrap();
-    let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv3"]).into();
+    let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv"]).into();
     let bin = prefix.join("bin");
     let python = bin.join("python");
     let python3 = bin.join("python3");
