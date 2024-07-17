@@ -82,12 +82,18 @@ jobs:
       #     conda create -p ./prefix-envs/.conda-nopy -y
 
 
-      - name: Upload conda dir
-        uses: actions/upload-artifact@v3
-        with:
-          name: conda
-          path: "C:\\Miniconda"
-          retention-days: 1
+      - name: List
+        run: ls -R
+        shell: bash
+        working-directory: "C:\\Miniconda"
+
+
+      # - name: Upload conda dir
+      #   uses: actions/upload-artifact@v3
+      #   with:
+      #     name: conda
+      #     path: "C:\\Miniconda"
+      #     retention-days: 1
 
   #     - name: Install pipenv
   #       run: pip install pipenv
