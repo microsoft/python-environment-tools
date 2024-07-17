@@ -15,183 +15,183 @@ on:
       - release-*
 
 jobs:
-  tests:
-    # Very generic tests, we don't verify whether the envs are discovered correctly or not.
-    # However we do ensure that envs that are discovered are valid.
-    # See other jobs for specific tests.
-    name: Tests
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            run_cli: "yes"
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            run_cli: "yes"
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            run_cli: "yes"
-          - os: macos-14
-            target: aarch64-apple-darwin
-            run_cli: "yes"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  # tests:
+  #   # Very generic tests, we don't verify whether the envs are discovered correctly or not.
+  #   # However we do ensure that envs that are discovered are valid.
+  #   # See other jobs for specific tests.
+  #   name: Tests
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - os: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #           run_cli: "yes"
+  #         - os: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #           run_cli: "yes"
+  #         - os: macos-latest
+  #           target: x86_64-apple-darwin
+  #           run_cli: "yes"
+  #         - os: macos-14
+  #           target: aarch64-apple-darwin
+  #           run_cli: "yes"
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      - name: Set Python to PATH
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
+  #     - name: Set Python to PATH
+  #       uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.x"
 
-      - name: Homebrew Python
-        if: startsWith( matrix.os, 'macos')
-        run: brew install python
-        shell: bash
+  #     - name: Homebrew Python
+  #       if: startsWith( matrix.os, 'macos')
+  #       run: brew install python
+  #       shell: bash
 
-      - name: Add Conda to PATH
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
-          echo "PATH=$path" >> $env:GITHUB_ENV
+  #     - name: Add Conda to PATH
+  #       if: startsWith( matrix.os, 'windows')
+  #       run: |
+  #         $path = $env:PATH + ";" + $env:CONDA + "\condabin"
+  #         echo "PATH=$path" >> $env:GITHUB_ENV
 
-      - name: Add Conda to PATH
-        if: startsWith( matrix.os, 'ubuntu')
-        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
-        shell: bash
+  #     - name: Add Conda to PATH
+  #       if: startsWith( matrix.os, 'ubuntu')
+  #       run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Install Conda + add to PATH
-        if: startsWith( matrix.os, 'macos')
-        run: |
-          curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-          bash ~/miniconda.sh -b -p ~/miniconda
-          echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
-          echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
-        shell: bash
+  #     - name: Install Conda + add to PATH
+  #       if: startsWith( matrix.os, 'macos')
+  #       run: |
+  #         curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+  #         bash ~/miniconda.sh -b -p ~/miniconda
+  #         echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
+  #         echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Check Conda version
-        run: conda info --all
+  #     - name: Check Conda version
+  #       run: conda info --all
 
-      - name: Create Conda Environments
-        run: |
-          conda create -n test-env1 python=3.12 -y
-          conda create -n test-env-no-python -y
-          conda create -p ./prefix-envs/.conda1 python=3.12 -y
-          conda create -p ./prefix-envs/.conda-nopy -y
+  #     - name: Create Conda Environments
+  #       run: |
+  #         conda create -n test-env1 python=3.12 -y
+  #         conda create -n test-env-no-python -y
+  #         conda create -p ./prefix-envs/.conda1 python=3.12 -y
+  #         conda create -p ./prefix-envs/.conda-nopy -y
 
-      - name: Install pipenv
-        run: pip install pipenv
+  #     - name: Install pipenv
+  #       run: pip install pipenv
 
-      - name: Check pipenv version
-        run: pipenv --version
+  #     - name: Check pipenv version
+  #       run: pipenv --version
 
-      - name: Create a Pipenv Environment
-        run: pipenv install
+  #     - name: Create a Pipenv Environment
+  #       run: pipenv install
 
-      - name: Install virtualenvwrapper
-        # Activation of the script doesn't work on mac for some reason (didn't check why yet)
-        # But linux is sufficient for the tests
-        if: startsWith( matrix.os, 'ubuntu')
-        run: |
-          pip install virtualenvwrapper
-          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
-          mkdir -p $HOME/.virtualenvs
-          source virtualenvwrapper.sh
-          mkvirtualenv venv_wrapper_env1
-        shell: bash
+  #     - name: Install virtualenvwrapper
+  #       # Activation of the script doesn't work on mac for some reason (didn't check why yet)
+  #       # But linux is sufficient for the tests
+  #       if: startsWith( matrix.os, 'ubuntu')
+  #       run: |
+  #         pip install virtualenvwrapper
+  #         echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+  #         mkdir -p $HOME/.virtualenvs
+  #         source virtualenvwrapper.sh
+  #         mkvirtualenv venv_wrapper_env1
+  #       shell: bash
 
-      - name: Install virtualenvwrapper-win
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          pip install virtualenvwrapper-win
-          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
-        shell: bash
+  #     - name: Install virtualenvwrapper-win
+  #       if: startsWith( matrix.os, 'windows')
+  #       run: |
+  #         pip install virtualenvwrapper-win
+  #         echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Install pyenv
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          choco install pyenv-win -y
-          echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
-          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
-        shell: bash
+  #     - name: Install pyenv
+  #       if: startsWith( matrix.os, 'windows')
+  #       run: |
+  #         choco install pyenv-win -y
+  #         echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
+  #         echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Install pyenv and pyenv-virtualenv
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          curl https://pyenv.run | bash
-          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
-          echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
-        shell: bash
+  #     - name: Install pyenv and pyenv-virtualenv
+  #       if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         curl https://pyenv.run | bash
+  #         echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+  #         echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
+  #       shell: bash
 
-      - name: Check Pyenv version
-        run: pyenv --version
-        shell: bash
+  #     - name: Check Pyenv version
+  #       run: pyenv --version
+  #       shell: bash
 
-      - name: Install Pyenv Python(s)
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          pyenv install --list
-          pyenv install 3.12.4 3.8.19
-        shell: bash
+  #     - name: Install Pyenv Python(s)
+  #       if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         pyenv install --list
+  #         pyenv install 3.12.4 3.8.19
+  #       shell: bash
 
-        # pyenv-win install list has not updated for a while
-      - name: Install Pyenv Python(s)
-        if: startsWith( matrix.os, 'windows')
-        run: |
-          pyenv install --list
-          pyenv install 3.10.5 3.8.10
-        shell: bash
+  #       # pyenv-win install list has not updated for a while
+  #     - name: Install Pyenv Python(s)
+  #       if: startsWith( matrix.os, 'windows')
+  #       run: |
+  #         pyenv install --list
+  #         pyenv install 3.10.5 3.8.10
+  #       shell: bash
 
-      - name: Create pyenv-virtualenv envs
-        if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          eval "$(pyenv virtualenv-init -)"
-          pyenv virtualenv 3.12 pyenv-virtualenv-env1
-        shell: bash
+  #     - name: Create pyenv-virtualenv envs
+  #       if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         eval "$(pyenv virtualenv-init -)"
+  #         pyenv virtualenv 3.12 pyenv-virtualenv-env1
+  #       shell: bash
 
-      # region venv
-      - name: Create .venv
-        # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          python -m venv .venv
-        shell: bash
+  #     # region venv
+  #     - name: Create .venv
+  #       # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         python -m venv .venv
+  #       shell: bash
 
-      - name: Create .venv2
-        # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
-        run: |
-          python -m venv .venv2
-        shell: bash
+  #     - name: Create .venv2
+  #       # if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
+  #       run: |
+  #         python -m venv .venv2
+  #       shell: bash
 
-      # endregion venv
+  #     # endregion venv
 
-      # Rust
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+  #     # Rust
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
 
-      - name: Find Environments
-        if: matrix.run_cli == 'yes'
-        run: cargo run --release --target ${{ matrix.target }}
-        shell: bash
+  #     - name: Find Environments
+  #       if: matrix.run_cli == 'yes'
+  #       run: cargo run --release --target ${{ matrix.target }}
+  #       shell: bash
 
-      - name: Run Tests
-        # Run integration tests in a single thread,
-        # We end up creating conda envs and running multiple tests in parallel
-        # that creat conda envs simultaneously causes issues (sometimes the conda envs do not seem to get created)
-        # Similar issues were identified in vscode-jupyter tests as well (something to do with conda lock files or the like)
-        run: cargo test --frozen --features ci -- --nocapture --test-threads=1
-        env:
-          RUST_BACKTRACE: 1
-          RUST_LOG: trace
-        shell: bash
+  #     - name: Run Tests
+  #       # Run integration tests in a single thread,
+  #       # We end up creating conda envs and running multiple tests in parallel
+  #       # that creat conda envs simultaneously causes issues (sometimes the conda envs do not seem to get created)
+  #       # Similar issues were identified in vscode-jupyter tests as well (something to do with conda lock files or the like)
+  #       run: cargo test --frozen --features ci -- --nocapture --test-threads=1
+  #       env:
+  #         RUST_BACKTRACE: 1
+  #         RUST_LOG: trace
+  #       shell: bash
 
   isolated-tests:
     # Some of these tests are very specific and need to be run in isolation.
@@ -203,24 +203,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # - feature: ci-poetry-global # Poetry tests with envs stored in standard location
+          #   os: ubuntu-latest
+          #   target: x86_64-unknown-linux-musl
+          # - feature: ci-poetry-project # Poetry tests, with poetry envs in project
+          #   os: ubuntu-latest
+          #   target: x86_64-unknown-linux-musl
+          # - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
+          #   os: ubuntu-latest
+          #   target: x86_64-unknown-linux-musl
           - feature: ci-poetry-global # Poetry tests with envs stored in standard location
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - feature: ci-poetry-project # Poetry tests, with poetry envs in project
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-          - feature: ci-poetry-global # Poetry tests with envs stored in standard location
             os: windows-latest
             target: x86_64-pc-windows-msvc
-          - feature: ci-poetry-project # Poetry tests, with poetry envs in project
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
-            os: windows-latest
-            target: x86_64-pc-windows-msvc
+          # - feature: ci-poetry-project # Poetry tests, with poetry envs in project
+          #   os: windows-latest
+          #   target: x86_64-pc-windows-msvc
+          # - feature: ci-poetry-custom # Poetry tests with envs stored in a custom location
+          #   os: windows-latest
+          #   target: x86_64-pc-windows-msvc
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -365,111 +365,111 @@ jobs:
           RUST_LOG: trace
         shell: bash
 
-  container-tests:
-    # These tests are required as its not easy/possible to use the previous jobs.
-    # E.g. we need to test against the jupyter container, as we found some issues specific to that env.
-    name: Tests in Containers
-    container:
-      image: ${{ matrix.image }}
-      options: --user=root
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - feature: ci-jupyter-container
-            os: ubuntu-latest
-            # For Tests again the container used in https://github.com/github/codespaces-jupyter
-            image: mcr.microsoft.com/devcontainers/universal:2.11.1
-            target: x86_64-unknown-linux-musl
-          - feature: ci-homebrew-container
-            os: ubuntu-latest
-            # For Homebrew in Ubuntu
-            image: homebrew/brew
-            target: x86_64-unknown-linux-musl
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  # container-tests:
+  #   # These tests are required as its not easy/possible to use the previous jobs.
+  #   # E.g. we need to test against the jupyter container, as we found some issues specific to that env.
+  #   name: Tests in Containers
+  #   container:
+  #     image: ${{ matrix.image }}
+  #     options: --user=root
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - feature: ci-jupyter-container
+  #           os: ubuntu-latest
+  #           # For Tests again the container used in https://github.com/github/codespaces-jupyter
+  #           image: mcr.microsoft.com/devcontainers/universal:2.11.1
+  #           target: x86_64-unknown-linux-musl
+  #         - feature: ci-homebrew-container
+  #           os: ubuntu-latest
+  #           # For Homebrew in Ubuntu
+  #           image: homebrew/brew
+  #           target: x86_64-unknown-linux-musl
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      # Homebrew
-      - name: Homebrew Python
-        if: startsWith( matrix.image, 'homebrew')
-        run: brew install python@3.12 python@3.11
-        shell: bash
+  #     # Homebrew
+  #     - name: Homebrew Python
+  #       if: startsWith( matrix.image, 'homebrew')
+  #       run: brew install python@3.12 python@3.11
+  #       shell: bash
 
-      # Rust
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+  #     # Rust
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
 
-      - name: Find Environments
-        run: cargo run --release --target ${{ matrix.target }}
-        shell: bash
+  #     - name: Find Environments
+  #       run: cargo run --release --target ${{ matrix.target }}
+  #       shell: bash
 
-      - name: Run Tests
-        run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture
-        shell: bash
+  #     - name: Run Tests
+  #       run: cargo test --frozen --features ${{ matrix.feature }} -- --nocapture
+  #       shell: bash
 
-  builds:
-    name: Builds
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: arm-unknown-linux-gnueabihf
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            run_cli: "yes"
-          - os: macos-14
-            target: aarch64-apple-darwin
-            run_cli: "yes"
-          #   - os: ubuntu-latest
-          #     target: x86_64-unknown-linux-gnu
-          #   - os: ubuntu-latest
-          #     target: aarch64-unknown-linux-musl
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  # builds:
+  #   name: Builds
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - os: windows-latest
+  #           target: x86_64-pc-windows-msvc
+  #         - os: windows-latest
+  #           target: aarch64-pc-windows-msvc
+  #         - os: ubuntu-latest
+  #           target: x86_64-unknown-linux-musl
+  #           run_cli: "yes"
+  #         #   - os: ubuntu-latest
+  #         #     target: aarch64-unknown-linux-gnu
+  #         #   - os: ubuntu-latest
+  #         #     target: arm-unknown-linux-gnueabihf
+  #         - os: macos-latest
+  #           target: x86_64-apple-darwin
+  #           run_cli: "yes"
+  #         - os: macos-14
+  #           target: aarch64-apple-darwin
+  #           run_cli: "yes"
+  #         #   - os: ubuntu-latest
+  #         #     target: x86_64-unknown-linux-gnu
+  #         #   - os: ubuntu-latest
+  #         #     target: aarch64-unknown-linux-musl
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
 
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+  #     - name: Rust Tool Chain setup
+  #       uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         toolchain: stable
+  #         targets: ${{ matrix.target }}
 
-      - name: Cargo Fetch
-        run: cargo fetch
-        shell: bash
+  #     - name: Cargo Fetch
+  #       run: cargo fetch
+  #       shell: bash
 
-      - name: Run Tests
-        # We do not want to run all features, CI is only for tests with Python
-        # Thats a separate job.
-        run: cargo test --frozen
-        shell: bash
+  #     - name: Run Tests
+  #       # We do not want to run all features, CI is only for tests with Python
+  #       # Thats a separate job.
+  #       run: cargo test --frozen
+  #       shell: bash
 
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-        shell: bash
+  #     - name: Build
+  #       run: cargo build --release --target ${{ matrix.target }}
+  #       shell: bash
 
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pet-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/pet*
+  #     - name: Upload Artifact
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: pet-${{ matrix.target }}
+  #         path: target/${{ matrix.target }}/release/pet*

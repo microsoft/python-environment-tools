@@ -40,7 +40,7 @@ pub fn get_cache_from_file(
     let file = File::open(cache_file.clone()).ok()?;
     let reader = BufReader::new(file);
     let cache: CacheEntry = serde_json::from_reader(reader).ok()?;
-
+    println!("cache from {:?} is {:?}", cache_file, cache.environment);
     // Account for conflicts in the cache file
     // i.e. the hash generated is same for another file, remember we only take the first 16 chars.
     if !cache

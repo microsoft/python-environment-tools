@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 mod common;
-use std::{path::PathBuf, sync::Once};
+use std::{env, path::PathBuf, sync::Once, time::SystemTime};
 
 use common::resolve_test_path;
+use pet_python_utils::cache::{get_cache_directory, set_cache_directory};
 
 static INIT: Once = Once::new();
 
@@ -14,6 +15,8 @@ fn setup() {
         env_logger::builder()
             .filter(None, log::LevelFilter::Trace)
             .init();
+
+        set_cache_directory(env::temp_dir().join("pet_cache"));
     });
 }
 
@@ -30,19 +33,17 @@ fn setup() {
 )]
 #[allow(dead_code)]
 fn verify_cache() {
-    use std::{env, fs};
+    use std::fs;
 
     use pet_python_utils::{
-        cache::{clear_cache, create_cache, set_cache_directory},
+        cache::{clear_cache, create_cache},
         env::ResolvedPythonEnv,
         fs_cache::generate_cache_file,
     };
 
     setup();
 
-    let cache_dir = env::temp_dir().join("pet_cache");
-    set_cache_directory(cache_dir.clone());
-
+    let cache_dir = get_cache_directory().unwrap();
     let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv"]).into();
     let bin = prefix.join("bin");
     let python = bin.join("python");
@@ -103,19 +104,15 @@ fn verify_cache() {
 )]
 #[allow(dead_code)]
 fn verify_invalidating_cache() {
-    use std::{env, fs, time::SystemTime};
+    use std::{fs, time::SystemTime};
 
     use pet_python_utils::{
-        cache::{create_cache, set_cache_directory},
-        env::ResolvedPythonEnv,
-        fs_cache::generate_cache_file,
+        cache::create_cache, env::ResolvedPythonEnv, fs_cache::generate_cache_file,
     };
 
     setup();
 
-    let cache_dir = env::temp_dir().join("pet_cache");
-    set_cache_directory(cache_dir.clone());
-
+    let cache_dir = get_cache_directory().unwrap();
     let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv2"]).into();
     let bin = prefix.join("bin");
     let python = bin.join("python");
@@ -161,19 +158,17 @@ fn verify_invalidating_cache() {
 )]
 #[allow(dead_code)]
 fn verify_invalidating_cache_due_to_hash_conflicts() {
-    use std::{env, fs};
+    use std::fs;
 
     use pet_python_utils::{
-        cache::{clear_cache, create_cache, set_cache_directory},
+        cache::{clear_cache, create_cache},
         env::ResolvedPythonEnv,
         fs_cache::generate_cache_file,
     };
 
     setup();
 
-    let cache_dir = env::temp_dir().join("pet_cache");
-    set_cache_directory(cache_dir.clone());
-
+    let cache_dir = get_cache_directory().unwrap();
     let prefix: PathBuf = resolve_test_path(&["unix", "executables", ".venv3"]).into();
     let bin = prefix.join("bin");
     let python = bin.join("python");
@@ -195,7 +190,6 @@ fn verify_invalidating_cache_due_to_hash_conflicts() {
 
     // Store the value in cache and verify the file exists.
     cache.store(resolve_env.clone());
-
     assert!(cache.get().is_some());
     assert!(cache_file.exists());
     drop(cache);
@@ -215,6 +209,7 @@ fn verify_invalidating_cache_due_to_hash_conflicts() {
     let _ = clear_cache(); // Clear in memory cache as well as the files..
     let _ = fs::create_dir_all(&cache_dir).unwrap();
     let _ = fs::write(&cache_file, contents); // Create the cache file with the invalid details.
+    println!("UPDATED CACHE CONTENTS: {:?}", cache_file);
     let cache = create_cache(resolve_env.executable.clone());
     let cache = cache.lock().unwrap();
 
