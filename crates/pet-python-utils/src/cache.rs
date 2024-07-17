@@ -76,7 +76,7 @@ impl CacheImpl {
     fn clear(&self) -> io::Result<()> {
         self.locks.lock().unwrap().clear();
         if let Some(cache_directory) = self.cache_dir.lock().unwrap().clone() {
-            std::fs::remove_dir_all(&cache_directory)
+            std::fs::remove_dir_all(cache_directory)
         } else {
             Ok(())
         }
