@@ -202,7 +202,23 @@ fn verify_invalidating_cache_due_to_hash_conflicts() {
         "/usr/bin/python",
     );
     let contents = contents.replace(
+        python
+            .to_string_lossy()
+            .to_string()
+            .replace("\\", "\\\\") // For windows paths stored in JSON
+            .as_str(),
+        "/usr/bin/python",
+    );
+    let contents = contents.replace(
         python3.to_string_lossy().to_string().as_str(),
+        "/usr/bin/python3",
+    );
+    let contents = contents.replace(
+        python3
+            .to_string_lossy()
+            .to_string()
+            .replace("\\", "\\\\") // For windows paths stored in JSON
+            .as_str(),
         "/usr/bin/python3",
     );
 
