@@ -61,14 +61,22 @@ pub fn get_conda_environment_paths(
 }
 
 /**
- * Get the list of conda environments found in other locations such as
- * <user home>/.conda/envs
- * <user home>/AppData/Local/conda/conda/envs
+ * Get the list of conda environments found in conda rc files
+ * as well as the directories where conda rc files can be found.
  */
 fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<PathBuf> {
     // Use the conda rc directories as well.
     let mut env_dirs = vec![];
     for rc_file_dir in get_conda_rc_search_paths(env_vars) {
+        if let Some(conda_rc) = Condarc::from_path(&rc_file_dir) {
+            trace!(
+                "Conda environments in .condarc {:?} {:?}",
+                conda_rc.files,
+                conda_rc.env_dirs
+            );
+            env_dirs.append(&mut conda_rc.env_dirs.clone());
+        }
+
         if rc_file_dir.is_dir() {
             env_dirs.push(rc_file_dir);
         } else if rc_file_dir.is_file() {
@@ -79,7 +87,11 @@ fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<Pat
     }
 
     if let Some(conda_rc) = Condarc::from(env_vars) {
-        trace!("Conda environments in .condarc {:?}", conda_rc.env_dirs);
+        trace!(
+            "Conda environments in .condarc {:?} {:?}",
+            conda_rc.files,
+            conda_rc.env_dirs
+        );
         env_dirs.append(&mut conda_rc.env_dirs.clone());
     } else {
         trace!("No Conda environments in .condarc");
