@@ -564,6 +564,7 @@ dependencies = [
 name = "pet-python-utils"
 version = "0.1.0"
 dependencies = [
+ "env_logger",
  "lazy_static",
  "log",
  "msvc_spectre_libs",
