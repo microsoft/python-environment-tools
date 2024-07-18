@@ -28,8 +28,8 @@ pub fn get_conda_environment_paths(
         for thread in [
             s.spawn(|| get_conda_envs_from_environment_txt(env_vars)),
             s.spawn(|| get_conda_environment_paths_from_conda_rc(env_vars)),
-            // s.spawn(|| get_conda_environment_paths_from_known_paths(env_vars)),
-            // s.spawn(|| get_known_conda_install_locations(env_vars, conda_executable)),
+            s.spawn(|| get_conda_environment_paths_from_known_paths(env_vars)),
+            s.spawn(|| get_known_conda_install_locations(env_vars, conda_executable)),
         ] {
             if let Ok(mut env_paths) = thread.join() {
                 envs.append(&mut env_paths);
@@ -45,7 +45,6 @@ pub fn get_conda_environment_paths(
     // & then iterate through the list of envs in the envs directory.
     // let env_paths = vec![];
     let mut threads = vec![];
-    println!("Env Paths: {:?}", env_paths);
     for path in env_paths.iter().filter(|f| f.exists()) {
         let path = path.clone();
         threads.push(thread::spawn(move || get_environments(&path)));
@@ -60,11 +59,10 @@ pub fn get_conda_environment_paths(
 
     result.sort();
     result.dedup();
-    println!(
-        "Time taken to get conda environments: {:?}",
+    trace!(
+        "Time taken to get conda environment paths: {:?}",
         start.elapsed().unwrap()
     );
-    println!("Paths: {:?}", result);
     result
 }
 
@@ -170,6 +168,9 @@ fn get_conda_environment_paths_from_known_paths(env_vars: &EnvVariables) -> Vec<
         }
     }
     env_paths.append(&mut env_vars.known_global_search_locations.clone());
+    env_paths.sort();
+    env_paths.dedup();
+    let env_paths = env_paths.into_iter().filter(|f| f.exists()).collect();
     trace!("Conda environments in known paths {:?}", env_paths);
     env_paths
 }
@@ -385,7 +386,7 @@ pub fn get_known_conda_install_locations(
     }
     if let Some(home) = env_vars.home.clone() {
         // https://stackoverflow.com/questions/35709497/anaconda-python-where-are-the-virtual-environments-stored
-        for prefix in [
+        let mut prefixes = vec![
             home.clone(),
             // https://towardsdatascience.com/manage-your-python-virtual-environment-with-conda-a0d2934d5195
             home.join("opt"),
@@ -396,9 +397,14 @@ pub fn get_known_conda_install_locations(
             PathBuf::from("/usr/share"),
             PathBuf::from("/usr/local"),
             PathBuf::from("/usr"),
-            PathBuf::from("/opt/homebrew"),
-            PathBuf::from("/home/linuxbrew/.linuxbrew"),
-        ] {
+        ];
+        if std::env::consts::OS == "macos" {
+            prefixes.push(PathBuf::from("/opt/homebrew"));
+        } else {
+            prefixes.push(PathBuf::from("/home/linuxbrew/.linuxbrew"));
+        }
+
+        for prefix in prefixes {
             known_paths.push(prefix.clone().join("anaconda"));
             known_paths.push(prefix.clone().join("anaconda3"));
             known_paths.push(prefix.clone().join("miniconda"));
@@ -416,8 +422,7 @@ pub fn get_known_conda_install_locations(
     }
     known_paths.sort();
     known_paths.dedup();
-
-    known_paths
+    known_paths.into_iter().filter(|f| f.exists()).collect()
 }
 
 pub fn get_conda_dir_from_exe(conda_executable: &Option<PathBuf>) -> Option<PathBuf> {
