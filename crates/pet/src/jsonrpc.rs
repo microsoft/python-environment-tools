@@ -108,7 +108,8 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 let mut cfg = context.configuration.write().unwrap();
-                cfg.workspace_directories = configure_options.workspace_directories;
+                cfg.workspace_directories = configure_options.workspace_directories.clone();
+                cfg.old_workspace_directories = configure_options.workspace_directories;
                 cfg.conda_executable = configure_options.conda_executable;
                 cfg.environment_directories = configure_options.environment_directories;
                 cfg.poetry_executable = configure_options.poetry_executable;
@@ -178,10 +179,11 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                 let mut search_scope = None;
 
                 // If search kind is provided and no search_paths, then we will only search in the global locations.
-                config.executables = None; // This can only be provided in the refresh request.
                 if refresh_options.search_kind.is_some() || refresh_options.search_paths.is_some() {
+                    // Always clear this, as we will either serach in specified folder or a specific kind in global locations.
                     config.workspace_directories = None;
                     if let Some(search_paths) = refresh_options.search_paths {
+                        // These workspace folders are only for this refresh.
                         config.workspace_directories = Some(
                             search_paths
                                 .iter()
@@ -201,6 +203,15 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                         config.executables = None;
                         search_scope = Some(SearchScope::Global(search_kind));
                     }
+
+                    // Configure the locators with the modified config.
+                    for locator in context.locators.iter() {
+                        locator.configure(&config);
+                    }
+                } else {
+                    // Re-configure the locators with an un-modified config.
+                    // Possible we congirued the locators with a modified config in the in the previous request.
+                    // & the config was scoped to a particular search folder, executables or kind.
                     for locator in context.locators.iter() {
                         locator.configure(&config);
                     }
