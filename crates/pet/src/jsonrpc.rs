@@ -161,10 +161,15 @@ impl RefreshResult {
 pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
     let params = match params {
         Value::Null => json!({}),
+        Value::Array(_) => json!({}),
         _ => params,
     };
-    match serde_json::from_value::<RefreshOptions>(params.clone()) {
+    match serde_json::from_value::<Option<RefreshOptions>>(params.clone()) {
         Ok(refresh_options) => {
+            let refresh_options = refresh_options.unwrap_or(RefreshOptions {
+                search_kind: None,
+                search_paths: None,
+            });
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 // Ensure we can have only one refresh at a time.
