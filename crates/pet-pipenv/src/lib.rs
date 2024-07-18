@@ -4,6 +4,7 @@
 use env_variables::EnvVariables;
 use pet_core::env::PythonEnv;
 use pet_core::os_environment::Environment;
+use pet_core::LocatorKind;
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
@@ -71,8 +72,8 @@ impl PipEnv {
     }
 }
 impl Locator for PipEnv {
-    fn get_name(&self) -> &'static str {
-        "PipEnv" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::PipEnv
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Pipenv]

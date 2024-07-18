@@ -86,13 +86,17 @@ _Response_:
 ```typescript
 interface RefreshParams {
   /**
-   * Determines the scope of Python environments to search for.
-   * If not provided, then the tool will search for Python environments in the global & workspace scope.
-   *
-   * 'global' - Search for Python environments in the global scope (useful to search for new Conda environments created in usual `envs` directory).
-   * 'workspace' - Search for Python environments in the workspace scope (useful to search for new virtual environments or conda environments created in the workspace).
+   * Limits the search to a specific kind of Python environment.
+   * Ignores workspace folders passed in configuration request.
    */
-  searchScopr?: "global" | "workspace";
+  searchKind?: PythonEnvironmentKind;
+} | {
+  /**
+   * Limits the search to a specific set of paths.
+   * searchPaths can either by directories or Python prefixes/executables or combination of both.
+   * Ignores workspace folders passed in configuration request.
+   */
+  searchPaths?: string[];
 }
 
 interface RefreshResult {
@@ -137,6 +141,25 @@ interface ResolveParams {
   executable: string;
 }
 
+enum PythonEnvironmentKind {
+  Conda,
+  Homebrew,
+  Pyenv,
+  GlobalPaths, // Python found in global locations like PATH, /usr/bin etc.
+  PyenvVirtualEnv, // Pyenv virtualenvs.
+  Pipenv,
+  Poetry,
+  MacPythonOrg, // Python installed from python.org on Mac
+  MacCommandLineTools,
+  LinuxGlobal, // Python installed in Linux in paths such as `/usr/bin`, `/usr/local/bin` etc.
+  MacXCode,
+  Venv,
+  VirtualEnv,
+  VirtualEnvWrapper,
+  WindowsStore,
+  WindowsRegistry,
+}
+
 interface Environment {
   /**
    * The display name of the enviornment.
@@ -163,23 +186,7 @@ interface Environment {
   /**
    * The kind of the environment.
    */
-  kind?:
-    | "Conda" // Conda environment
-    | "GlobalPaths" // Unknown Pyton environment, found in the PATH environment variable
-    | "Homebrew" // Homebrew installed Python
-    | "LinuxGlobal" // Python installed from the system package manager on Linux
-    | "MacCommandLineTools" // Python installed from the Mac command line tools
-    | "MacPythonOrg" // Python installed from python.org on Mac
-    | "MacXCode" // Python installed from XCode on Mac
-    | "Pipenv" // Pipenv environment
-    | "Poetry" // Poetry environment
-    | "Pyenv" // Pyenv installed Python
-    | "PyenvVirtualEnv" // pyenv-virtualenv environment
-    | "Venv" // Python venv environment (generally created using the `venv` module)
-    | "VirtualEnv" // Python virtual environment
-    | "VirtualEnvWrapper" // Virtualenvwrapper Environment
-    | "WindowsRegistry" // Python installed & found in Windows Registry
-    | "WindowsStore"; // Python installed from the Windows Store
+  kind?: PythonEnvironmentKind;
   /**
    * The version of the python executable.
    * This will at a minimum contain the 3 parts of the version such as `3.8.1`.
@@ -236,54 +243,6 @@ interface Manager {
    * In the case of conda, this is the version of conda.
    */
   version?: string;
-}
-```
-
-# Find Request
-
-Use this request to find Python environments in a specific directory.
-
-**Notes:**
-
-- This request will also search for Python environments in other directories that have been configured for use with the specified folder.
-  E.g. Poetry, Pipenv, Virtualenvwrapper, etc environments associated with the provided directory will be returned.
-- If the directory such as `<some path>/.venv/bin` is passed, then the tool will return the Python environment associated with the same environment.
-  I.e. in this case the returned environment will point to `<some path>/.venv/bin/python`.
-  This is similar to the `refresh` request, but limited to returning just the Python environment associated with the provided path.
-- If the file such as `<some path>/.venv/bin/python` is passed, then the tool will return the Python environment associated with the same environment.
-  I.e. in this case the returned environment will point to `<some path>/.venv/bin/python`.
-  This is similar to the `refresh` request, but limited to returning just the Python environment associated with the provided path.
-
-_Why use this over the `refresh` request?_
-
-This will search for Python environments in the provided directory and can be faster than searching for Python environments in the global & workspace scope.
-Or if you're only interested in Python environments in a specific directory, that might not be a workspace directory.
-
-_How is this different from `resolve` request when passing the `<executable>?_
-
-With `resolve`, Python executable is spawned and can be slow, when all that is required is to get some basic information about the Python environment.
-E.g. if the Python executable `<some path>/.venv/bin/python` for the virtual environment is passed to this request, then the tool will return the Python environment associated with the same environment. E.g. it will indicate that this is a virtual environment and return the version, prefix, etc.
-However passing the same information to the `resolve` request will spawn the Python executable and return some additional information, such as whether its `64bit` or `32bit`, but will be slower.
-
-_Request_:
-
-- method: `find`
-- params: `FindParams` defined as below.
-
-_Response_:
-
-- result: `Environment` defined as earlier.
-
-```typescript
-interface FindParams {
-  /**
-   * The fully qualified path to the directory to search for Python environments.
-   * Or could also be the path to a Python environment.
-   * Or even the path to a Python executable.
-   *
-   * E.g. `<some path>/.venv` or `<some path>/.venv/bin` or `<some path>/.venv/bin/python` or some other path that even contains the workspace folders.
-   */
-  searchPath: string;
 }
 ```
 

@@ -5,8 +5,9 @@ use log::{trace, warn};
 use pet_conda::utils::is_conda_env;
 use pet_core::env::PythonEnv;
 use pet_core::os_environment::Environment;
+use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::reporter::Reporter;
-use pet_core::{Configuration, Locator};
+use pet_core::{Configuration, Locator, LocatorKind};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_python_utils::executable::{
@@ -25,7 +26,7 @@ use crate::locators::identify_python_environment_using_locators;
 
 pub struct Summary {
     pub total: Duration,
-    pub locators: BTreeMap<&'static str, Duration>,
+    pub locators: BTreeMap<LocatorKind, Duration>,
     pub breakdown: BTreeMap<&'static str, Duration>,
 }
 
@@ -33,7 +34,7 @@ pub struct Summary {
 #[serde(rename_all = "camelCase")]
 pub enum SearchScope {
     /// Search for environments in global space.
-    Global,
+    Global(PythonEnvironmentKind),
     /// Search for environments in workspace folder.
     Workspace,
 }
@@ -55,15 +56,15 @@ pub fn find_and_report_envs(
     // From settings
     let environment_directories = configuration.environment_directories.unwrap_or_default();
     let workspace_directories = configuration.workspace_directories.unwrap_or_default();
+    let executables = configuration.executables.unwrap_or_default();
     let search_global = match search_scope {
-        Some(SearchScope::Global) => true,
+        Some(SearchScope::Global(_)) => true,
         Some(SearchScope::Workspace) => false,
         _ => true,
     };
-    let search_workspace = match search_scope {
-        Some(SearchScope::Global) => false,
-        Some(SearchScope::Workspace) => true,
-        _ => true,
+    let search_kind = match search_scope {
+        Some(SearchScope::Global(kind)) => Some(kind),
+        _ => None,
     };
 
     thread::scope(|s| {
@@ -74,22 +75,33 @@ pub fn find_and_report_envs(
             if search_global {
                 thread::scope(|s| {
                     for locator in locators.iter() {
+                        if let Some(kind) = &search_kind {
+                            if !locator.supported_categories().contains(kind) {
+                                trace!(
+                                    "Skipping locator: {:?} as it does not support {:?} (required by refresh command)",
+                                    locator.get_kind(),
+                                    kind
+                                );
+                                continue;
+                            }
+                        }
+
                         let locator = locator.clone();
                         let summary = summary.clone();
                         s.spawn(move || {
                             let start = std::time::Instant::now();
-                            trace!("Searching using locator: {}", locator.get_name());
+                            trace!("Searching using locator: {:?}", locator.get_kind());
                             locator.find(reporter);
                             trace!(
-                                "Completed searching using locator: {} in {:?}",
-                                locator.get_name(),
+                                "Completed searching using locator: {:?} in {:?}",
+                                locator.get_kind(),
                                 start.elapsed()
                             );
                             summary
                                 .lock()
                                 .unwrap()
                                 .locators
-                                .insert(locator.get_name(), start.elapsed());
+                                .insert(locator.get_kind(), start.elapsed());
                         });
                     }
                 });
@@ -169,25 +181,41 @@ pub fn find_and_report_envs(
         // that could the discovery.
         s.spawn(|| {
             let start = std::time::Instant::now();
-            if search_workspace && !workspace_directories.is_empty() {
-                trace!(
-                    "Searching for environments in workspace folders: {:?}",
-                    workspace_directories
-                );
-                let global_env_search_paths: Vec<PathBuf> =
-                    get_search_paths_from_env_variables(environment);
-                for workspace_folder in workspace_directories {
-                    let global_env_search_paths = global_env_search_paths.clone();
-                    s.spawn(move || {
-                        find_python_environments_in_workspace_folder_recursive(
-                            &workspace_folder,
-                            reporter,
-                            locators,
-                            &global_env_search_paths,
-                        );
-                    });
+            thread::scope(|s| {
+                // Find environments in the workspace folders.
+                if !workspace_directories.is_empty() {
+                    trace!(
+                        "Searching for environments in workspace folders: {:?}",
+                        workspace_directories
+                    );
+                    let global_env_search_paths: Vec<PathBuf> =
+                        get_search_paths_from_env_variables(environment);
+                    for workspace_folder in workspace_directories {
+                        let global_env_search_paths = global_env_search_paths.clone();
+                        s.spawn(move || {
+                            find_python_environments_in_workspace_folder_recursive(
+                                &workspace_folder,
+                                reporter,
+                                locators,
+                                &global_env_search_paths,
+                            );
+                        });
+                    }
                 }
-            }
+                // Find the python exes provided.
+                if !executables.is_empty() {
+                    trace!("Searching for environment executables: {:?}", executables);
+                    let global_env_search_paths: Vec<PathBuf> =
+                        get_search_paths_from_env_variables(environment);
+                    identify_python_executables_using_locators(
+                        executables,
+                        locators,
+                        reporter,
+                        &global_env_search_paths,
+                    );
+                }
+            });
+
             summary
                 .lock()
                 .unwrap()

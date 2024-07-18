@@ -19,7 +19,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Locator, LocatorKind,
 };
 use pet_python_utils::executable::find_executable;
 
@@ -75,13 +75,14 @@ impl PyEnv {
 }
 
 impl Locator for PyEnv {
-    fn get_name(&self) -> &'static str {
-        "PyEnv" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::PyEnv
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![
             PythonEnvironmentKind::Pyenv,
             PythonEnvironmentKind::PyenvVirtualEnv,
+            PythonEnvironmentKind::Conda,
         ]
     }
 

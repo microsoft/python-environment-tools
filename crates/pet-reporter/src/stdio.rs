@@ -18,6 +18,7 @@ pub struct StdioReporter {
     print_list: bool,
     managers: Arc<Mutex<HashMap<EnvManagerType, u16>>>,
     environments: Arc<Mutex<HashMap<Option<PythonEnvironmentKind>, u16>>>,
+    kind: Option<PythonEnvironmentKind>,
 }
 
 pub struct Summary {
@@ -49,6 +50,9 @@ impl Reporter for StdioReporter {
     }
 
     fn report_environment(&self, env: &PythonEnvironment) {
+        if self.kind.is_some() && env.kind != self.kind {
+            return;
+        }
         let mut environments = self.environments.lock().unwrap();
         let count = environments.get(&env.kind).unwrap_or(&0) + 1;
         environments.insert(env.kind, count);
@@ -58,11 +62,12 @@ impl Reporter for StdioReporter {
     }
 }
 
-pub fn create_reporter(print_list: bool) -> StdioReporter {
+pub fn create_reporter(print_list: bool, kind: Option<PythonEnvironmentKind>) -> StdioReporter {
     StdioReporter {
         print_list,
         managers: Arc::new(Mutex::new(HashMap::new())),
         environments: Arc::new(Mutex::new(HashMap::new())),
+        kind,
     }
 }
 

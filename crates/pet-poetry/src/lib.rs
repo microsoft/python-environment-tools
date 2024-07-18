@@ -10,7 +10,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Configuration, Locator, LocatorResult,
+    Configuration, Locator, LocatorKind, LocatorResult,
 };
 use pet_virtualenv::is_virtualenv;
 use std::{
@@ -127,8 +127,8 @@ impl PoetryLocator for Poetry {
 }
 
 impl Locator for Poetry {
-    fn get_name(&self) -> &'static str {
-        "Poetry" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::Poetry
     }
     fn configure(&self, config: &Configuration) {
         if let Some(workspace_directories) = &config.workspace_directories {

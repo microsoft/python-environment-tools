@@ -12,6 +12,7 @@ use pet::resolve::resolve_environment;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
 use pet_core::python_environment::PythonEnvironment;
+use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::telemetry::refresh_performance::RefreshPerformance;
 use pet_core::telemetry::TelemetryEvent;
 use pet_core::{
@@ -136,9 +137,12 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshOptions {
-    /// The search paths are the paths where we will look for environments.
-    /// Defaults to searching everywhere (or when None), else it can be restricted to a specific scope.
-    pub search_scope: Option<SearchScope>,
+    /// If provided, then limit the search to this kind of environments.
+    pub search_kind: Option<PythonEnvironmentKind>,
+    /// If provided, then limit the search paths to these.
+    /// Note: Search paths can also include Python exes or Python env folders.
+    /// Traditionally, search paths are workspace folders.
+    pub search_paths: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -160,14 +164,47 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
         _ => params,
     };
     match serde_json::from_value::<RefreshOptions>(params.clone()) {
-        Ok(refres_options) => {
+        Ok(refresh_options) => {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 // Ensure we can have only one refresh at a time.
                 let lock = REFRESH_LOCK.lock().unwrap();
 
-                let config = context.configuration.read().unwrap().clone();
-                let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter())));
+                let mut config = context.configuration.read().unwrap().clone();
+                let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter(
+                    refresh_options.search_kind,
+                ))));
+
+                let mut search_scope = None;
+
+                // If search kind is provided and no search_paths, then we will only search in the global locations.
+                config.executables = None; // This can only be provided in the refresh request.
+                if refresh_options.search_kind.is_some() || refresh_options.search_paths.is_some() {
+                    config.workspace_directories = None;
+                    if let Some(search_paths) = refresh_options.search_paths {
+                        config.workspace_directories = Some(
+                            search_paths
+                                .iter()
+                                .filter(|p| p.is_dir())
+                                .cloned()
+                                .collect(),
+                        );
+                        config.executables = Some(
+                            search_paths
+                                .iter()
+                                .filter(|p| p.is_file())
+                                .cloned()
+                                .collect(),
+                        );
+                        search_scope = Some(SearchScope::Workspace);
+                    } else if let Some(search_kind) = refresh_options.search_kind {
+                        config.executables = None;
+                        search_scope = Some(SearchScope::Global(search_kind));
+                    }
+                    for locator in context.locators.iter() {
+                        locator.configure(&config);
+                    }
+                }
 
                 trace!("Start refreshing environments, config: {:?}", config);
                 let summary = find_and_report_envs(
@@ -175,11 +212,11 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     config,
                     &context.locators,
                     context.os_environment.deref(),
-                    refres_options.search_scope,
+                    search_scope,
                 );
                 let summary = summary.lock().unwrap();
                 for locator in summary.locators.iter() {
-                    info!("Locator {} took {:?}", locator.0, locator.1);
+                    info!("Locator {:?} took {:?}", locator.0, locator.1);
                 }
                 for item in summary.breakdown.iter() {
                     info!("Locator {} took {:?}", item.0, item.1);
@@ -193,7 +230,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                         .locators
                         .clone()
                         .iter()
-                        .map(|(k, v)| (k.to_string(), v.as_millis()))
+                        .map(|(k, v)| (format!("{:?}", k), v.as_millis()))
                         .collect::<BTreeMap<String, u128>>(),
                     breakdown: summary
                         .breakdown
@@ -279,7 +316,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                 {
                     if let Some(resolved) = result.resolved {
                         // Gather telemetry of this resolved env and see what we got wrong.
-                        let jsonrpc_reporter = jsonrpc::create_reporter();
+                        let jsonrpc_reporter = jsonrpc::create_reporter(None);
                         let _ = report_inaccuracies_identified_after_resolving(
                             &jsonrpc_reporter,
                             &result.discovered,

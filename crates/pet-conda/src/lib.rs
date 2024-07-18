@@ -15,7 +15,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Locator, LocatorKind,
 };
 use pet_fs::path::norm_case;
 use serde::{Deserialize, Serialize};
@@ -203,8 +203,8 @@ impl Conda {
 }
 
 impl Locator for Conda {
-    fn get_name(&self) -> &'static str {
-        "Conda" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::Conda
     }
     fn configure(&self, config: &pet_core::Configuration) {
         if let Some(ref conda_exe) = config.conda_executable {

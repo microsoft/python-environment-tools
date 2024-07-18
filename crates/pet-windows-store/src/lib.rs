@@ -11,6 +11,7 @@ use environments::list_store_pythons;
 use pet_core::env::PythonEnv;
 use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_core::reporter::Reporter;
+use pet_core::LocatorKind;
 use pet_core::{os_environment::Environment, Locator};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -51,8 +52,8 @@ impl WindowsStore {
 }
 
 impl Locator for WindowsStore {
-    fn get_name(&self) -> &'static str {
-        "WindowsStore" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::WindowsStore
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::WindowsStore]

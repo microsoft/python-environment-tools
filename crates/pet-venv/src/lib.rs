@@ -8,7 +8,7 @@ use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     pyvenv_cfg::PyVenvCfg,
     reporter::Reporter,
-    Locator,
+    Locator, LocatorKind,
 };
 use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
@@ -39,8 +39,8 @@ impl Default for Venv {
     }
 }
 impl Locator for Venv {
-    fn get_name(&self) -> &'static str {
-        "Venv" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::Venv
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Venv]
