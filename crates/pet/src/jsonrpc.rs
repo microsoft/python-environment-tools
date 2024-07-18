@@ -108,8 +108,7 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 let mut cfg = context.configuration.write().unwrap();
-                cfg.workspace_directories = configure_options.workspace_directories.clone();
-
+                cfg.workspace_directories = configure_options.workspace_directories;
                 cfg.conda_executable = configure_options.conda_executable;
                 cfg.environment_directories = configure_options.environment_directories;
                 cfg.poetry_executable = configure_options.poetry_executable;
