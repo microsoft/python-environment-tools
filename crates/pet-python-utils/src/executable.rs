@@ -25,7 +25,7 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
         env_path.join("python3.exe"),
     ]
     .into_iter()
-    .find(|path| path.exists())
+    .find(|path| path.is_file())
 }
 
 #[cfg(unix)]
@@ -37,7 +37,7 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
         env_path.join("python3"),
     ]
     .into_iter()
-    .find(|path| path.exists())
+    .find(|path| path.is_file())
 }
 
 pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {

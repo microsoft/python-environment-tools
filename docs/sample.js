@@ -104,13 +104,14 @@ async function configure(connection) {
  * Refresh the environment
  *
  * @param {import("vscode-jsonrpc").MessageConnection} connection
- * @param {undefined | 'global' | 'workspace'} searchScope
+ * @param {undefined | { searchKind?: string } | { searchPaths?: string[] } } search Defaults to searching for all environments on the current machine.
+ * Have a look at the JSONRPC.md file for more information.
  */
-async function refresh(connection, searchScope) {
+async function refresh(connection, search) {
   environments.length = 0;
-  const { duration } = await connection.sendRequest("refresh", { searchScope });
-  const scope = searchScope
-    ? ` (in ${searchScope} scope)`
+  const { duration } = await connection.sendRequest("refresh", search);
+  const scope = search
+    ? ` (in ${JSON.stringify(search)})`
     : "(in machine scope)";
   console.log(
     `Found ${environments.length} environments in ${duration}ms ${scope}`
@@ -122,7 +123,7 @@ async function refresh(connection, searchScope) {
  *
  * @param {import("vscode-jsonrpc").MessageConnection} connection
  */
-async function clear(connection, searchScope) {
+async function clear(connection) {
   await connection.sendRequest("clear");
 }
 
@@ -151,24 +152,6 @@ async function resolve(connection, executable) {
   }
 }
 
-/**
- * Gets all possible information about the Python executable provided.
- * This will spawn the Python executable (if not already done in the past).
- * This must be used only if some of the information already avaialble is not sufficient.
- *
- * E.g. if a Python env was discovered and the version information is not know,
- * but is requried, then call this method.
- * If on the other hand, all of the information is already available, then there's no need to call this method.
- * In fact it would be better to avoid calling this method, as it will spawn a new process & consume resouces.
- *
- * @param {String} searchPath Workspace Directory, directory with environments, Python environment path or python executable.
- * @param {import("vscode-jsonrpc").MessageConnection} connection
- */
-async function find(connection, searchPath) {
-  const environments = await connection.sendRequest("find", { searchPath });
-  console.log(`Found ${environments.length} environments in ${searchPath}`);
-}
-
 async function main() {
   const connection = await start();
 
@@ -176,16 +159,23 @@ async function main() {
   await configure(connection);
 
   await refresh(connection);
-  // Search for environments in the defined workspace folders.
-  await refresh(connection, "workspace");
 
   // Search for environments in the specified folders.
   // This could be a folder thats not part of the workspace and not in any known location
   // I.e. it could contain environments that have not been discovered (due to the fact that its not a common/known location).
-  await find(connection, "/Users/user_name/temp");
+  await refresh(connection, {
+    searchPaths: [
+      "/Users/user_name/temp",
+      "/Users/user_name/demo/.venv",
+      "/Users/user_name/demo/.venv/bin/python",
+    ],
+  });
   // Search for environments in the specified python environment directory.
-  await find(connection, "/Users/user_name/demo/.venv");
-  await find(connection, "/Users/user_name/demo/.venv/bin");
+  await refresh(connection, {
+    searchPaths: ["/Users/user_name/demo/.venv/bin", "/usr/local/bin/python3"],
+  });
+  // Search for environments of a particular kind.
+  await refresh(connection, { searchKind: "Conda" });
 
   // Possible this env was discovered, and the version or prefix information is not known.
   await resolve(connection, "/usr/local/bin/python3");
