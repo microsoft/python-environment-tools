@@ -5,7 +5,7 @@ use pet_core::{
     env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Locator, LocatorKind,
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::executable::find_executables;
@@ -27,8 +27,8 @@ impl Default for MacPythonOrg {
     }
 }
 impl Locator for MacPythonOrg {
-    fn get_name(&self) -> &'static str {
-        "MacPythonOrg" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::MacPythonOrg
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::MacPythonOrg]

@@ -5,14 +5,16 @@ use env_logger::Builder;
 use log::{trace, LevelFilter};
 use pet_core::{
     manager::EnvManager,
-    python_environment::PythonEnvironment,
+    python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
     telemetry::{get_telemetry_event_name, TelemetryEvent},
 };
 use pet_jsonrpc::send_message;
 use serde::{Deserialize, Serialize};
 
-pub struct JsonRpcReporter {}
+pub struct JsonRpcReporter {
+    report_only: Option<PythonEnvironmentKind>,
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,13 +39,26 @@ impl Reporter for JsonRpcReporter {
     }
 
     fn report_environment(&self, env: &PythonEnvironment) {
+        if let Some(report_only) = &self.report_only {
+            if env.kind != Some(*report_only) {
+                trace!(
+                    "Skip Reporting Environment ({:?}) {:?} due to refresh request to report only {:?}",
+                    env.kind,
+                    env.executable
+                        .clone()
+                        .unwrap_or(env.prefix.clone().unwrap_or_default()),
+                    report_only
+                );
+                return;
+            }
+        }
         trace!("Reporting Environment {:?}", env);
         send_message("environment", env.into())
     }
 }
 
-pub fn create_reporter() -> impl Reporter {
-    JsonRpcReporter {}
+pub fn create_reporter(report_only: Option<PythonEnvironmentKind>) -> impl Reporter {
+    JsonRpcReporter { report_only }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Eq, Clone)]

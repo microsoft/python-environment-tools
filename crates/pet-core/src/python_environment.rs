@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use clap::{Parser, ValueEnum};
 use log::error;
 use pet_fs::path::norm_case;
 use serde::{Deserialize, Serialize};
@@ -8,11 +9,11 @@ use std::path::PathBuf;
 
 use crate::{arch::Architecture, manager::EnvManager};
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Parser, ValueEnum, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum PythonEnvironmentKind {
     Conda,
     Homebrew,
-    Pyenv,           // Relates to Python installations in pyenv that are from Python org.
+    Pyenv,
     GlobalPaths,     // Python found in global locations like PATH, /usr/bin etc.
     PyenvVirtualEnv, // Pyenv virtualenvs.
     Pipenv,
@@ -21,7 +22,6 @@ pub enum PythonEnvironmentKind {
     MacCommandLineTools,
     LinuxGlobal,
     MacXCode,
-    Unknown,
     Venv,
     VirtualEnv,
     VirtualEnvWrapper,

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use jsonrpc::start_jsonrpc_server;
 use pet::{find_and_report_envs_stdio, resolve_report_stdio, FindOptions};
+use pet_core::python_environment::PythonEnvironmentKind;
 
 mod find;
 mod jsonrpc;
@@ -22,10 +23,10 @@ pub struct Cli {
 enum Commands {
     /// Finds the environments and reports them to the standard output.
     Find {
-        /// List of folders to search for environments.
+        /// List of files/folders to search for environments.
         /// The current directory is automatically used as a workspace folder if none provided.
-        #[arg(value_name = "WORKSPACE FOLDERS")]
-        workspace_dirs: Option<Vec<PathBuf>>,
+        #[arg(value_name = "SEARCH PATHS")]
+        search_paths: Option<Vec<PathBuf>>,
 
         /// List the environments found.
         #[arg(short, long)]
@@ -45,13 +46,13 @@ enum Commands {
 
         /// Exclusively search just the workspace directories.
         /// I.e. exclude all global environments.
-        #[arg(short, long, conflicts_with = "global_only")]
-        workspace_only: bool,
+        #[arg(short, long, conflicts_with = "kind")]
+        workspace: bool,
 
-        /// Exclusively search just the global environments (Conda, Poetry, Registry, etc).
-        /// I.e. do not search the workspace directories.
-        #[arg(short, long, conflicts_with = "workspace_only")]
-        global_only: bool,
+        /// Exclusively search for a specific Python environment kind.
+        /// Will not search in the workspace directories.
+        #[arg(short, long, conflicts_with = "workspace")]
+        kind: Option<PythonEnvironmentKind>,
     },
     /// Resolves & reports the details of the the environment to the standard output.
     Resolve {
@@ -78,29 +79,42 @@ fn main() {
         list: true,
         verbose: false,
         report_missing: false,
-        workspace_dirs: None,
-        workspace_only: false,
-        global_only: false,
+        search_paths: None,
+        workspace: false,
         cache_directory: None,
+        kind: None,
     }) {
         Commands::Find {
             list,
             verbose,
             report_missing,
-            workspace_dirs,
-            workspace_only,
-            global_only,
+            search_paths,
+            workspace,
             cache_directory,
-        } => find_and_report_envs_stdio(FindOptions {
-            print_list: list,
-            print_summary: true,
-            verbose,
-            report_missing,
-            workspace_dirs,
-            workspace_only,
-            global_only,
-            cache_directory,
-        }),
+            kind,
+        } => {
+            let mut workspace_only = workspace;
+            if search_paths.clone().is_some()
+                && search_paths
+                    .clone()
+                    .unwrap_or_default()
+                    .iter()
+                    .all(|f| f.is_file())
+            {
+                workspace_only = true;
+            }
+
+            find_and_report_envs_stdio(FindOptions {
+                print_list: list,
+                print_summary: true,
+                verbose,
+                report_missing,
+                search_paths,
+                workspace_only,
+                cache_directory,
+                kind,
+            });
+        }
         Commands::Resolve {
             executable,
             verbose,

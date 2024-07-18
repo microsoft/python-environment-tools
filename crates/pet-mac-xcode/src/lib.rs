@@ -2,10 +2,11 @@
 // Licensed under the MIT License.
 
 use pet_core::{
+    arch::Architecture,
     env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Locator, LocatorKind,
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::version;
@@ -26,8 +27,8 @@ impl Default for MacXCode {
     }
 }
 impl Locator for MacXCode {
-    fn get_name(&self) -> &'static str {
-        "MacXCode" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::MacXCode
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::MacCommandLineTools]
@@ -56,6 +57,7 @@ impl Locator for MacXCode {
         let mut version = env.version.clone();
         let mut prefix = env.prefix.clone();
         let mut symlinks = vec![env.executable.clone()];
+        let mut arch = None;
 
         let existing_symlinks = env.symlinks.clone();
         if let Some(existing_symlinks) = existing_symlinks {
@@ -110,6 +112,11 @@ impl Locator for MacXCode {
                         // Use the latest accurate information we have.
                         version = Some(resolved_env.version);
                         prefix = Some(resolved_env.prefix);
+                        arch = if resolved_env.is64_bit {
+                            Some(Architecture::X64)
+                        } else {
+                            Some(Architecture::X86)
+                        };
                     }
                 }
             }
@@ -156,6 +163,11 @@ impl Locator for MacXCode {
                 resolved_environments.push(resolved_env.clone());
                 version = Some(resolved_env.version);
                 prefix = Some(resolved_env.prefix);
+                arch = if resolved_env.is64_bit {
+                    Some(Architecture::X64)
+                } else {
+                    Some(Architecture::X86)
+                };
             }
         }
 
@@ -163,6 +175,7 @@ impl Locator for MacXCode {
             .executable(Some(env.executable.clone()))
             .version(version)
             .prefix(prefix)
+            .arch(arch)
             .symlinks(Some(symlinks))
             .build();
 

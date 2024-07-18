@@ -59,7 +59,10 @@ impl ResolvedPythonEnv {
             let entry = cache.lock().unwrap();
             entry.track_symlinks(symlinks)
         } else {
-            error!("Invalid Python environment being cached: {:?}", environment);
+            error!(
+                "Invalid Python environment being cached: {:?} expected {:?}",
+                environment, self
+            );
         }
     }
     /// Given the executable path, resolve the python environment by spawning python.

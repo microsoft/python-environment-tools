@@ -2,20 +2,17 @@
 // Licensed under the MIT License.
 
 use find::find_and_report_envs;
-use find::identify_python_executables_using_locators;
 use find::SearchScope;
 use locators::create_locators;
-use log::warn;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
 use pet_core::os_environment::Environment;
+use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Locator;
 use pet_core::{os_environment::EnvironmentApi, reporter::Reporter, Configuration};
-use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
 use pet_python_utils::cache::set_cache_directory;
-use pet_reporter::collect;
 use pet_reporter::{self, cache::CacheReporter, stdio};
 use resolve::resolve_environment;
 use std::path::PathBuf;
@@ -31,10 +28,10 @@ pub struct FindOptions {
     pub print_summary: bool,
     pub verbose: bool,
     pub report_missing: bool,
-    pub workspace_dirs: Option<Vec<PathBuf>>,
+    pub search_paths: Option<Vec<PathBuf>>,
     pub workspace_only: bool,
-    pub global_only: bool,
     pub cache_directory: Option<PathBuf>,
+    pub kind: Option<PythonEnvironmentKind>,
 }
 
 pub fn find_and_report_envs_stdio(options: FindOptions) {
@@ -44,18 +41,16 @@ pub fn find_and_report_envs_stdio(options: FindOptions) {
         log::LevelFilter::Warn
     });
     let now = SystemTime::now();
+    let config = create_config(&options);
     let search_scope = if options.workspace_only {
         Some(SearchScope::Workspace)
-    } else if options.global_only {
-        Some(SearchScope::Global)
     } else {
-        None
+        options.kind.map(SearchScope::Global)
     };
 
     if let Some(cache_directory) = options.cache_directory.clone() {
         set_cache_directory(cache_directory);
     }
-    let (config, executable_to_find) = create_config(&options);
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
@@ -65,47 +60,51 @@ pub fn find_and_report_envs_stdio(options: FindOptions) {
         locator.configure(&config);
     }
 
-    if let Some(executable) = executable_to_find {
-        find_env(&executable, &locators, &environment)
-    } else {
-        find_envs(
-            &options,
-            &locators,
-            config,
-            conda_locator.as_ref(),
-            poetry_locator.as_ref(),
-            &environment,
-            search_scope,
-        );
-    }
+    find_envs(
+        &options,
+        &locators,
+        config,
+        conda_locator.as_ref(),
+        poetry_locator.as_ref(),
+        &environment,
+        search_scope,
+    );
 
     println!("Completed in {}ms", now.elapsed().unwrap().as_millis())
 }
 
-fn create_config(options: &FindOptions) -> (Configuration, Option<PathBuf>) {
+fn create_config(options: &FindOptions) -> Configuration {
     let mut config = Configuration::default();
-    let mut workspace_directories = vec![];
-    if let Some(dirs) = options.workspace_dirs.clone() {
-        workspace_directories.extend(dirs);
+
+    let mut search_paths = vec![];
+    if let Some(dirs) = options.search_paths.clone() {
+        search_paths.extend(dirs);
     }
     // If workspace folders have been provided do not add cwd.
-    if workspace_directories.is_empty() {
+    if search_paths.is_empty() {
         if let Ok(cwd) = env::current_dir() {
-            workspace_directories.push(cwd);
+            search_paths.push(cwd);
         }
     }
-    workspace_directories.sort();
-    workspace_directories.dedup();
+    search_paths.sort();
+    search_paths.dedup();
 
-    let executable_to_find =
-        if workspace_directories.len() == 1 && workspace_directories[0].is_file() {
-            Some(workspace_directories[0].clone())
-        } else {
-            None
-        };
-    config.workspace_directories = Some(workspace_directories);
+    config.workspace_directories = Some(
+        search_paths
+            .iter()
+            .filter(|d| d.is_dir())
+            .cloned()
+            .collect(),
+    );
+    config.executables = Some(
+        search_paths
+            .iter()
+            .filter(|d| d.is_file())
+            .cloned()
+            .collect(),
+    );
 
-    (config, executable_to_find)
+    config
 }
 
 fn find_envs(
@@ -117,7 +116,11 @@ fn find_envs(
     environment: &dyn Environment,
     search_scope: Option<SearchScope>,
 ) {
-    let stdio_reporter = Arc::new(stdio::create_reporter(options.print_list));
+    let kind = match search_scope {
+        Some(SearchScope::Global(kind)) => Some(kind),
+        _ => None,
+    };
+    let stdio_reporter = Arc::new(stdio::create_reporter(options.print_list, kind));
     let reporter = CacheReporter::new(stdio_reporter.clone());
 
     let summary = find_and_report_envs(&reporter, config, locators, environment, search_scope);
@@ -136,7 +139,7 @@ fn find_envs(
             println!("Breakdown by each locator:");
             println!("--------------------------");
             for locator in summary.locators.iter() {
-                println!("{:<20} : {:?}", locator.0, locator.1);
+                println!("{:<20} : {:?}", format!("{:?}", locator.0), locator.1);
             }
             println!()
         }
@@ -193,39 +196,6 @@ fn find_envs(
     }
 }
 
-fn find_env(
-    executable: &PathBuf,
-    locators: &Arc<Vec<Arc<dyn Locator>>>,
-    environment: &dyn Environment,
-) {
-    let collect_reporter = Arc::new(collect::create_reporter());
-    let reporter = CacheReporter::new(collect_reporter.clone());
-    let stdio_reporter = Arc::new(stdio::create_reporter(true));
-
-    let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(environment);
-
-    identify_python_executables_using_locators(
-        vec![executable.clone()],
-        locators,
-        &reporter,
-        &global_env_search_paths,
-    );
-
-    // Find the environment for the file provided.
-    let environments = collect_reporter.environments.lock().unwrap();
-    if let Some(env) = environments
-        .iter()
-        .find(|e| e.symlinks.clone().unwrap_or_default().contains(executable))
-    {
-        if let Some(manager) = &env.manager {
-            stdio_reporter.report_manager(manager);
-        }
-        stdio_reporter.report_environment(env);
-    } else {
-        warn!("Failed to find the environment for {:?}", executable);
-    }
-}
-
 pub fn resolve_report_stdio(executable: PathBuf, verbose: bool, cache_directory: Option<PathBuf>) {
     stdio::initialize_logger(if verbose {
         log::LevelFilter::Trace
@@ -238,7 +208,7 @@ pub fn resolve_report_stdio(executable: PathBuf, verbose: bool, cache_directory:
         set_cache_directory(cache_directory);
     }
 
-    let stdio_reporter = Arc::new(stdio::create_reporter(true));
+    let stdio_reporter = Arc::new(stdio::create_reporter(true, None));
     let reporter = CacheReporter::new(stdio_reporter.clone());
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));

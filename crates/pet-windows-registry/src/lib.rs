@@ -8,7 +8,7 @@ use pet_core::{
     env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator, LocatorResult,
+    Locator, LocatorKind, LocatorResult,
 };
 use pet_virtualenv::is_virtualenv;
 use std::sync::{Arc, Mutex};
@@ -49,11 +49,14 @@ impl WindowsRegistry {
 }
 
 impl Locator for WindowsRegistry {
-    fn get_name(&self) -> &'static str {
-        "WindowsRegistry" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::WindowsRegistry
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
-        vec![PythonEnvironmentKind::WindowsRegistry]
+        vec![
+            PythonEnvironmentKind::WindowsRegistry,
+            PythonEnvironmentKind::Conda,
+        ]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {

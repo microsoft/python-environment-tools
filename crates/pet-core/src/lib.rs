@@ -27,6 +27,7 @@ pub struct LocatorResult {
 pub struct Configuration {
     /// These are paths like workspace folders, where we can look for environments.
     pub workspace_directories: Option<Vec<PathBuf>>,
+    pub executables: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
     pub poetry_executable: Option<PathBuf>,
     /// Custom locations where environments can be found.
@@ -37,9 +38,27 @@ pub struct Configuration {
     pub cache_directory: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LocatorKind {
+    Conda,
+    Homebrew,
+    LinuxGlobal,
+    MacCommandLineTools,
+    MacPythonOrg,
+    MacXCode,
+    PipEnv,
+    Poetry,
+    PyEnv,
+    Venv,
+    VirtualEnv,
+    VirtualEnvWrapper,
+    WindowsRegistry,
+    WindowsStore,
+}
+
 pub trait Locator: Send + Sync {
     /// Returns the name of the locator.
-    fn get_name(&self) -> &'static str;
+    fn get_kind(&self) -> LocatorKind;
     /// Configures the locator with the given configuration.
     /// Override this method if you need to have some custom configuration.
     /// E.g. storing some of the configuration information in the locator.

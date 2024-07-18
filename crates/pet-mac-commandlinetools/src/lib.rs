@@ -2,10 +2,11 @@
 // Licensed under the MIT License.
 
 use pet_core::{
+    arch::Architecture,
     env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Locator, LocatorKind,
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::version;
@@ -26,8 +27,8 @@ impl Default for MacCmdLineTools {
     }
 }
 impl Locator for MacCmdLineTools {
-    fn get_name(&self) -> &'static str {
-        "MacCmdLineTools" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::MacCommandLineTools
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::MacCommandLineTools]
@@ -57,6 +58,7 @@ impl Locator for MacCmdLineTools {
         let mut version = env.version.clone();
         let mut prefix = env.prefix.clone();
         let mut symlinks = vec![env.executable.clone()];
+        let mut arch = None;
 
         let existing_symlinks = env.symlinks.clone();
         if let Some(existing_symlinks) = existing_symlinks {
@@ -113,6 +115,11 @@ impl Locator for MacCmdLineTools {
                         // Use the latest accurate information we have.
                         version = Some(resolved_env.version);
                         prefix = Some(resolved_env.prefix);
+                        arch = if resolved_env.is64_bit {
+                            Some(Architecture::X64)
+                        } else {
+                            Some(Architecture::X86)
+                        };
                     }
                 }
             }
@@ -165,11 +172,17 @@ impl Locator for MacCmdLineTools {
                 version = version::from_header_files(prefix);
             }
         }
+
         if version.is_none() || prefix.is_none() {
             if let Some(resolved_env) = ResolvedPythonEnv::from(&env.executable) {
                 resolved_environments.push(resolved_env.clone());
                 version = Some(resolved_env.version);
                 prefix = Some(resolved_env.prefix);
+                arch = if resolved_env.is64_bit {
+                    Some(Architecture::X64)
+                } else {
+                    Some(Architecture::X86)
+                };
             }
         }
 
@@ -177,6 +190,7 @@ impl Locator for MacCmdLineTools {
             .executable(Some(env.executable.clone()))
             .version(version)
             .prefix(prefix)
+            .arch(arch)
             .symlinks(Some(symlinks.clone()))
             .build();
 

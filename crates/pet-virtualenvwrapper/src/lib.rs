@@ -8,7 +8,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Locator, LocatorKind,
 };
 use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
@@ -30,8 +30,8 @@ impl VirtualEnvWrapper {
 }
 
 impl Locator for VirtualEnvWrapper {
-    fn get_name(&self) -> &'static str {
-        "VirtualEnvWrapper" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::VirtualEnvWrapper
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::VirtualEnvWrapper]

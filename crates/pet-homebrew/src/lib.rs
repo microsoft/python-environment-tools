@@ -9,7 +9,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Locator, LocatorKind,
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::executable::find_executables;
@@ -110,8 +110,8 @@ fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
 }
 
 impl Locator for Homebrew {
-    fn get_name(&self) -> &'static str {
-        "Homebrew" // Do not change this name, as this is used in telemetry.
+    fn get_kind(&self) -> LocatorKind {
+        LocatorKind::Homebrew
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Homebrew]

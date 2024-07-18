@@ -24,7 +24,7 @@ struct CacheEntry {
 }
 
 pub fn generate_cache_file(cache_directory: &Path, executable: &PathBuf) -> PathBuf {
-    cache_directory.join(format!("{}.2.json", generate_hash(executable)))
+    cache_directory.join(format!("{}.3.json", generate_hash(executable)))
 }
 
 pub fn delete_cache_file(cache_directory: &Path, executable: &PathBuf) {
