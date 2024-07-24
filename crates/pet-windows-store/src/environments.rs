@@ -14,6 +14,8 @@ use pet_core::{arch::Architecture, python_environment::PythonEnvironmentBuilder}
 #[cfg(windows)]
 use pet_fs::path::norm_case;
 #[cfg(windows)]
+use pet_python_utils::executable::find_executables;
+#[cfg(windows)]
 use regex::Regex;
 use std::path::PathBuf;
 #[cfg(windows)]
@@ -39,6 +41,8 @@ struct PotentialPython {
     exe: Option<PathBuf>,
     #[allow(dead_code)]
     version: String,
+    #[allow(dead_code)]
+    symlinks: Vec<PathBuf>,
 }
 
 #[cfg(windows)]
@@ -121,6 +125,7 @@ pub fn list_store_pythons(environment: &EnvVariables) -> Option<Vec<PythonEnviro
                         path: Some(path.clone()),
                         name: Some(name.clone()),
                         version: simple_version.to_string(),
+                        symlinks: find_symlinks(path, simple_version.to_string()),
                         ..Default::default()
                     };
                     potential_matches.insert(simple_version.to_string(), item);
@@ -146,6 +151,7 @@ pub fn list_store_pythons(environment: &EnvVariables) -> Option<Vec<PythonEnviro
                         let item = PotentialPython {
                             exe: Some(path.clone()),
                             version: simple_version.to_string(),
+                            symlinks: find_symlinks(path, simple_version.to_string()),
                             ..Default::default()
                         };
                         potential_matches.insert(simple_version.to_string(), item);
@@ -175,6 +181,50 @@ pub fn list_store_pythons(environment: &EnvVariables) -> Option<Vec<PythonEnviro
         }
     }
     Some(python_envs)
+}
+
+/// Given an exe from a sub directory of WindowsApp path, find the symlinks (reparse points)
+/// for the same environment but from the WindowsApp directory.
+#[cfg(windows)]
+fn find_symlinks(exe_in_windows_app_path: PathBuf, version: String) -> Vec<PathBuf> {
+    let mut symlinks = vec![];
+    if let Some(bin_dir) = exe_in_windows_app_path.parent() {
+        if let Some(windows_app_path) = bin_dir.parent() {
+            // Ensure we're in the right place
+            if windows_app_path.ends_with("WindowsApp") {
+                return vec![];
+            }
+
+            let possible_exe =
+                windows_app_path.join(PathBuf::from(format!("python{}.exe", version)));
+            if possible_exe.exists() {
+                symlinks.push(possible_exe);
+            }
+
+            // How many exes do we have that look like with Python3.x.exe
+            // If we have Python3.12.exe & Python3.10.exe, then we have absolutely no idea whether
+            // the exes Python3.exe and Python.exe belong to 3.12 or 3.10 without spawning.
+            // In those cases we will not bother figuring those out.
+            // However if we have just one Python exe of the form Python3.x.ex, then python.exe and Python3.exe are symlinks.
+            let mut number_of_python_exes_with_versions = 0;
+            let mut exes = vec![];
+            find_executables(windows_app_path)
+                .into_iter()
+                .for_each(|exe| {
+                    if let Some(name) = exe.file_name().and_then(|s| s.to_str()) {
+                        if name.to_lowercase().starts_with("python3.") {
+                            number_of_python_exes_with_versions += 1;
+                        }
+                        exes.push(exe);
+                    }
+                });
+
+            if number_of_python_exes_with_versions == 1 {
+                symlinks.append(&mut exes);
+            }
+        }
+    }
+    symlinks
 }
 
 #[cfg(windows)]

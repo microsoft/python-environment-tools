@@ -61,6 +61,9 @@ impl Locator for WindowsStore {
 
     #[cfg(windows)]
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+        use std::path::PathBuf;
+
+        use pet_core::python_environment::PythonEnvironmentBuilder;
         use pet_virtualenv::is_virtualenv;
 
         // Assume we create a virtual env from a python install,
@@ -69,11 +72,28 @@ impl Locator for WindowsStore {
         if is_virtualenv(env) {
             return None;
         }
+        let list_of_possible_exes = vec![env.executable.clone()]
+            .into_iter()
+            .chain(env.symlinks.clone().unwrap_or_default().into_iter())
+            .collect::<Vec<PathBuf>>();
         if let Some(environments) = self.find_with_cache() {
             for found_env in environments {
-                if let Some(ref python_executable_path) = found_env.executable {
-                    if python_executable_path == &env.executable {
-                        return Some(found_env);
+                if let Some(symlinks) = &found_env.symlinks {
+                    // Check if we have found this exe.
+                    if list_of_possible_exes
+                        .iter()
+                        .any(|exe| symlinks.contains(exe))
+                    {
+                        // Its possible the env discovery was not aware of the symlink
+                        // E.g. if we are asked to resolve `../WindowsApp/python.exe`
+                        // We will have no idea, hence this will get spawned, and then exe
+                        // might be something like `../WindowsApp/PythonSoftwareFoundation.Python.3.10...`
+                        // However the env found by the locator will almost never contain python.exe nor python3.exe
+                        // See README.md
+                        // As a result, we need to add those symlinks here.
+                        let builder = PythonEnvironmentBuilder::from_environment(found_env.clone())
+                            .symlinks(env.symlinks.clone());
+                        return Some(builder.build());
                     }
                 }
             }
