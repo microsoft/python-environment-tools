@@ -13,6 +13,7 @@ use pet_core::python_environment::PythonEnvironment;
 use pet_core::{arch::Architecture, python_environment::PythonEnvironmentBuilder};
 #[cfg(windows)]
 use pet_fs::path::norm_case;
+#[cfg(windows)]
 use pet_python_utils::executable::find_executables;
 #[cfg(windows)]
 use regex::Regex;
@@ -184,6 +185,7 @@ pub fn list_store_pythons(environment: &EnvVariables) -> Option<Vec<PythonEnviro
 
 /// Given an exe from a sub directory of WindowsApp path, find the symlinks (reparse points)
 /// for the same environment but from the WindowsApp directory.
+#[cfg(windows)]
 fn find_symlinks(exe_in_windows_app_path: PathBuf, version: String) -> Vec<PathBuf> {
     let mut symlinks = vec![];
     if let Some(bin_dir) = exe_in_windows_app_path.parent() {
