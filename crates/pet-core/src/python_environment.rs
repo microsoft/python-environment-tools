@@ -208,6 +208,20 @@ impl PythonEnvironmentBuilder {
             symlinks: None,
         }
     }
+    pub fn from_environment(env: PythonEnvironment) -> Self {
+        Self {
+            kind: env.kind,
+            display_name: env.display_name,
+            name: env.name,
+            executable: env.executable,
+            version: env.version,
+            prefix: env.prefix,
+            manager: env.manager,
+            project: env.project,
+            arch: env.arch,
+            symlinks: env.symlinks,
+        }
+    }
 
     pub fn display_name(mut self, display_name: Option<String>) -> Self {
         self.display_name = display_name;
@@ -269,7 +283,7 @@ impl PythonEnvironmentBuilder {
     }
 
     fn update_symlinks_and_exe(&mut self, symlinks: Option<Vec<PathBuf>>) {
-        let mut all = vec![];
+        let mut all = self.symlinks.clone().unwrap_or_default();
         if let Some(ref exe) = self.executable {
             all.push(exe.clone());
         }
@@ -334,6 +348,9 @@ fn get_shortest_executable(
     exes: &Option<Vec<PathBuf>>,
 ) -> Option<PathBuf> {
     // For windows store, the exe should always be the one in the WindowsApps folder.
+    // & it must be the exe that is of the form Python3.12.exe
+    // We will never use Python.exe nor Python3.exe as the shortest paths
+    // See README.md
     if *kind == Some(PythonEnvironmentKind::WindowsStore) {
         if let Some(exes) = exes {
             if let Some(exe) = exes.iter().find(|e| {
@@ -341,6 +358,15 @@ fn get_shortest_executable(
                     && e.to_string_lossy().contains("Local")
                     && e.to_string_lossy().contains("Microsoft")
                     && e.to_string_lossy().contains("WindowsApps")
+                    // Exe must be in the WindowsApps directory.
+                    && e.parent()
+                        .map(|p| p.ends_with("WindowsApps"))
+                        .unwrap_or_default()
+                // Always give preference to the exe Python3.12.exe or the like,
+                // Over Python.exe and Python3.exe
+                // This is to be consistent with the exe we choose for the Windows Store env.
+                // See README.md
+                && e.file_name().map(|f| f.to_string_lossy().to_lowercase().starts_with("python3.")).unwrap_or_default()
             }) {
                 return Some(exe.clone());
             }
@@ -384,5 +410,29 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
             env
         );
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn shorted_exe_path_windows_store() {
+        let exes = vec![
+            PathBuf::from("C:\\Users\\user\\AppData\\Local\\Microsoft\\WindowsApps\\Python3.12.exe"),
+            PathBuf::from("C:\\Users\\user\\AppData\\Local\\Microsoft\\WindowsApps\\Python3.exe"),
+            PathBuf::from("C:\\Users\\user\\AppData\\Local\\Microsoft\\WindowsApps\\Python.exe"),
+            PathBuf::from("C:\\Users\\donja\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\\python.exe"),
+            PathBuf::from("C:\\Users\\donja\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\\python3.exe"),
+            PathBuf::from("C:\\Users\\donja\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\\python12.exe"),
+        ];
+        assert_eq!(
+            get_shortest_executable(&Some(PythonEnvironmentKind::WindowsStore), &Some(exes)),
+            Some(PathBuf::from(
+                "C:\\Users\\user\\AppData\\Local\\Microsoft\\WindowsApps\\Python3.12.exe"
+            ))
+        );
     }
 }
