@@ -47,18 +47,11 @@ pub fn create_locators(
     }
     // 3. Pyenv Python
     locators.push(Arc::new(PyEnv::from(environment, conda_locator.clone())));
-    // 4. Homebrew Python
-    if cfg!(unix) {
-        #[cfg(unix)]
-        use pet_homebrew::Homebrew;
-        #[cfg(unix)]
-        let homebrew_locator = Homebrew::from(environment);
-        #[cfg(unix)]
-        locators.push(Arc::new(homebrew_locator));
-    }
-    // 5. Conda Python
+
+    // 4. Conda Python
     locators.push(conda_locator);
-    // 6. Support for Virtual Envs
+
+    // 5. Support for Virtual Envs
     // The order of these matter.
     // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
     locators.push(poetry_locator);
@@ -67,6 +60,16 @@ pub fn create_locators(
     locators.push(Arc::new(Venv::new()));
     // VirtualEnv is the most generic, hence should be the last.
     locators.push(Arc::new(VirtualEnv::new()));
+
+    // 6. Homebrew Python
+    if cfg!(unix) {
+        #[cfg(unix)]
+        use pet_homebrew::Homebrew;
+        #[cfg(unix)]
+        let homebrew_locator = Homebrew::from(environment);
+        #[cfg(unix)]
+        locators.push(Arc::new(homebrew_locator));
+    }
 
     // 7. Global Mac Python
     // 8. CommandLineTools Python & xcode
