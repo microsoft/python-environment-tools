@@ -4,6 +4,7 @@
 use env_variables::EnvVariables;
 use environment_locations::get_homebrew_prefix_bin;
 use environments::get_python_info;
+use pet_conda::utils::is_conda_env;
 use pet_core::{
     env::PythonEnv,
     os_environment::Environment,
@@ -44,6 +45,20 @@ fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
     // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
     // Hence the first part of the condition will be true, but the second part will be false.
     if is_virtualenv(env) {
+        return None;
+    }
+
+    if let Some(prefix) = &env.prefix {
+        if is_conda_env(prefix) {
+            return None;
+        }
+    }
+    // Possible this is a root conda env (hence parent directory is conda install dir).
+    if is_conda_env(env.executable.parent()?) {
+        return None;
+    }
+    // Possible this is a conda env (hence parent directory is Scripts/bin dir).
+    if is_conda_env(env.executable.parent()?.parent()?) {
         return None;
     }
 

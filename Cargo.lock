@@ -443,6 +443,7 @@ dependencies = [
  "lazy_static",
  "log",
  "msvc_spectre_libs",
+ "pet-conda",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
