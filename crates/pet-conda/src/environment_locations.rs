@@ -235,7 +235,7 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
         if let Ok(reader) = fs::read_to_string(environment_txt.clone()) {
             trace!("Found environments.txt file {:?}", environment_txt);
             for line in reader.lines() {
-                let line = norm_case(&PathBuf::from(line.to_string()));
+                let line = norm_case(PathBuf::from(line.to_string()));
                 trace!("Conda env in environments.txt file {:?}", line);
                 if line.exists() {
                     envs.push(line);
