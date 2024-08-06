@@ -179,7 +179,7 @@ jobs:
 
       - name: Find Environments
         if: matrix.run_cli == 'yes'
-        run: cargo run --release --target ${{ matrix.target }}
+        run: cargo run --release --target ${{ matrix.target }} -- find -l -v -k conda
         shell: bash
 
       - name: Run Tests
