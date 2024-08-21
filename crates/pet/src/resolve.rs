@@ -12,7 +12,7 @@ use pet_core::{
     Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
-use pet_python_utils::env::ResolvedPythonEnv;
+use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executable};
 
 use crate::locators::identify_python_environment_using_locators;
 
@@ -27,6 +27,17 @@ pub fn resolve_environment(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     os_environment: &dyn Environment,
 ) -> Option<ResolvedEnvironment> {
+    // First check if executable is actually a file or a path.
+    let mut executable = executable.to_owned();
+    if executable.is_dir() {
+        executable = match find_executable(&executable) {
+            Some(exe) => exe,
+            None => {
+                warn!("Could not find Python executable in {:?}", executable);
+                executable
+            }
+        };
+    }
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);
     let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(os_environment);
