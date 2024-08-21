@@ -60,6 +60,8 @@ fn verify_python_in_homebrew_contaner() {
             PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3/bin/python3.12"),
             PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3"),
             PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12"),
+            PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.5/bin/python3"),
+            PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.5/bin/python3.12"),
             // On CI the Python version can change with minor updates, so we don't check the full version.
             // PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12"),
         ]),
