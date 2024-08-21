@@ -133,8 +133,8 @@ jobs:
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           pyenv install --list
-          pyenv install 3.12.4 3.8.19
-          pyenv local 3.12.4
+          pyenv install 3.12.5 3.8.19
+          pyenv local 3.12.5
           pyenv exec python --version
           pyenv local 3.8.19
           pyenv exec python --version

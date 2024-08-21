@@ -321,20 +321,13 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
     }
     if let Some(version) = environment.clone().version {
         let expected_version = &interpreter_info.clone().sys_version;
-        // Ignore Pyenv 3.12.4, known issue here https://github.com/microsoft/python-environment-tools/issues/141
-        if environment.executable
-            != Some(PathBuf::from(
-                "/home/runner/.pyenv/versions/3.12.4/bin/python",
-            ))
-        {
-            assert!(
-                does_version_match(&version, expected_version),
-                "Version mismatch for (expected {:?} to start with {:?}) for {:?}",
-                expected_version,
-                version,
-                environment.clone()
-            );
-        }
+        assert!(
+            does_version_match(&version, expected_version),
+            "Version mismatch for (expected {:?} to start with {:?}) for {:?}",
+            expected_version,
+            version,
+            environment.clone()
+        );
     }
 }
 
