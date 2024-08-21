@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use lazy_static::lazy_static;
+use log::trace;
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
@@ -34,7 +35,21 @@ pub fn get_generic_python_environment(
 ) -> Option<PythonEnvironment> {
     let file_name = path.file_name()?.to_string_lossy().to_string();
     // If we can get the version from the header files, thats more accurate.
-    let version = version::from_header_files(path).or_else(|| get_version(&file_name));
+    let mut version = version::from_header_files(path);
+    if version.is_none() {
+        version = get_version(&file_name);
+        trace!(
+            "Version (from file path) of pyenv env for {:?} is {:?}",
+            path,
+            version
+        );
+    } else {
+        trace!(
+            "Version (from header) of pyenv env for {:?} is {:?}",
+            path,
+            version
+        );
+    }
 
     let arch = if file_name.ends_with("-win32") {
         Some(Architecture::X86)
