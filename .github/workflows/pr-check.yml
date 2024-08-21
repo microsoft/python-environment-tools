@@ -134,10 +134,6 @@ jobs:
         run: |
           pyenv install --list
           pyenv install 3.12.5 3.8.19
-          pyenv local 3.12.5
-          pyenv exec python --version
-          pyenv local 3.8.19
-          pyenv exec python --version
         shell: bash
 
         # pyenv-win install list has not updated for a while
