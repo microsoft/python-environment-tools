@@ -310,6 +310,8 @@ pub fn get_known_conda_install_locations(
             )),
             // https://community.anaconda.cloud/t/conda-update-anaconda/43656/7
             app_data.clone(),
+            // As found on Aarons machine. https://github.com/microsoft/python-environment-tools/issues/142
+            home.join("AppData").join("Local"),
         ] {
             known_paths.push(prefix.clone().join("anaconda"));
             known_paths.push(prefix.clone().join("anaconda3"));
