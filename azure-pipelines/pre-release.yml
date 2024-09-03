@@ -19,7 +19,7 @@ resources:
       endpoint: Monaco
 
 extends:
-  template: azure-pipelines/extension/pipeline.yml@templates
+  template: azure-pipelines/rust-package/pipeline.yml@templates
   parameters:
     ghCreateTag: false
     binaryName: "pet"
