@@ -7,16 +7,17 @@ resources:
     - repository: templates
       type: github
       name: microsoft/vscode-engineering
-      ref: kanadig/rust-binaries1 # TODO: Change this to `main` after `kanadig/rust-binaries1` is merged to `main`.
+      ref: main
       endpoint: Monaco
 
 extends:
-  template: azure-pipelines/extension/pipeline.yml@templates
+  template: azure-pipelines/rust-package/pipeline.yml@templates
   parameters:
     ghCreateTag: false
     binaryName: "pet"
     signing: false
     buildWasm: false
+    apiScanSoftwareVersion: 2024 # major version of `pet` for internal reporting
 
     buildPlatforms:
       - name: Linux
