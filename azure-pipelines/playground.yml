@@ -17,6 +17,7 @@ extends:
     binaryName: "pet"
     signing: false
     buildWasm: false
+    apiScanSoftwareVersion: 2024 # major version of `pet` for internal reporting
 
     buildPlatforms:
       - name: Linux

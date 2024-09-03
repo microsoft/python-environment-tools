@@ -25,6 +25,7 @@ extends:
     binaryName: "pet"
     signing: false # TODO: remove this before consuming in extensions (currently extensions build and sign directly)
     buildWasm: false
+    apiScanSoftwareVersion: 2024 # major version of `pet` for internal reporting
 
     buildPlatforms:
       - name: Linux
