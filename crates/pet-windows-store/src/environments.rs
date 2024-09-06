@@ -32,6 +32,7 @@ lazy_static! {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct PotentialPython {
     #[allow(dead_code)]
     path: Option<PathBuf>,
@@ -46,7 +47,6 @@ struct PotentialPython {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 impl PotentialPython {
     fn to_python_environment(&self, hkcu: &RegKey) -> Option<PythonEnvironment> {
         let name = self.name.clone().unwrap_or_default();
