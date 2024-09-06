@@ -32,6 +32,7 @@ lazy_static! {
 }
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct PotentialPython {
     #[allow(dead_code)]
     path: Option<PathBuf>,
