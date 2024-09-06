@@ -200,6 +200,7 @@ fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
 }
 
 #[cfg(windows)]
+#[allow(clippy::ptr_arg)]
 fn find_symlinks(_executable: &PathBuf) -> Option<Vec<PathBuf>> {
     // In windows we will need to spawn the Python exe and then get the exes.
     // Lets wait and see if this is necessary.

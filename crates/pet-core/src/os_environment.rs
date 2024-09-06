@@ -50,7 +50,6 @@ impl Environment for EnvironmentApi {
         if self.global_search_locations.lock().unwrap().is_empty() {
             let mut paths =
                 env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
-                    .into_iter()
                     .filter(|p| p.exists())
                     .collect::<Vec<PathBuf>>();
             trace!("Env PATH: {:?}", paths);
