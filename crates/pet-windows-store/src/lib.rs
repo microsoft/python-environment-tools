@@ -74,7 +74,7 @@ impl Locator for WindowsStore {
         }
         let list_of_possible_exes = vec![env.executable.clone()]
             .into_iter()
-            .chain(env.symlinks.clone().unwrap_or_default().into_iter())
+            .chain(env.symlinks.clone().unwrap_or_default())
             .collect::<Vec<PathBuf>>();
         if let Some(environments) = self.find_with_cache() {
             for found_env in environments {

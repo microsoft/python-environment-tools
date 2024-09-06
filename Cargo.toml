@@ -3,7 +3,9 @@ members = ["crates/*"]
 resolver = "2"
 
 [profile.release]
-strip = true
+# Enable all optimizations
+opt-level = 3
+# Enable full link-time-optimizations
 lto = true
 codegen-units = 1
 # Enable full debug info for optimized builds.
