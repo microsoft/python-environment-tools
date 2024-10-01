@@ -57,6 +57,10 @@ impl Config {
 }
 
 fn create_config(file: Option<PathBuf>, env: &EnvVariables) -> Option<Config> {
+    if let Some(file) = &file {
+        trace!("Parsing Poetry config file => {:?}", file);
+    }
+
     let cfg = file.clone().and_then(|f| parse(&f));
     let cache_dir = get_cache_dir(&cfg, env);
     let virtualenvs_path_from_env_var = env
@@ -65,7 +69,6 @@ fn create_config(file: Option<PathBuf>, env: &EnvVariables) -> Option<Config> {
         .map(|p| resolve_virtualenvs_path(&p, &cache_dir));
 
     if let Some(virtualenvs_path) = &cfg.clone().and_then(|cfg| cfg.virtualenvs_path) {
-        trace!("Poetry virtualenvs path => {:?}", virtualenvs_path);
         let virtualenvs_path = resolve_virtualenvs_path(&virtualenvs_path.clone(), &cache_dir);
 
         return Some(Config::new(
@@ -113,6 +116,7 @@ fn resolve_virtualenvs_path(virtualenvs_path: &Path, cache_dir: &Option<PathBuf>
             return virtualenvs_path;
         }
     }
+    trace!("Poetry virtualenvs path => {:?}", virtualenvs_path);
     virtualenvs_path.to_path_buf()
 }
 /// Maps to DEFAULT_CACHE_DIR in poetry
@@ -120,17 +124,21 @@ fn get_cache_dir(cfg: &Option<ConfigToml>, env: &EnvVariables) -> Option<PathBuf
     // Cache dir in env variables takes precedence
     if let Some(cache_dir) = env.poetry_cache_dir.clone() {
         if cache_dir.is_dir() {
+            trace!("Poetry cache dir from env variable: {:?}", cache_dir);
             return Some(cache_dir);
         }
     }
     // Check cache dir in config.
     if let Some(cache_dir) = cfg.as_ref().and_then(|cfg| cfg.cache_dir.clone()) {
         if cache_dir.is_dir() {
+            trace!("Poetry cache dir from config: {:?}", cache_dir);
             return Some(cache_dir);
         }
     }
 
-    Platformdirs::new(_APP_NAME.into(), false).user_cache_path()
+    let default_cache_dir = Platformdirs::new(_APP_NAME.into(), false).user_cache_path();
+    trace!("Poetry cache (default): {:?}", default_cache_dir);
+    default_cache_dir
 }
 
 /// Maps to CONFIG_DIR in poetry
@@ -163,7 +171,9 @@ struct ConfigToml {
 
 fn parse(file: &Path) -> Option<ConfigToml> {
     let contents = fs::read_to_string(file).ok()?;
-    parse_contents(&contents)
+    let cfg = parse_contents(&contents);
+    trace!("Poetry config file for {:?} is {:?}", file, cfg);
+    cfg
 }
 
 fn parse_contents(contents: &str) -> Option<ConfigToml> {
