@@ -6,7 +6,7 @@ use crate::{
     package::{CondaPackageInfo, Package},
     utils::{is_conda_env, is_conda_install},
 };
-use log::warn;
+use log::{trace, warn};
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
@@ -76,12 +76,19 @@ pub fn get_conda_environment_info(
         return None;
     }
     // If we know the conda install folder, then we can use it.
-    let mut conda_install_folder = match manager {
-        Some(manager) => manager.conda_dir.clone(),
-        None => get_conda_installation_used_to_create_conda_env(env_path),
-    };
+    let mut conda_install_folder = manager
+        .clone()
+        .and_then(|m| m.conda_dir)
+        .or_else(|| get_conda_installation_used_to_create_conda_env(env_path));
+
     if let Some(conda_dir) = &conda_install_folder {
-        if !conda_dir.exists() {
+        if conda_dir.exists() {
+            trace!(
+                "Conda install folder {}, found, & will not be used for the Conda Env: {}",
+                env_path.display(),
+                conda_dir.display()
+            );
+        } else {
             warn!(
                 "Conda install folder {}, does not exist, hence will not be used for the Conda Env: {}",
                 env_path.display(),
@@ -89,7 +96,10 @@ pub fn get_conda_environment_info(
             );
             conda_install_folder = None;
         }
+    } else {
+        trace!("Conda install folder not found for {}", env_path.display());
     }
+
     if let Some(python_binary) = find_executable(env_path) {
         if let Some(package_info) = CondaPackageInfo::from(env_path, &Package::Python) {
             Some(CondaEnvironment {
