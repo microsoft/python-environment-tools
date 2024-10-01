@@ -8,7 +8,7 @@ use environment_locations::{
     get_environments,
 };
 use environments::{get_conda_environment_info, CondaEnvironment};
-use log::error;
+use log::{error, info};
 use manager::CondaManager;
 use pet_core::{
     env::PythonEnv,
@@ -245,9 +245,14 @@ impl Locator for Conda {
             if let Some(env) = environments.get(path) {
                 return Some(env.clone());
             }
+            info!("Getting conda env info for {:?}", path);
+
             if let Some(env) = get_conda_environment_info(path, &None) {
+                info!("Got conda env info for {:?} => {:?}", path, env);
                 if let Some(conda_dir) = &env.conda_dir {
+                    info!("Got Conda dir and now Getting conda manager for {:?}", path);
                     if let Some(manager) = self.get_manager(conda_dir) {
+                        info!("Got conda manager for {:?} => {:?}", path, manager);
                         let env = env.to_python_environment(
                             Some(conda_dir.clone()),
                             Some(manager.to_manager()),
@@ -255,6 +260,7 @@ impl Locator for Conda {
                         environments.insert(path.clone(), env.clone());
                         return Some(env);
                     } else {
+                        error!("Did not get conda manager for {:?}", path);
                         // We will still return the conda env even though we do not have the manager.
                         // This might seem incorrect, however the tool is about discovering environments.
                         // The client can activate this env either using another conda manager or using the activation scripts
@@ -264,6 +270,7 @@ impl Locator for Conda {
                         return Some(env);
                     }
                 } else {
+                    error!("Did not get conda dir for {:?}", path);
                     // We will still return the conda env even though we do not have the manager.
                     // This might seem incorrect, however the tool is about discovering environments.
                     // The client can activate this env either using another conda manager or using the activation scripts
@@ -272,6 +279,8 @@ impl Locator for Conda {
                     environments.insert(path.clone(), env.clone());
                     return Some(env);
                 }
+            } else {
+                error!("Did not get conda env info for {:?}", path);
             }
         }
         None
