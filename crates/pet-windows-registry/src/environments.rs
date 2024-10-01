@@ -101,6 +101,13 @@ fn get_registry_pythons_from_key_for_company(
                     Ok(install_path_key) => {
                         let env_path: String =
                             install_path_key.get_value("").ok().unwrap_or_default();
+                        if env_path.is_empty() {
+                            warn!(
+                                "Install path is empty {}\\Software\\Python\\{}\\{}",
+                                key_container, company, installed_python
+                            );
+                            continue;
+                        }
                         let env_path = norm_case(PathBuf::from(env_path));
                         if is_windows_app_folder_in_program_files(&env_path) {
                             trace!(

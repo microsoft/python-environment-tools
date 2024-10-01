@@ -1,4 +1,4 @@
-FROM amd64/ubuntu
+FROM amd64/ubuntu:24.04
 
 # Setup Python
 RUN apt-get update && \
