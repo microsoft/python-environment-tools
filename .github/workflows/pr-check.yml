@@ -133,7 +133,7 @@ jobs:
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           pyenv install --list
-          pyenv install 3.12.5 3.8.19
+          pyenv install 3.12.6 3.8.19
         shell: bash
 
         # pyenv-win install list has not updated for a while
