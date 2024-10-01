@@ -6,7 +6,7 @@ use crate::{
     package::{CondaPackageInfo, Package},
     utils::{is_conda_env, is_conda_install},
 };
-use log::{info, trace, warn};
+use log::{trace, warn};
 use pet_core::{
     arch::Architecture,
     manager::EnvManager,
