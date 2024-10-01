@@ -3,7 +3,7 @@
 
 use base64::{engine::general_purpose, Engine as _};
 use lazy_static::lazy_static;
-use log::trace;
+use log::{info, trace};
 use pet_core::python_environment::PythonEnvironment;
 use pet_fs::path::norm_case;
 use regex::Regex;
@@ -40,17 +40,16 @@ pub fn list_environments(
         })
         .collect::<Vec<_>>();
 
-    // We're only interested in directories that have a pyproject.toml
-    if workspace_dirs.is_empty() {
-        return None;
-    }
-
     let mut envs = vec![];
 
     let global_config = Config::find_global(env);
     let mut global_envs = vec![];
     if let Some(config) = global_config.clone() {
         global_envs = list_all_environments_from_config(&config).unwrap_or_default();
+    }
+
+    if workspace_dirs.is_empty() {
+        info!("pyproject.toml not found in any workspace directory");
     }
 
     for (workspace_dir, pyproject_toml) in workspace_dirs {
