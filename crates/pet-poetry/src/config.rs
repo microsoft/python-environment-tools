@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use log::{error, info, trace};
+use log::{error, trace};
 use pet_python_utils::platform_dirs::Platformdirs;
 
 use crate::env_variables::EnvVariables;
@@ -124,20 +124,20 @@ fn get_cache_dir(cfg: &Option<ConfigToml>, env: &EnvVariables) -> Option<PathBuf
     // Cache dir in env variables takes precedence
     if let Some(cache_dir) = env.poetry_cache_dir.clone() {
         if cache_dir.is_dir() {
-            info!("Poetry cache dir from env variable: {:?}", cache_dir);
+            trace!("Poetry cache dir from env variable: {:?}", cache_dir);
             return Some(cache_dir);
         }
     }
     // Check cache dir in config.
     if let Some(cache_dir) = cfg.as_ref().and_then(|cfg| cfg.cache_dir.clone()) {
         if cache_dir.is_dir() {
-            info!("Poetry cache dir from config: {:?}", cache_dir);
+            trace!("Poetry cache dir from config: {:?}", cache_dir);
             return Some(cache_dir);
         }
     }
 
     let default_cache_dir = Platformdirs::new(_APP_NAME.into(), false).user_cache_path();
-    info!("Poetry cache (default): {:?}", default_cache_dir);
+    trace!("Poetry cache (default): {:?}", default_cache_dir);
     default_cache_dir
 }
 
@@ -172,7 +172,7 @@ struct ConfigToml {
 fn parse(file: &Path) -> Option<ConfigToml> {
     let contents = fs::read_to_string(file).ok()?;
     let cfg = parse_contents(&contents);
-    info!("Poetry config file for {:?} is {:?}", file, cfg);
+    trace!("Poetry config file for {:?} is {:?}", file, cfg);
     cfg
 }
 

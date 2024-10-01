@@ -3,7 +3,7 @@
 
 use base64::{engine::general_purpose, Engine as _};
 use lazy_static::lazy_static;
-use log::{info, trace};
+use log::trace;
 use pet_core::python_environment::PythonEnvironment;
 use pet_fs::path::norm_case;
 use regex::Regex;
@@ -49,7 +49,7 @@ pub fn list_environments(
     }
 
     if workspace_dirs.is_empty() {
-        info!("pyproject.toml not found in any workspace directory");
+        trace!("pyproject.toml not found in any workspace directory");
     }
 
     for (workspace_dir, pyproject_toml) in workspace_dirs {
