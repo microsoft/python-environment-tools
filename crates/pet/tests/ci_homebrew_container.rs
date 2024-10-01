@@ -50,7 +50,7 @@ fn verify_python_in_homebrew_contaner() {
     let python3_12 = PythonEnvironment {
         kind: Some(PythonEnvironmentKind::Homebrew),
         executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3")),
-        version: Some("3.12.5".to_string()), // This can change on CI, so we don't check it
+        version: Some("3.12.6".to_string()), // This can change on CI, so we don't check it
         symlinks: Some(vec![
             PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3"),
             PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.12"),
@@ -61,19 +61,19 @@ fn verify_python_in_homebrew_contaner() {
             PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3"),
             PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12"),
             // On CI the Python version can change with minor updates, so we don't check the full version.
-            // PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.5/bin/python3.12"),
+            // PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.6/bin/python3.12"),
         ]),
         ..Default::default()
     };
     let python3_11 = PythonEnvironment {
         kind: Some(PythonEnvironmentKind::Homebrew),
         executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.11")),
-        version: Some("3.11.9".to_string()), // This can change on CI, so we don't check it
+        version: Some("3.11.10".to_string()), // This can change on CI, so we don't check it
         symlinks: Some(vec![
             PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.11"),
             PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.11/bin/python3.11"),
             // On CI the Python version can change with minor updates, so we don't check the full version.
-            // PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.11/3.11.9/bin/python3.11"),
+            // PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.11/3.11.10/bin/python3.11"),
         ]),
         ..Default::default()
     };
