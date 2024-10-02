@@ -1,14 +1,9 @@
 # Run on a schedule
-trigger: none
+trigger:
+  branches:
+    include:
+      - main
 pr: none
-
-schedules:
-  - cron: "0 10 * * 1-5" # 10AM UTC (2AM PDT) MON-FRI (VS Code Pre-release builds at 9PM PDT)
-    displayName: Nightly Pre-Release Schedule
-    always: false # only run if there are source code changes
-    branches:
-      include:
-        - main
 
 resources:
   repositories:
