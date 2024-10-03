@@ -141,13 +141,28 @@ pub fn find_and_report_envs(
         s.spawn(|| {
             let start = std::time::Instant::now();
             if search_global {
+                let mut possible_environments = vec![];
+
+                // These are directories that contain environments, hence enumerate these directories.
+                for directory in environment_directories {
+                    if let Ok(reader) = fs::read_dir(directory) {
+                        possible_environments.append(
+                            &mut reader
+                                .filter_map(Result::ok)
+                                .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+                                .map(|p| p.path())
+                                .collect(),
+                        );
+                    }
+                }
+
                 let search_paths: Vec<PathBuf> = [
                     list_global_virtual_envs_paths(
                         environment.get_env_var("WORKON_HOME".into()),
                         environment.get_env_var("XDG_DATA_HOME".into()),
                         environment.get_user_home(),
                     ),
-                    environment_directories,
+                    possible_environments,
                 ]
                 .concat();
                 let global_env_search_paths: Vec<PathBuf> =

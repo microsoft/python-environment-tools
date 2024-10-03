@@ -50,7 +50,7 @@ fn verify_python_in_homebrew_contaner() {
     let python3_12 = PythonEnvironment {
         kind: Some(PythonEnvironmentKind::Homebrew),
         executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3")),
-        version: Some("3.12.6".to_string()), // This can change on CI, so we don't check it
+        version: Some("3.12.7".to_string()), // This can change on CI, so we don't check it
         symlinks: Some(vec![
             PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3"),
             PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.12"),
@@ -103,6 +103,9 @@ fn verify_python_in_homebrew_contaner() {
             .filter(|p| {
                 !p.to_string_lossy()
                     .contains(&env.version.clone().unwrap_or_default())
+                    && !p
+                        .to_string_lossy()
+                        .contains(&python_env.version.clone().unwrap_or_default())
             })
             .collect::<Vec<PathBuf>>();
         assert_eq!(
