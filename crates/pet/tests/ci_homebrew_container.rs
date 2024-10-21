@@ -47,25 +47,41 @@ fn verify_python_in_homebrew_contaner() {
 
     let environments = reporter.environments.lock().unwrap().clone();
 
+    // let python3_12 = PythonEnvironment {
+    //     kind: Some(PythonEnvironmentKind::Homebrew),
+    //     executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3")),
+    //     version: Some("3.13.0".to_string()), // This can change on CI, so we don't check it
+    //     symlinks: Some(vec![
+    //         // For older versions of Python, we do not have a tonne of symlinks,
+    //         // E.g. for 3.12.7 (which was the latest at some point, at a lot of symlinks)
+    //         // As soon as 3.13 was shipped, the number of symlinks in 3.12.7 was the same as 3.11 (very few)
+    //         // I.e. only the latest versions of python have a lot of symlinks, debt to take these into account and simplify the tests
+    //         PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3"),
+    //         PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.13"),
+    //         PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python3/bin/python3"),
+    //         PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python3/bin/python3.13"),
+    //         PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3/bin/python3"),
+    //         PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3/bin/python3.13"),
+    //         PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.13/bin/python3"),
+    //         PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.13/bin/python3.13"),
+    //         // On CI the Python version can change with minor updates, so we don't check the full version.
+    //         // PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.13/3.13.0/bin/python3.13"),
+    //     ]),
+    //     ..Default::default()
+    // };
     let python3_12 = PythonEnvironment {
         kind: Some(PythonEnvironmentKind::Homebrew),
-        executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3")),
-        version: Some("3.13.0".to_string()), // This can change on CI, so we don't check it
+        executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.12")),
+        version: Some("3.12.7".to_string()), // This can change on CI, so we don't check it
         symlinks: Some(vec![
             // For older versions of Python, we do not have a tonne of symlinks,
             // E.g. for 3.12.7 (which was the latest at some point, at a lot of symlinks)
             // As soon as 3.13 was shipped, the number of symlinks in 3.12.7 was the same as 3.11 (very few)
             // I.e. only the latest versions of python have a lot of symlinks, debt to take these into account and simplify the tests
-            PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3"),
-            PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.13"),
-            PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python3/bin/python3"),
-            PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python3/bin/python3.13"),
-            PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3/bin/python3"),
-            PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3/bin/python3.13"),
-            PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.13/bin/python3"),
-            PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.13/bin/python3.13"),
+            PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.12"),
+            PathBuf::from("/home/linuxbrew/.linuxbrew/opt/python@3.12/bin/python3.12"),
             // On CI the Python version can change with minor updates, so we don't check the full version.
-            // PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.13/3.13.0/bin/python3.13"),
+            // PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.7_1/bin/python3.12"),
         ]),
         ..Default::default()
     };
