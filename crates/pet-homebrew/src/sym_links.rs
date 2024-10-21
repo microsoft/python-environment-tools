@@ -129,13 +129,13 @@ pub fn get_known_symlinks_impl(
             None => vec![],
         }
     } else if symlink_resolved_python_exe.starts_with("/usr/local/Cellar") {
-        // Real exe - /usr/local/Cellar/python@3.8/3.8.19/Frameworks/Python.framework/Versions/3.8/bin/python3.8
+        // Real exe - /usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8/bin/python3.8
 
         // Known symlinks include
         // /usr/local/bin/python3.8
         // /usr/local/opt/python@3.8/bin/python3.8
-        // /usr/local/Cellar/python@3.8/3.8.19/bin/python3.8
-        // /usr/local/Cellar/python@3.8/3.8.19/Frameworks/Python.framework/Versions/3.8/bin/python3.8
+        // /usr/local/Cellar/python@3.8/3.8.20/bin/python3.8
+        // /usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8/bin/python3.8
         match PYTHON_VERSION.captures(symlink_resolved_python_exe.to_str().unwrap_or_default()) {
             Some(captures) => match captures.get(1) {
                 Some(version) => {

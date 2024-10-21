@@ -112,9 +112,9 @@ fn from(env: &PythonEnv) -> Option<PythonEnvironment> {
     } else if resolved_file.starts_with("/usr/local/Cellar") {
         // Symlink  - /usr/local/bin/python3.8
         // Symlink  - /usr/local/opt/python@3.8/bin/python3.8
-        // Symlink  - /usr/local/Cellar/python@3.8/3.8.19/bin/python3.8
-        // Real exe - /usr/local/Cellar/python@3.8/3.8.19/Frameworks/Python.framework/Versions/3.8/bin/python3.8
-        // SysPrefix- /usr/local/Cellar/python@3.8/3.8.19/Frameworks/Python.framework/Versions/3.8
+        // Symlink  - /usr/local/Cellar/python@3.8/3.8.20/bin/python3.8
+        // Real exe - /usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8/bin/python3.8
+        // SysPrefix- /usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8
         get_python_info(
             &PathBuf::from("/usr/local/bin").join(exe_file_name),
             &resolved_file,
