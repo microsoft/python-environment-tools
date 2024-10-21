@@ -13,6 +13,7 @@ on:
       - release*
       - release/*
       - release-*
+  workflow_dispatch:
 
 jobs:
   tests:
@@ -133,7 +134,7 @@ jobs:
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           pyenv install --list
-          pyenv install 3.12.6 3.8.19
+          pyenv install 3.13.0 3.12.7 3.8.20
         shell: bash
 
         # pyenv-win install list has not updated for a while
@@ -179,7 +180,7 @@ jobs:
 
       - name: Find Environments
         if: matrix.run_cli == 'yes'
-        run: cargo run --release --target ${{ matrix.target }}
+        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
         shell: bash
 
       - name: Run Tests
@@ -351,7 +352,7 @@ jobs:
         shell: bash
 
       - name: Find Environments
-        run: cargo run --release --target ${{ matrix.target }}
+        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
         shell: bash
 
       - name: Run Tests
@@ -409,7 +410,7 @@ jobs:
         shell: bash
 
       - name: Find Environments
-        run: cargo run --release --target ${{ matrix.target }}
+        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
         shell: bash
 
       - name: Run Tests
