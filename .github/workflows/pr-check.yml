@@ -180,7 +180,7 @@ jobs:
 
       - name: Find Environments
         if: matrix.run_cli == 'yes'
-        run: cargo run --release --target ${{ matrix.target }} -- find -v
+        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
         shell: bash
 
       - name: Run Tests
@@ -352,7 +352,7 @@ jobs:
         shell: bash
 
       - name: Find Environments
-        run: cargo run --release --target ${{ matrix.target }} -- find -v
+        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
         shell: bash
 
       - name: Run Tests
@@ -410,7 +410,7 @@ jobs:
         shell: bash
 
       - name: Find Environments
-        run: cargo run --release --target ${{ matrix.target }} -- find -v
+        run: cargo run --release --target ${{ matrix.target }} -- find -v -l
         shell: bash
 
       - name: Run Tests
