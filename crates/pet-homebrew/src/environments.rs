@@ -132,7 +132,7 @@ fn get_prefix(_resolved_file: &Path) -> Option<PathBuf> {
     //     let captures = reg_ex.captures(resolved_file)?;
     //     let version = captures.get(1).map(|m| m.as_str()).unwrap_or_default();
     //     let full_version = captures.get(2).map(|m| m.as_str()).unwrap_or_default();
-    //     // SysPrefix- /usr/local/Cellar/python@3.8/3.8.19/Frameworks/Python.framework/Versions/3.8
+    //     // SysPrefix- /usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8
     //     let sys_prefix = PathBuf::from(format!(
     //         "/usr/local/Cellar/python@{}/{}/Frameworks/Python.framework/Versions/{}",
     //         version, full_version, version
