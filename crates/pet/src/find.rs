@@ -138,13 +138,14 @@ pub fn find_and_report_envs(
                 .insert("Path", start.elapsed());
         });
         // Step 3: Search in some global locations for virtual envs.
+        let environment_directories_search = environment_directories.clone();
         s.spawn(|| {
             let start = std::time::Instant::now();
             if search_global {
                 let mut possible_environments = vec![];
 
                 // These are directories that contain environments, hence enumerate these directories.
-                for directory in environment_directories {
+                for directory in environment_directories_search {
                     if let Ok(reader) = fs::read_dir(directory) {
                         possible_environments.append(
                             &mut reader
@@ -207,12 +208,14 @@ pub fn find_and_report_envs(
                         get_search_paths_from_env_variables(environment);
                     for workspace_folder in workspace_directories {
                         let global_env_search_paths = global_env_search_paths.clone();
+                        let environment_directories = environment_directories.clone();
                         s.spawn(move || {
                             find_python_environments_in_workspace_folder_recursive(
                                 &workspace_folder,
                                 reporter,
                                 locators,
                                 &global_env_search_paths,
+                                &environment_directories,
                             );
                         });
                     }
@@ -248,6 +251,7 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     reporter: &dyn Reporter,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     global_env_search_paths: &[PathBuf],
+    environment_directories: &[PathBuf],
 ) {
     // When searching in a directory, give preference to some paths.
     let paths_to_search_first = vec![
@@ -278,7 +282,16 @@ pub fn find_python_environments_in_workspace_folder_recursive(
             .filter_map(Result::ok)
             .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
             .map(|p| p.path())
-            .filter(should_search_for_environments_in_path)
+            .filter(|p| {
+                // If this directory is a sub directory or is in the environment_directories, then do not search in this directory.
+                if environment_directories.contains(p) {
+                    return true;
+                }
+                if environment_directories.iter().any(|d| p.starts_with(d)) {
+                    return true;
+                }
+                should_search_for_environments_in_path(p)
+            })
             .filter(|p| !paths_to_search_first.contains(p))
         {
             find_python_environments(vec![folder], reporter, locators, true, &[]);

@@ -402,6 +402,14 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                         &reporter,
                         &context.locators,
                         &global_env_search_paths,
+                        context
+                            .configuration
+                            .read()
+                            .unwrap()
+                            .clone()
+                            .environment_directories
+                            .as_deref()
+                            .unwrap_or(&[]),
                     );
                 }
 
