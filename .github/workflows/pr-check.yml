@@ -167,6 +167,21 @@ jobs:
 
       # endregion venv
 
+      # region Pixi
+      - name: Install Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+
+      - name: Create Pixi environments
+        run: |
+          pixi init
+          pixi add python
+          pixi add --feature dev python
+          pixi project environment add --feature dev dev
+          pixi install --environment dev
+        shell: bash
+
+      # endregion Pixi
+
       # Rust
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
