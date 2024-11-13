@@ -1,0 +1,13 @@
+[package]
+name = "pet-pixi"
+version = "0.1.0"
+edition = "2021"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+
+[dependencies]
+pet-conda = { path = "../pet-conda" }
+pet-core = { path = "../pet-core" }
+pet-python-utils = { path = "../pet-python-utils" }
+log = "0.4.21"

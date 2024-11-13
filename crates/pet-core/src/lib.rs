@@ -47,6 +47,7 @@ pub enum LocatorKind {
     MacPythonOrg,
     MacXCode,
     PipEnv,
+    Pixi,
     Poetry,
     PyEnv,
     Venv,
