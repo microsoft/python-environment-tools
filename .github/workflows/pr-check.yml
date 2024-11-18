@@ -395,7 +395,9 @@ jobs:
       # Homebrew
       - name: Homebrew Python
         if: startsWith( matrix.image, 'homebrew')
-        run: brew install python@3.12 python@3.11
+        run: |
+          brew update
+          brew install python@3.12 python@3.11
         shell: bash
 
       # Rust
