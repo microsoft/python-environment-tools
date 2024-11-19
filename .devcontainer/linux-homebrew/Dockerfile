@@ -10,7 +10,9 @@ RUN curl https://raw.githubusercontent.com/DonJayamanne/vscode-jupyter/container
 RUN echo "# To customize prompt, run `p10k configure` or edit ~/.p10k.zsh." >> ~/.zshrc
 RUN echo "[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh" >> ~/.zshrc
 
-# Install Pythone
+# Install Python
+# homebrew/brew:4.4.6 broke running `brew install` as root.
+# As a workaround, running `brew update` and ignoring errors coming from it fixes `brew install`. 
 RUN brew update || true
 RUN brew install python@3.12 python@3.11
 
