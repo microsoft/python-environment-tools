@@ -11,6 +11,7 @@ RUN echo "# To customize prompt, run `p10k configure` or edit ~/.p10k.zsh." >> ~
 RUN echo "[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh" >> ~/.zshrc
 
 # Install Pythone
+RUN brew update || true
 RUN brew install python@3.12 python@3.11
 
 # Install Rust
