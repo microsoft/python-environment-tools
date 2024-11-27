@@ -36,11 +36,6 @@
   - Thus using the `history` file we can find the conda installation folder.
     This is useful in cases where conda environments are created using `-p` option.
 
-## Known issues
-
-- Note: pixi seems to use conda envs internall, hence its possible to falsely identify a pixi env as a conda env.
-- However pixi is not supported by this tool, hence thats not a concern.
-
 ## Miscellanous
 
 - What if conda is installed in some custom locations that we have no idea about?

@@ -66,53 +66,55 @@ It could have been created by other tools like `poetry`, `pipenv`, etc. Hence we
 
 4. Homebrew
    These are always stored in a custom (global) lcoation.
-5. Conda
+
+5. Pixi
+   Pixi should run before Conda as its environments could be falsely identified as Conda environments.
+
+6. Conda
    - These are always stored in a custom (global) location.
 
 - At this stage Conda envs cannot be treated as anything else
-- Note: pixi seems to use conda envs internall, hence its possible to falsely identify a pixi env as a conda env.
-- However pixi is not supported by this tool, hence thats not a concern.
 
-6. Poetry
+7. Poetry
 
 - These are always stored in a custom (global) location.
 - Environments are created with a special name based on the hash of the project folder.
 - This needs to happen before others as these environments are general virtual environments.
 
-7. Pipenv
+8. Pipenv
 
 - These are always stored in a custom (global) location.
 - This needs to happen before others as these environments are general virtual environments.
 
-8. Virtualenvwrapper
+9. Virtualenvwrapper
 
 - These are always stored in a custom (global) location.
 - This needs to happen before others as these environments are general virtual environments.
 
-9. Vevn
+10. Vevn
 
 - A virtual environment that has a `pyvenv.cfg` file.
 - Note, this is a fallback for all other virtual environments.
 
-10. Virtualenv
+11. Virtualenv
 
 - A virtual environment that does not have a `pyvenv.cfg` file but has activation scripts such as `/bin/activate` or `Scripts/activate.bat` or the like.
 - Note, this is a fallback for all other environments.
 - This must happen after conda env discovery, as conda envs have activation scripts as well.
 
-11. Mac XCode
+12. Mac XCode
 
 - These are always stored in a custom (global) location.
 
-12. Mac Command Line Tools
+13. Mac Command Line Tools
 
 - These are always stored in a custom (global) location.
 
-13. Mac Python Org
+14. Mac Python Org
 
 - These are always stored in a custom (global) location.
 
-14. Linux Python
+15. Linux Python
 
 - These are always stored in a custom (global) location.
 </details>

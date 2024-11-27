@@ -143,6 +143,7 @@ interface ResolveParams {
 
 enum PythonEnvironmentKind {
   Conda,
+  Pixi,
   Homebrew,
   Pyenv,
   GlobalPaths, // Python found in global locations like PATH, /usr/bin etc.

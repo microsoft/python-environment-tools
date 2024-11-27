@@ -10,6 +10,7 @@ use pet_core::reporter::Reporter;
 use pet_core::{Configuration, Locator, LocatorKind};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
+use pet_pixi::is_pixi_env;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
@@ -254,7 +255,7 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     environment_directories: &[PathBuf],
 ) {
     // When searching in a directory, give preference to some paths.
-    let paths_to_search_first = vec![
+    let mut paths_to_search_first = vec![
         // Possible this is a virtual env
         workspace_folder.to_path_buf(),
         // Optimize for finding these first.
@@ -263,6 +264,15 @@ pub fn find_python_environments_in_workspace_folder_recursive(
         workspace_folder.join(".virtualenv"),
         workspace_folder.join("venv"),
     ];
+
+    // Add all subdirectories of .pixi/envs/**
+    if let Ok(reader) = fs::read_dir(workspace_folder.join(".pixi").join("envs")) {
+        reader
+            .filter_map(Result::ok)
+            .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+            .map(|p| p.path())
+            .for_each(|p| paths_to_search_first.push(p));
+    }
 
     // Possible this is an environment.
     find_python_environments_in_paths_with_locators(
@@ -274,7 +284,11 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     );
 
     // If this is a virtual env folder, no need to scan this.
-    if is_virtualenv_dir(workspace_folder) || is_conda_env(workspace_folder) {
+    // Note: calling is_pixi_env after is_conda_env is redundant but kept for consistency.
+    if is_virtualenv_dir(workspace_folder)
+        || is_conda_env(workspace_folder)
+        || is_pixi_env(workspace_folder)
+    {
         return;
     }
     if let Ok(reader) = fs::read_dir(workspace_folder) {

@@ -167,6 +167,23 @@ jobs:
 
       # endregion venv
 
+      # region Pixi
+      - name: Install Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          run-install: false
+
+      - name: Create Pixi environments
+        run: |
+          pixi init
+          pixi add python
+          pixi add --feature dev python
+          pixi project environment add --feature dev dev
+          pixi install --environment dev
+        shell: bash
+
+      # endregion Pixi
+
       # Rust
       - name: Rust Tool Chain setup
         uses: dtolnay/rust-toolchain@stable
@@ -395,7 +412,11 @@ jobs:
       # Homebrew
       - name: Homebrew Python
         if: startsWith( matrix.image, 'homebrew')
-        run: brew install python@3.12 python@3.11
+        run: |
+          # homebrew/brew:4.4.6 broke running `brew install` as root.
+          # As a workaround, running `brew update` and ignoring errors coming from it fixes `brew install`. 
+          brew update || true
+          brew install python@3.12 python@3.11
         shell: bash
 
       # Rust
