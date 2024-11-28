@@ -62,7 +62,7 @@ pub fn is_virtualenv_dir(path: &Path) -> bool {
                 .unwrap_or_default()
                 .to_str()
                 .unwrap_or_default()
-                .starts_with("activate")
+                .starts_with("activate.")
             {
                 return true;
             }
