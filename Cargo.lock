@@ -354,6 +354,7 @@ dependencies = [
  "pet-mac-python-org",
  "pet-mac-xcode",
  "pet-pipenv",
+ "pet-pixi",
  "pet-poetry",
  "pet-pyenv",
  "pet-python-utils",
@@ -523,6 +524,17 @@ dependencies = [
  "pet-fs",
  "pet-python-utils",
  "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-pixi"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-conda",
+ "pet-core",
+ "pet-python-utils",
 ]
 
 [[package]]
