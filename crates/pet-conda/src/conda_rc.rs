@@ -216,6 +216,7 @@ fn get_conda_conda_rc_from_path(conda_rc: &PathBuf) -> Option<Condarc> {
     if env_dirs.is_empty() && files.is_empty() {
         None
     } else {
+        trace!("conda_rc: {:?} with env_dirs {:?}", conda_rc, env_dirs);
         Some(Condarc { env_dirs, files })
     }
 }
