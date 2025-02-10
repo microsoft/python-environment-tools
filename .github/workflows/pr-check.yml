@@ -320,18 +320,6 @@ jobs:
         run: poetry init --name=pet-test --python=^3.11 -q -n
         shell: bash
 
-      - name: Post
-        if: startsWith( matrix.feature, 'ci-poetry')
-        # We want to have 2 envs for this poetry project 3.12 and 3.11.
-        run: pwd
-        shell: bash
-
-      - name: Post
-        if: startsWith( matrix.feature, 'ci-poetry')
-        # We want to have 2 envs for this poetry project 3.12 and 3.11.
-        run: ls
-        shell: bash
-
       - name: Poetry virtual env setup 3.12
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
         run: poetry env use 3.12
