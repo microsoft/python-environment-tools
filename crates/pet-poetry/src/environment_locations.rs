@@ -34,6 +34,12 @@ pub fn list_environments(
 
     let workspace_dirs = workspace_dirs
         .iter()
+        .inspect(|workspace_dir| {
+            trace!(
+                "Inspecting workspace directory for pyproject.toml: {:?}",
+                workspace_dir
+            )
+        })
         .map(|workspace_dir| (workspace_dir, PyProjectToml::find(workspace_dir)))
         .filter_map(|(workspace_dir, pyproject_toml)| {
             pyproject_toml.map(|pyproject_toml| (workspace_dir, pyproject_toml))

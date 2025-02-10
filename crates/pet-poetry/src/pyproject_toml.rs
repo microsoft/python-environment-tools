@@ -18,11 +18,13 @@ impl PyProjectToml {
         PyProjectToml { name }
     }
     pub fn find(path: &Path) -> Option<Self> {
+        trace!("Finding poetry file in {:?}", path);
         parse(&path.join("pyproject.toml"))
     }
 }
 
 fn parse(file: &Path) -> Option<PyProjectToml> {
+    trace!("Parsing poetry file: {:?}", file);
     let contents = fs::read_to_string(file).ok()?;
     parse_contents(&contents, file)
 }
