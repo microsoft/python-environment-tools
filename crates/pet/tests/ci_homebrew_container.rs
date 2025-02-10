@@ -72,7 +72,7 @@ fn verify_python_in_homebrew_contaner() {
     let python3_12 = PythonEnvironment {
         kind: Some(PythonEnvironmentKind::Homebrew),
         executable: Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.12")),
-        version: Some("3.12.7".to_string()), // This can change on CI, so we don't check it
+        version: Some("3.12.8".to_string()), // This can change on CI, so we don't check it
         symlinks: Some(vec![
             // For older versions of Python, we do not have a tonne of symlinks,
             // E.g. for 3.12.7 (which was the latest at some point, at a lot of symlinks)
