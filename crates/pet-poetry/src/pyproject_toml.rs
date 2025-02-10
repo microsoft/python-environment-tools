@@ -25,11 +25,33 @@ impl PyProjectToml {
 
 fn parse(file: &Path) -> Option<PyProjectToml> {
     trace!("Parsing poetry file: {:?}", file);
+    match fs::read_to_string(file) {
+        Ok(contents) => {
+            trace!(
+                "Parsed contents of poetry file: {:?} is {:?}",
+                file,
+                &contents
+            );
+        }
+        Err(e) => {
+            error!("Error reading poetry file: {:?}", e);
+        }
+    };
     let contents = fs::read_to_string(file).ok()?;
+    trace!(
+        "Parsed contents of poetry file: {:?} is {:?}",
+        file,
+        &contents
+    );
     parse_contents(&contents, file)
 }
 
 fn parse_contents(contents: &str, file: &Path) -> Option<PyProjectToml> {
+    trace!(
+        "Parsing contents of poetry file: {:?} with contents {:?}",
+        file,
+        contents
+    );
     match toml::from_str::<toml::Value>(contents) {
         Ok(value) => {
             let mut name = None;
@@ -40,6 +62,7 @@ fn parse_contents(contents: &str, file: &Path) -> Option<PyProjectToml> {
                     }
                 }
             }
+            trace!("Successfully parsed TOML value: {:?}", value);
             name.map(|name| PyProjectToml::new(name, file.into()))
         }
         Err(e) => {
