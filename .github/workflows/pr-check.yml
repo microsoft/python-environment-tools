@@ -304,17 +304,17 @@ jobs:
           virtualenvs-path: ~/my-custom-path
           installer-parallel: true
 
-      - name: Petry exe
+      - name: Poetry exe
         if: startsWith( matrix.feature, 'ci-poetry')
         run: which poetry
         shell: bash
 
-      - name: Petry config
+      - name: Poetry config
         if: startsWith( matrix.feature, 'ci-poetry')
         run: poetry config --list
         shell: bash
 
-      - name: Petry setup
+      - name: Poetry setup
         if: startsWith( matrix.feature, 'ci-poetry')
         # We want to have 2 envs for this poetry project 3.12 and 3.11.
         run: poetry init --name=pet-test --python=^3.11 -q -n
@@ -323,35 +323,41 @@ jobs:
       - name: Post
         if: startsWith( matrix.feature, 'ci-poetry')
         # We want to have 2 envs for this poetry project 3.12 and 3.11.
+        run: pwd
+        shell: bash
+
+      - name: Post
+        if: startsWith( matrix.feature, 'ci-poetry')
+        # We want to have 2 envs for this poetry project 3.12 and 3.11.
         run: ls
         shell: bash
 
-      - name: Petry virtual env setup 3.12
+      - name: Poetry virtual env setup 3.12
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
         run: poetry env use 3.12
         shell: bash
 
-      - name: Petry virtual env setup 3.12
+      - name: Poetry virtual env setup 3.12
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
         run: poetry env use $PYTHON_3_12_PATH
         shell: bash
 
-      - name: Petry virtual env setup 3.11
+      - name: Poetry virtual env setup 3.11
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
         run: poetry env use 3.11
         shell: bash
 
-      - name: Petry virtual env setup 3.11
+      - name: Poetry virtual env setup 3.11
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
         run: poetry env use $PYTHON_3_11_PATH
         shell: bash
 
-      - name: Petry list envs
+      - name: Poetry list envs
         if: startsWith( matrix.feature, 'ci-poetry')
         run: poetry env list
         shell: bash
 
-      - name: Petry pyproject.toml
+      - name: Poetry pyproject.toml
         if: startsWith( matrix.feature, 'ci-poetry')
         run: cat pyproject.toml
         shell: bash
