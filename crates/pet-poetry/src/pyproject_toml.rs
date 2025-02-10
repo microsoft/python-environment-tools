@@ -63,8 +63,23 @@ fn parse_contents(contents: &str, file: &Path) -> Option<PyProjectToml> {
                     }
                 }
             }
-            trace!("Successfully parsed TOML value: {:?}", value);
-            name.map(|name| PyProjectToml::new(name, file.into()))
+
+            match name {
+                Some(name) => Some(PyProjectToml::new(name, file.into())),
+                None => {
+                    trace!(
+                        "Poetry project name not found in {:?}, trying the new format",
+                        file
+                    );
+                    let mut name = None;
+                    if let Some(project) = value.get("project") {
+                        if let Some(name_value) = project.get("name") {
+                            name = name_value.as_str().map(|s| s.to_string());
+                        }
+                    }
+                    name.map(|name| PyProjectToml::new(name, file.into()))
+                }
+            }
         }
         Err(e) => {
             error!("Error parsing toml file: {:?}", e);
