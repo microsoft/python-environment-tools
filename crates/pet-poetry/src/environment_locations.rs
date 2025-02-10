@@ -42,6 +42,11 @@ pub fn list_environments(
         })
         .map(|workspace_dir| (workspace_dir, PyProjectToml::find(workspace_dir)))
         .filter_map(|(workspace_dir, pyproject_toml)| {
+            trace!(
+                "Found pyproject.toml in workspace directory: {:?} and pyproject.toml: {:?}",
+                workspace_dir,
+                pyproject_toml
+            );
             pyproject_toml.map(|pyproject_toml| (workspace_dir, pyproject_toml))
         })
         .collect::<Vec<_>>();

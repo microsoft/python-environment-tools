@@ -8,6 +8,7 @@ use std::{
 
 use log::{error, trace};
 
+#[derive(Debug)]
 pub struct PyProjectToml {
     pub name: String,
 }
