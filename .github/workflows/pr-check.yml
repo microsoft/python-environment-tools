@@ -45,7 +45,7 @@ jobs:
       - name: Set Python to PATH
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Homebrew Python
         if: startsWith( matrix.os, 'macos')
@@ -248,7 +248,7 @@ jobs:
         if: startsWith( matrix.feature, 'ci-poetry')
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Set Python 3.12 to PATH
         if: startsWith( matrix.feature, 'ci-poetry')
@@ -414,7 +414,7 @@ jobs:
         if: startsWith( matrix.image, 'homebrew')
         run: |
           # homebrew/brew:4.4.6 broke running `brew install` as root.
-          # As a workaround, running `brew update` and ignoring errors coming from it fixes `brew install`. 
+          # As a workaround, running `brew update` and ignoring errors coming from it fixes `brew install`.
           brew update || true
           brew install python@3.12 python@3.11
         shell: bash
