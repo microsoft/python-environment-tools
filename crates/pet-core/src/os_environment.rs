@@ -133,8 +133,18 @@ impl Environment for EnvironmentApi {
     }
 }
 
+#[cfg(windows)]
 fn get_user_home() -> Option<PathBuf> {
-    let home = env::var("HOME").or_else(|_| env::var("USERPROFILE"));
+    let home = env::var("USERPROFILE").or_else(|_| env::var("HOME"));
+    match home {
+        Ok(home) => Some(norm_case(PathBuf::from(home))),
+        Err(_) => None,
+    }
+}
+
+#[cfg(unix)]
+fn get_user_home() -> Option<PathBuf> {
+    let home = env::var("HOME");
     match home {
         Ok(home) => Some(norm_case(PathBuf::from(home))),
         Err(_) => None,

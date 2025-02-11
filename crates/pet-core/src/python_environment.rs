@@ -12,6 +12,7 @@ use crate::{arch::Architecture, manager::EnvManager};
 #[derive(Parser, ValueEnum, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum PythonEnvironmentKind {
     Conda,
+    Pixi,
     Homebrew,
     Pyenv,
     GlobalPaths,     // Python found in global locations like PATH, /usr/bin etc.

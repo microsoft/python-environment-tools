@@ -5,8 +5,29 @@ use std::path::{Path, PathBuf};
 
 /// conda-meta must exist as this contains a mandatory `history` file.
 pub fn is_conda_install(path: &Path) -> bool {
-    (path.join("condabin").exists() || path.join("envs").exists())
+    if (path.join("condabin").exists() || path.join("envs").exists())
         && path.join("conda-meta").exists()
+    {
+        // For https://github.com/microsoft/vscode-python/issues/24247
+        // Possible the env has a condabin or envs folder but its not the install directory.
+        // & in fact its just a regular conda env.
+        // Easy way is to check if the grand parent folder is a conda install directory.
+        if let Some(parent) = path.parent() {
+            if let Some(parent) = parent.parent() {
+                // If the grand parent is a conda install directory,
+                // then this is definitely not a conda install dir.
+                if (parent.join("condabin").exists() || parent.join("envs").exists())
+                    && parent.join("conda-meta").exists()
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    false
 }
 
 /// conda-meta must exist as this contains a mandatory `history` file.
