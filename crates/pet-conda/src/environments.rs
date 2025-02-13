@@ -186,8 +186,8 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
     let conda_exe = resolve_symlink(&conda_exe).unwrap_or(conda_exe);
     if let Some(cmd_line) = conda_exe.parent() {
         if let Some(conda_dir) = cmd_line.file_name() {
-            if conda_dir.to_ascii_lowercase() == "bin"
-                || conda_dir.to_ascii_lowercase() == "scripts"
+            if conda_dir.to_string_lossy().to_lowercase() == "bin"
+                || conda_dir.to_string_lossy().to_lowercase() == "scripts"
             {
                 if let Some(conda_dir) = cmd_line.parent() {
                     // Ensure the casing of the paths are correct.

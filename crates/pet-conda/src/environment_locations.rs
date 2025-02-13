@@ -75,6 +75,7 @@ fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<Pat
     let mut env_dirs = vec![];
     for rc_file_dir in get_conda_rc_search_paths(env_vars) {
         if !rc_file_dir.exists() {
+            trace!(".condarc not found ({:?})", rc_file_dir);
             continue;
         }
 
@@ -111,7 +112,7 @@ fn get_conda_environment_paths_from_conda_rc(env_vars: &EnvVariables) -> Vec<Pat
         );
         env_dirs.append(&mut conda_rc.env_dirs.clone());
     } else {
-        trace!("No Conda environments in .condarc");
+        trace!("No Conda environments in .condarc {:?}", env_dirs);
     }
     env_dirs
 }

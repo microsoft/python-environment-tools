@@ -45,7 +45,7 @@ jobs:
       - name: Set Python to PATH
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Homebrew Python
         if: startsWith( matrix.os, 'macos')
@@ -134,7 +134,7 @@ jobs:
         if: startsWith( matrix.os, 'ubuntu') || startsWith( matrix.os, 'macos')
         run: |
           pyenv install --list
-          pyenv install 3.13.0 3.12.7 3.8.20
+          pyenv install 3.13.0 3.12.8 3.8.20
         shell: bash
 
         # pyenv-win install list has not updated for a while
@@ -248,7 +248,7 @@ jobs:
         if: startsWith( matrix.feature, 'ci-poetry')
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Set Python 3.12 to PATH
         if: startsWith( matrix.feature, 'ci-poetry')
@@ -304,48 +304,48 @@ jobs:
           virtualenvs-path: ~/my-custom-path
           installer-parallel: true
 
-      - name: Petry exe
+      - name: Poetry exe
         if: startsWith( matrix.feature, 'ci-poetry')
         run: which poetry
         shell: bash
 
-      - name: Petry config
+      - name: Poetry config
         if: startsWith( matrix.feature, 'ci-poetry')
         run: poetry config --list
         shell: bash
 
-      - name: Petry setup
+      - name: Poetry setup
         if: startsWith( matrix.feature, 'ci-poetry')
         # We want to have 2 envs for this poetry project 3.12 and 3.11.
         run: poetry init --name=pet-test --python=^3.11 -q -n
         shell: bash
 
-      - name: Petry virtual env setup 3.12
+      - name: Poetry virtual env setup 3.12
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
         run: poetry env use 3.12
         shell: bash
 
-      - name: Petry virtual env setup 3.12
+      - name: Poetry virtual env setup 3.12
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
         run: poetry env use $PYTHON_3_12_PATH
         shell: bash
 
-      - name: Petry virtual env setup 3.11
+      - name: Poetry virtual env setup 3.11
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'ubuntu')
         run: poetry env use 3.11
         shell: bash
 
-      - name: Petry virtual env setup 3.11
+      - name: Poetry virtual env setup 3.11
         if: startsWith( matrix.feature, 'ci-poetry') && startsWith( matrix.os, 'windows')
         run: poetry env use $PYTHON_3_11_PATH
         shell: bash
 
-      - name: Petry list envs
+      - name: Poetry list envs
         if: startsWith( matrix.feature, 'ci-poetry')
         run: poetry env list
         shell: bash
 
-      - name: Petry pyproject.toml
+      - name: Poetry pyproject.toml
         if: startsWith( matrix.feature, 'ci-poetry')
         run: cat pyproject.toml
         shell: bash
@@ -414,7 +414,7 @@ jobs:
         if: startsWith( matrix.image, 'homebrew')
         run: |
           # homebrew/brew:4.4.6 broke running `brew install` as root.
-          # As a workaround, running `brew update` and ignoring errors coming from it fixes `brew install`. 
+          # As a workaround, running `brew update` and ignoring errors coming from it fixes `brew install`.
           brew update || true
           brew install python@3.12 python@3.11
         shell: bash

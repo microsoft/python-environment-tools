@@ -8,6 +8,7 @@ use std::{
 
 use log::{error, trace};
 
+#[derive(Debug)]
 pub struct PyProjectToml {
     pub name: String,
 }
@@ -18,11 +19,13 @@ impl PyProjectToml {
         PyProjectToml { name }
     }
     pub fn find(path: &Path) -> Option<Self> {
+        trace!("Finding poetry file in {:?}", path);
         parse(&path.join("pyproject.toml"))
     }
 }
 
 fn parse(file: &Path) -> Option<PyProjectToml> {
+    trace!("Parsing poetry file: {:?}", file);
     let contents = fs::read_to_string(file).ok()?;
     parse_contents(&contents, file)
 }
@@ -38,7 +41,23 @@ fn parse_contents(contents: &str, file: &Path) -> Option<PyProjectToml> {
                     }
                 }
             }
-            name.map(|name| PyProjectToml::new(name, file.into()))
+
+            match name {
+                Some(name) => Some(PyProjectToml::new(name, file.into())),
+                None => {
+                    trace!(
+                        "Poetry project name not found in {:?}, trying the new format",
+                        file
+                    );
+                    let mut name = None;
+                    if let Some(project) = value.get("project") {
+                        if let Some(name_value) = project.get("name") {
+                            name = name_value.as_str().map(|s| s.to_string());
+                        }
+                    }
+                    name.map(|name| PyProjectToml::new(name, file.into()))
+                }
+            }
         }
         Err(e) => {
             error!("Error parsing toml file: {:?}", e);
