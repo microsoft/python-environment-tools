@@ -56,11 +56,20 @@ fn get_global_virtualenv_dirs(
 }
 
 pub fn list_global_virtual_envs_paths(
+    virtual_env_env_var: Option<String>,
     work_on_home_env_var: Option<String>,
     xdg_data_home: Option<String>,
     user_home: Option<PathBuf>,
 ) -> Vec<PathBuf> {
     let mut python_envs: Vec<PathBuf> = vec![];
+
+    if let Some(virtual_env) = virtual_env_env_var {
+        let virtual_env = norm_case(expand_path(PathBuf::from(virtual_env)));
+        if virtual_env.exists() {
+            python_envs.push(virtual_env);
+        }
+    }
+
     for root_dir in &get_global_virtualenv_dirs(work_on_home_env_var, xdg_data_home, user_home) {
         if let Ok(dirs) = fs::read_dir(root_dir) {
             python_envs.append(
