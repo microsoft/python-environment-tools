@@ -160,6 +160,7 @@ pub fn find_and_report_envs(
 
                 let search_paths: Vec<PathBuf> = [
                     list_global_virtual_envs_paths(
+                        environment.get_env_var("VIRTUAL_ENV".into()),
                         environment.get_env_var("WORKON_HOME".into()),
                         environment.get_env_var("XDG_DATA_HOME".into()),
                         environment.get_user_home(),
