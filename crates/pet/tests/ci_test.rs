@@ -161,6 +161,7 @@ fn check_if_virtualenvwrapper_exists() {
             |env| env.kind == Some(PythonEnvironmentKind::VirtualEnvWrapper)
                 && env.executable.is_some()
                 && env.prefix.is_some()
+                && env.name == Some("venv_wrapper_env1".to_string())
                 && env
                     .executable
                     .clone()
