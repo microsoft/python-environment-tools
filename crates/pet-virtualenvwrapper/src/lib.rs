@@ -49,12 +49,15 @@ impl Locator for VirtualEnvWrapper {
             },
         };
         let mut symlinks = vec![];
+        let mut name = None;
         if let Some(ref prefix) = env.prefix {
             symlinks.append(&mut find_executables(prefix));
+            name = prefix.file_name().and_then(|f| f.to_str());
         }
 
         Some(
             PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::VirtualEnvWrapper))
+                .name(name.map(String::from))
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(env.prefix.clone())
