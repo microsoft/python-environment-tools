@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use pet_core::{
     env::PythonEnv,
@@ -40,6 +40,19 @@ pub fn is_virtualenv_dir(path: &Path) -> bool {
             path = path.join("bin");
         }
     }
+
+    // Never consider global locations to be virtualenvs
+    // in case there is a false positive match from checks below.
+    if [
+        PathBuf::from(r"/bin"),
+        PathBuf::from(r"/usr/bin"),
+        PathBuf::from(r"/usr/local/bin"),
+    ]
+    .contains(&path)
+    {
+        return false;
+    }
+
     // Check if there are any activate.* files in the same directory as the interpreter.
     //
     // env
@@ -62,7 +75,7 @@ pub fn is_virtualenv_dir(path: &Path) -> bool {
                 .unwrap_or_default()
                 .to_str()
                 .unwrap_or_default()
-                .starts_with("activate")
+                .starts_with("activate.")
             {
                 return true;
             }
