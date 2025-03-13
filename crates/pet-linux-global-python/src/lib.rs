@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -38,10 +38,17 @@ impl LinuxGlobalPython {
             return;
         }
         // Look through the /bin, /usr/bin, /usr/local/bin directories
+        let bin_dirs: HashSet<_> = [
+            Path::new("/bin"),
+            Path::new("/usr/bin"),
+            Path::new("/usr/local/bin"),
+        ]
+        .map(|p| fs::canonicalize(p).unwrap_or(p.to_path_buf()))
+        .into();
         thread::scope(|s| {
-            for bin in ["/bin", "/usr/bin", "/usr/local/bin"] {
+            for bin in bin_dirs {
                 s.spawn(move || {
-                    find_and_report_global_pythons_in(bin, reporter, &self.reported_executables);
+                    find_and_report_global_pythons_in(&bin, reporter, &self.reported_executables);
                 });
             }
         });
@@ -103,11 +110,11 @@ impl Locator for LinuxGlobalPython {
 }
 
 fn find_and_report_global_pythons_in(
-    bin: &str,
+    bin: &Path,
     reporter: Option<&dyn Reporter>,
     reported_executables: &Arc<Mutex<HashMap<PathBuf, PythonEnvironment>>>,
 ) {
-    let python_executables = find_executables(Path::new(bin));
+    let python_executables = find_executables(bin);
 
     for exe in python_executables.clone().iter() {
         if reported_executables.lock().unwrap().contains_key(exe) {
