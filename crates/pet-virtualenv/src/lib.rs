@@ -43,7 +43,7 @@ pub fn is_virtualenv_dir(path: &Path) -> bool {
 
     // Never consider global locations to be virtualenvs
     // in case there is a false positive match from checks below.
-    if vec![
+    if [
         PathBuf::from(r"/bin"),
         PathBuf::from(r"/usr/bin"),
         PathBuf::from(r"/usr/local/bin"),
