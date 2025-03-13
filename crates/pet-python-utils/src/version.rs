@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::headers::Headers;
+use crate::headers::{self, Headers};
 use log::{trace, warn};
 use pet_core::pyvenv_cfg::PyVenvCfg;
 use pet_fs::path::resolve_symlink;
@@ -38,7 +38,13 @@ pub fn from_creator_for_virtual_env(prefix: &Path) -> Option<String> {
         } else {
             // Assume the python environment used to create this virtual env is a regular install of Python.
             // Try to get the version of that environment.
-            from_header_files(parent_dir)
+            let sys_root = parent_dir.parent()?;
+            let pyver = if let Some(pyvenvcfg) = PyVenvCfg::find(prefix) {
+                Some((pyvenvcfg.version_major, pyvenvcfg.version_minor))
+            } else {
+                None
+            };
+            headers::get_version(sys_root, pyver)
         }
     } else if cfg!(windows) {
         // Only on windows is it difficult to get the creator of the virtual environment.
