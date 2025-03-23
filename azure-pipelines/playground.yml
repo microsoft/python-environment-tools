@@ -13,42 +13,25 @@ resources:
 extends:
   template: azure-pipelines/rust-package/pipeline.yml@templates
   parameters:
-    ghCreateTag: false
     binaryName: "pet"
     signing: false
-    buildWasm: false
     apiScanSoftwareVersion: 2024 # major version of `pet` for internal reporting
 
     buildPlatforms:
-      - name: Linux
-        vsceTarget: "web"
-      - name: Linux
-        packageArch: arm64
-        vsceTarget: linux-arm64
-      - name: Linux
-        packageArch: arm
-        vsceTarget: linux-armhf
-      - name: Linux
-        packageArch: x64
-        vsceTarget: linux-x64
-      - name: Linux
-        packageArch: arm64
-        vsceTarget: alpine-arm64
-      - name: Linux
-        packageArch: x64
-        vsceTarget: alpine-x64
-      - name: MacOS
-        packageArch: arm64
-        vsceTarget: darwin-arm64
-      - name: MacOS
-        packageArch: x64
-        vsceTarget: darwin-x64
-      - name: Windows
-        packageArch: arm
-        vsceTarget: win32-arm64
-      - name: Windows
-        packageArch: x64
-        vsceTarget: win32-x64
+      - name: linux
+        target: x86_64-unknown-linux-musl
+      - name: linux
+        target: aarch64-unknown-linux-gnu
+      - name: linux
+        target: armv7-unknown-linux-gnueabihf
+      - name: darwin
+        target: aarch64-apple-darwin
+      - name: darwin
+        target: x86_64-apple-darwin
+      - name: windows
+        target: aarch64-pc-windows-msvc
+      - name: windows
+        target: x86_64-pc-windows-msvc
 
     preBuildSteps:
       - pwsh: Rename-Item -Path "./.cargo/config.toml.disabled" -NewName "config.toml"
