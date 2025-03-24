@@ -20,11 +20,17 @@ const PYVENV_CONFIG_FILE: &str = "pyvenv.cfg";
 #[derive(Debug)]
 pub struct PyVenvCfg {
     pub version: String,
+    pub version_major: u64,
+    pub version_minor: u64,
 }
 
 impl PyVenvCfg {
-    fn new(version: String) -> Self {
-        Self { version }
+    fn new(version: String, version_major: u64, version_minor: u64) -> Self {
+        Self {
+            version,
+            version_major,
+            version_minor,
+        }
     }
     pub fn find(path: &Path) -> Option<Self> {
         if let Some(ref file) = find(path) {
@@ -77,16 +83,36 @@ fn parse(file: &Path) -> Option<PyVenvCfg> {
         if !line.contains("version") {
             continue;
         }
-        if let Some(captures) = VERSION.captures(line) {
-            if let Some(value) = captures.get(1) {
-                return Some(PyVenvCfg::new(value.as_str().to_string()));
-            }
+        if let Some(cfg) = parse_version(line, &VERSION) {
+            return Some(cfg);
         }
-        if let Some(captures) = VERSION_INFO.captures(line) {
-            if let Some(value) = captures.get(1) {
-                return Some(PyVenvCfg::new(value.as_str().to_string()));
-            }
+        if let Some(cfg) = parse_version(line, &VERSION_INFO) {
+            return Some(cfg);
         }
     }
+    None
+}
+
+fn parse_version(line: &str, regex: &Regex) -> Option<PyVenvCfg> {
+    if let Some(captures) = regex.captures(line) {
+        if let Some(value) = captures.get(1) {
+            let version = value.as_str();
+            let parts: Vec<&str> = version.splitn(3, ".").take(2).collect();
+            // .expect() below is OK because the version regex
+            // guarantees there are at least two digits.
+            let version_major = parts[0]
+                .parse()
+                .expect("python major version to be an integer");
+            let version_minor = parts[1]
+                .parse()
+                .expect("python minor version to be an integer");
+            return Some(PyVenvCfg::new(
+                version.to_string(),
+                version_major,
+                version_minor,
+            ));
+        }
+    }
+
     None
 }
