@@ -2,6 +2,7 @@
 name = "pet-windows-store"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55.0"
