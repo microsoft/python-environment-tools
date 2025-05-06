@@ -63,8 +63,15 @@ impl Locator for Venv {
             if let Some(ref prefix) = prefix {
                 symlinks.append(&mut find_executables(prefix));
             }
+
+            // Get the name from the prefix if it exists.
+            let cfg = PyVenvCfg::find(env.executable.parent()?)
+                .or_else(|| PyVenvCfg::find(&env.prefix.clone()?));
+            let name = cfg.and_then(|cfg| cfg.prompt);
+
             Some(
                 PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+                    .name(name.map(String::from))
                     .executable(Some(env.executable.clone()))
                     .version(version)
                     .prefix(prefix)
