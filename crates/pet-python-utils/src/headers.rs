@@ -19,7 +19,14 @@ pub struct Headers {
 impl Headers {
     pub fn get_version(path: &Path) -> Option<String> {
         let mut path = path.to_path_buf();
-        let bin = if cfg!(windows) { "Scripts" } else { "bin" };
+        if cfg!(windows) {
+            // Only Windows can have a Scripts folder
+            let bin = "Scripts";
+            if path.join(bin).exists() {
+                path = path.join(bin);
+            }
+        }
+        let bin = "bin"; // Windows can have bin as well, see https://github.com/microsoft/vscode-python/issues/24792
         if path.ends_with(bin) {
             path.pop();
         }

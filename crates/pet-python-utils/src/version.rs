@@ -20,8 +20,12 @@ pub fn from_creator_for_virtual_env(prefix: &Path) -> Option<String> {
     if let Some(version) = Headers::get_version(prefix) {
         return Some(version);
     }
-    let bin = if cfg!(windows) { "Scripts" } else { "bin" };
-    let executable = &prefix.join(bin).join("python");
+    let mut bin = "bin";
+    let mut executable = prefix.join(bin).join("python");
+    if cfg!(windows) && !executable.exists() {
+        bin = "Scripts";
+        executable = prefix.join(bin).join("python.exe");
+    }
 
     // Determine who created this virtual environment, and get version of that environment.
     // Note, its unlikely conda envs were used to create virtual envs, thats a very bad idea (known to cause issues and not reccomended).
@@ -67,10 +71,18 @@ pub fn from_prefix(prefix: &Path) -> Option<String> {
 /// Using this information its possible to determine the version of the Python environment used to create the env.
 fn get_python_exe_used_to_create_venv<T: AsRef<Path>>(executable: T) -> Option<PathBuf> {
     let parent_dir = executable.as_ref().parent()?;
-    let bin = if cfg!(windows) { "Scripts" } else { "bin" };
-    if parent_dir.file_name().unwrap_or_default() != bin {
-        warn!("Attempted to determine creator of virtual environment, but the env executable ({:?}) is not in the expected location.", executable.as_ref());
-        return None;
+    if cfg!(windows) {
+        if parent_dir.file_name().unwrap_or_default() != "bin"
+            && parent_dir.file_name().unwrap_or_default() != "Scripts"
+        {
+            warn!("Attempted to determine creator of virtual environment, but the env executable ({:?}) is not in the expected location.", executable.as_ref());
+            return None;
+        }
+    } else {
+        if parent_dir.file_name().unwrap_or_default() != "bin" {
+            warn!("Attempted to determine creator of virtual environment, but the env executable ({:?}) is not in the expected location.", executable.as_ref());
+            return None;
+        }
     }
 
     let symlink = resolve_symlink(&executable)?;
@@ -93,7 +105,11 @@ fn get_version_from_pyvenv_if_pyvenv_cfg_and_exe_created_same_time(
         return None;
     }
     let cfg_metadata = pyvenv_cfg.metadata().ok()?;
-    let exe_metadata = prefix.join("Scripts").join("python.exe").metadata().ok()?;
+    let mut bin = prefix.join("Scripts");
+    if !bin.exists() {
+        bin = prefix.join("bin");
+    }
+    let exe_metadata = bin.join("python.exe").metadata().ok()?;
     let cfg_modified = cfg_metadata
         .modified()
         .ok()?

@@ -21,6 +21,8 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
     [
         env_path.join("Scripts").join("python.exe"),
         env_path.join("Scripts").join("python3.exe"),
+        env_path.join("bin").join("python.exe"),
+        env_path.join("bin").join("python3.exe"),
         env_path.join("python.exe"),
         env_path.join("python3.exe"),
     ]
@@ -41,13 +43,20 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
 }
 
 pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
+    let mut env_path = env_path.as_ref().to_path_buf();
     // Never find exes in `.pyenv/shims/` folder, they are not valid exes
-    if env_path.as_ref().ends_with(".pyenv/shims") {
+    if env_path.ends_with(".pyenv/shims") {
         return vec![];
     }
     let mut python_executables = vec![];
-    let bin = if cfg!(windows) { "Scripts" } else { "bin" };
-    let mut env_path = env_path.as_ref().to_path_buf();
+    if cfg!(windows) {
+        // Only windows can have a Scripts folder
+        let bin = "Scripts";
+        if env_path.join(bin).exists() {
+            env_path = env_path.join(bin);
+        }
+    }
+    let bin = "bin"; // Windows can have bin as well, https://github.com/microsoft/vscode-python/issues/24792
     if env_path.join(bin).exists() {
         env_path = env_path.join(bin);
     }
