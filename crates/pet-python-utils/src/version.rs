@@ -78,8 +78,7 @@ fn get_python_exe_used_to_create_venv<T: AsRef<Path>>(executable: T) -> Option<P
             warn!("Attempted to determine creator of virtual environment, but the env executable ({:?}) is not in the expected location.", executable.as_ref());
             return None;
         }
-    }
-    if parent_dir.file_name().unwrap_or_default() != "bin" {
+    } else if parent_dir.file_name().unwrap_or_default() != "bin" {
         warn!("Attempted to determine creator of virtual environment, but the env executable ({:?}) is not in the expected location.", executable.as_ref());
         return None;
     }
