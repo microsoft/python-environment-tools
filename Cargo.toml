@@ -2,6 +2,9 @@
 members = ["crates/*"]
 resolver = "2"
 
+[workspace.package]
+license = "MIT"
+
 [profile.release]
 # Enable all optimizations
 opt-level = 3
