@@ -99,12 +99,20 @@ pub fn identify_python_environment_using_locators(
     global_env_search_paths: &[PathBuf],
 ) -> Option<PythonEnvironment> {
     let executable = env.executable.clone();
+    trace!(
+        "Identifying Python environment using locators: {:?}",
+        executable
+    );
     if let Some(env) = locators.iter().fold(
         None,
         |e, loc| if e.is_some() { e } else { loc.try_from(env) },
     ) {
         return Some(env);
     }
+    trace!(
+        "Failed to identify Python environment using locators, now trying to resolve: {:?}",
+        executable
+    );
 
     // Yikes, we have no idea what this is.
     // Lets get the actual interpreter info and try to figure this out.

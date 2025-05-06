@@ -30,6 +30,13 @@ pub fn resolve_environment(
     // First check if executable is actually a file or a path.
     let mut executable = executable.to_owned();
     if executable.is_dir() {
+        trace!(
+            "Looking to resolve Python executable in provided directory, {:?}, file = {:?}, sylink = {:?}, metadata = {:?}",
+            executable,
+            executable.is_file(),
+            executable.is_symlink(),
+            executable.metadata(),
+        );
         executable = match find_executable(&executable) {
             Some(exe) => exe,
             None => {
@@ -37,9 +44,18 @@ pub fn resolve_environment(
                 executable
             }
         };
+        trace!(
+            "Found Python executable in provided directory, {:?}",
+            executable
+        );
     }
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);
+    trace!(
+        "In resolve_environment, looking for Python Env {:?} in {:?}",
+        env,
+        executable
+    );
     let global_env_search_paths: Vec<PathBuf> = get_search_paths_from_env_variables(os_environment);
 
     if let Some(env) =
