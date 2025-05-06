@@ -71,7 +71,7 @@ impl Locator for Venv {
 
             Some(
                 PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
-                    .name(name.map(String::from))
+                    .name(name)
                     .executable(Some(env.executable.clone()))
                     .version(version)
                     .prefix(prefix)
