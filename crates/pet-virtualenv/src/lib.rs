@@ -30,15 +30,19 @@ pub fn is_virtualenv(env: &PythonEnv) -> bool {
 }
 
 pub fn is_virtualenv_dir(path: &Path) -> bool {
+    if cfg!(windows) {
+        is_virtualenv_dir_impl(path, "Scripts") || is_virtualenv_dir_impl(path, "bin")
+    } else {
+        is_virtualenv_dir_impl(path, "bin")
+    }
+}
+
+fn is_virtualenv_dir_impl(path: &Path, bin: &str) -> bool {
     // Check if the executable is in a bin or Scripts directory.
     // Possible for some reason we do not have the prefix.
     let mut path = path.to_path_buf();
     if !path.ends_with("bin") && !path.ends_with("Scripts") {
-        if cfg!(windows) {
-            path = path.join("Scripts");
-        } else {
-            path = path.join("bin");
-        }
+        path = path.join(bin);
     }
 
     // Never consider global locations to be virtualenvs

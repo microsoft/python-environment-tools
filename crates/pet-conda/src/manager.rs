@@ -17,6 +17,8 @@ fn get_conda_executable(path: &Path) -> Option<PathBuf> {
     let relative_path_to_conda_exe = vec![
         PathBuf::from("Scripts").join("conda.exe"),
         PathBuf::from("Scripts").join("conda.bat"),
+        PathBuf::from("bin").join("conda.exe"),
+        PathBuf::from("bin").join("conda.bat"),
     ];
     #[cfg(unix)]
     let relative_path_to_conda_exe = vec![PathBuf::from("bin").join("conda")];

@@ -61,8 +61,17 @@ fn find(path: &Path) -> Option<PathBuf> {
         return Some(cfg);
     }
 
-    let bin = if cfg!(windows) { "Scripts" } else { "bin" };
-    if path.ends_with(bin) {
+    if cfg!(windows) {
+        // Only windows installations have a `Scripts` directory.
+        if path.ends_with("Scripts") {
+            let cfg = path.parent()?.join(PYVENV_CONFIG_FILE);
+            if cfg.exists() {
+                return Some(cfg);
+            }
+        }
+    }
+    // Some windows installations have a `bin` directory. https://github.com/microsoft/vscode-python/issues/24792
+    if path.ends_with("bin") {
         let cfg = path.parent()?.join(PYVENV_CONFIG_FILE);
         if cfg.exists() {
             return Some(cfg);
