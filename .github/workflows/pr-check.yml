@@ -197,11 +197,6 @@ jobs:
 
       - name: Find Environments
         if: matrix.run_cli == 'yes'
-        run: cargo run --release --target ${{ matrix.target }} -- find -l
-        shell: bash
-
-      - name: Find Environments (verbose)
-        if: matrix.run_cli == 'yes'
         run: cargo run --release --target ${{ matrix.target }} -- find -v -l
         shell: bash
 
