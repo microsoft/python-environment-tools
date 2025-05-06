@@ -2,6 +2,7 @@
 name = "pet"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [target.'cfg(windows)'.dependencies]
 pet-windows-store = { path = "../pet-windows-store" }
