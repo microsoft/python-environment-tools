@@ -152,8 +152,5 @@ fn get_user_home() -> Option<PathBuf> {
 }
 
 fn get_env_var(key: String) -> Option<String> {
-    match env::var(key) {
-        Ok(path) => Some(path),
-        Err(_) => None,
-    }
+    env::var(key).ok()
 }
