@@ -32,23 +32,8 @@ impl CondaEnvironment {
 
     pub fn to_python_environment(&self, conda_manager: Option<EnvManager>) -> PythonEnvironment {
         #[allow(unused_assignments)]
-        let mut name: Option<String> = None;
-        if is_conda_install(&self.prefix) {
-            name = Some("base".to_string());
-        } else {
-            name = self
-                .prefix
-                .file_name()
-                .map(|name| name.to_str().unwrap_or_default().to_string());
-        }
-        // if the conda install folder is parent of the env folder, then we can use named activation.
-        // E.g. conda env is = <conda install>/envs/<env name>
-        // Then we can use `<conda install>/bin/conda activate -n <env name>`
-        if let Some(conda_dir) = &self.conda_dir {
-            if !self.prefix.starts_with(conda_dir) {
-                name = None;
-            }
-        }
+        let name = get_conda_env_name(&self.prefix, &self.prefix, &self.conda_dir);
+
         // This is a root env.
         let builder = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Conda))
             .executable(self.executable.clone())
@@ -143,19 +128,14 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
 
     // First look for the conda-meta/history file in the environment folder.
     // This could be a conda envirment (not root) but has `conda` installed in it.
-    let conda_meta_history = env_path.join("conda-meta").join("history");
-    if let Ok(reader) = std::fs::read_to_string(conda_meta_history.clone()) {
-        if let Some(line) = reader.lines().map(|l| l.trim()).find(|l| {
-            l.to_lowercase().starts_with("# cmd:") && l.to_lowercase().contains(" create -")
-        }) {
-            // Sample lines
-            // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
-            // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
-            // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-            if let Some(conda_dir) = get_conda_dir_from_cmd(line.into()) {
-                if is_conda_install(&conda_dir) {
-                    return Some(conda_dir);
-                }
+    if let Some(line) = get_conda_creation_line_from_history(env_path) {
+        // Sample lines
+        // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+        // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
+        // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+        if let Some(conda_dir) = get_conda_dir_from_cmd(line) {
+            if is_conda_install(&conda_dir) {
+                return Some(conda_dir);
             }
         }
     }
@@ -166,6 +146,75 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
     } else {
         None
     }
+}
+
+pub fn get_conda_creation_line_from_history(env_path: &Path) -> Option<String> {
+    let conda_meta_history = env_path.join("conda-meta").join("history");
+    if let Ok(reader) = std::fs::read_to_string(conda_meta_history.clone()) {
+        if let Some(line) = reader.lines().map(|l| l.trim()).find(|l| {
+            l.to_lowercase().starts_with("# cmd:") && l.to_lowercase().contains(" create -")
+        }) {
+            trace!(
+                "Conda creation line for {:?} is from history file is {:?}",
+                env_path,
+                line
+            );
+            return Some(line.into());
+        }
+    }
+
+    None
+}
+
+fn get_conda_env_name(
+    env_path: &Path,
+    prefix: &Path,
+    conda_dir: &Option<PathBuf>,
+) -> Option<String> {
+    let mut name: Option<String>;
+    if is_conda_install(prefix) {
+        name = Some("base".to_string());
+    } else {
+        name = prefix
+            .file_name()
+            .map(|name| name.to_str().unwrap_or_default().to_string());
+    }
+    // if the conda install folder is parent of the env folder, then we can use named activation.
+    // E.g. conda env is = <conda install>/envs/<env name>
+    // Then we can use `<conda install>/bin/conda activate -n <env name>`
+    if let Some(conda_dir) = conda_dir {
+        if !prefix.starts_with(conda_dir) {
+            name = get_conda_env_name_from_history_file(env_path, prefix);
+        }
+    }
+
+    name
+}
+
+/**
+ * The conda-meta/history file in conda environments contain the command used to create the conda environment.
+ * And example is `# cmd: <conda install directory>\Scripts\conda-script.py create -n sample``
+ * And example is `# cmd: conda create -n sample``
+ *
+ * This function returns the name of the conda environment.
+ */
+fn get_conda_env_name_from_history_file(env_path: &Path, prefix: &Path) -> Option<String> {
+    let name = prefix
+        .file_name()
+        .map(|name| name.to_str().unwrap_or_default().to_string());
+
+    if let Some(name) = name {
+        if let Some(line) = get_conda_creation_line_from_history(env_path) {
+            // Sample lines
+            // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+            // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
+            // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+            if is_conda_env_name_in_cmd(line, &name) {
+                return Some(name);
+            }
+        }
+    }
+    None
 }
 
 fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
@@ -227,6 +276,16 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn is_conda_env_name_in_cmd(cmd_line: String, name: &str) -> bool {
+    // Sample lines
+    // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+    // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
+    // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+    // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
+    // Look for "-n <name>" in the command line
+    cmd_line.contains(format!("-n {:?}", name).as_str())
 }
 
 pub fn get_activation_command(
