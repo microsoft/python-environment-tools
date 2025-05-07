@@ -72,11 +72,10 @@ pub fn get_conda_environment_info(
         // Not a conda environment (neither root nor a separate env).
         return None;
     }
-    // If we know the conda install folder, then we can use it.
-    let mut conda_install_folder = manager
-        .clone()
-        .and_then(|m| m.conda_dir)
-        .or_else(|| get_conda_installation_used_to_create_conda_env(env_path));
+    // Even if we have the conda manager, always fid the conda manager based on the env.
+    // & then use the given conda manager as a fallback.
+    let mut conda_install_folder = get_conda_installation_used_to_create_conda_env(env_path)
+        .or_else(|| manager.clone().and_then(|m| m.conda_dir));
 
     if let Some(conda_dir) = &conda_install_folder {
         if conda_dir.exists() {
