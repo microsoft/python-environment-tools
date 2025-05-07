@@ -767,6 +767,7 @@ fn get_python_interpreter_info(cli: &Vec<String>) -> InterpreterInfo {
         .output()
         .expect(format!("Failed to execute command {cli:?}").as_str());
     let output = String::from_utf8(output.stdout).unwrap();
+    trace!("Get Interpreter Info: {:?} => {:?}", cli, output);
     let output = output
         .split_once("503bebe7-c838-4cea-a1bc-0f2963bcb657")
         .unwrap()
