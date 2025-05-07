@@ -174,8 +174,15 @@ impl CondaLocator for Conda {
                     if environments.contains_key(&conda_env.prefix) {
                         continue;
                     }
-                    let env = conda_env
-                        .to_python_environment(Some(conda_dir.clone()), Some(manager.to_manager()));
+
+                    // Get the right manager for this conda env.
+                    // Possible the manager is different from the one we got from the conda_dir.
+                    let manager = conda_env
+                        .clone()
+                        .conda_dir
+                        .and_then(|p| CondaManager::from(&p))
+                        .unwrap_or(manager.clone());
+                    let env = conda_env.to_python_environment(Some(manager.to_manager()));
                     environments.insert(conda_env.prefix.clone(), env.clone());
                     reporter.report_manager(&manager.to_manager());
                     reporter.report_environment(&env);
@@ -248,10 +255,7 @@ impl Locator for Conda {
             if let Some(env) = get_conda_environment_info(path, &None) {
                 if let Some(conda_dir) = &env.conda_dir {
                     if let Some(manager) = self.get_manager(conda_dir) {
-                        let env = env.to_python_environment(
-                            Some(conda_dir.clone()),
-                            Some(manager.to_manager()),
-                        );
+                        let env = env.to_python_environment(Some(manager.to_manager()));
                         environments.insert(path.clone(), env.clone());
                         return Some(env);
                     } else {
@@ -259,7 +263,7 @@ impl Locator for Conda {
                         // This might seem incorrect, however the tool is about discovering environments.
                         // The client can activate this env either using another conda manager or using the activation scripts
                         error!("Unable to find Conda Manager for env (even though we have a conda_dir): {:?}", env);
-                        let env = env.to_python_environment(Some(conda_dir.clone()), None);
+                        let env = env.to_python_environment(None);
                         environments.insert(path.clone(), env.clone());
                         return Some(env);
                     }
@@ -268,7 +272,7 @@ impl Locator for Conda {
                     // This might seem incorrect, however the tool is about discovering environments.
                     // The client can activate this env either using another conda manager or using the activation scripts
                     error!("Unable to find Conda Manager for env: {:?}", env);
-                    let env = env.to_python_environment(None, None);
+                    let env = env.to_python_environment(None);
                     environments.insert(path.clone(), env.clone());
                     return Some(env);
                 }
@@ -301,7 +305,7 @@ impl Locator for Conda {
                         // The client can activate this env either using another conda manager or using the activation scripts
                         error!("Unable to find Conda Manager for the Conda env: {:?}", env);
                         let prefix = env.prefix.clone();
-                        let env = env.to_python_environment(None, None);
+                        let env = env.to_python_environment(None);
                         let mut environments = self.environments.lock().unwrap();
                         environments.insert(prefix, env.clone());
                         reporter.report_environment(&env);
@@ -340,7 +344,6 @@ impl Locator for Conda {
                     // 5. Report this env.
                     if let Some(manager) = manager {
                         let env = env.to_python_environment(
-                            manager.conda_dir.clone(),
                             Some(manager.to_manager()),
                         );
                         let mut environments = self.environments.lock().unwrap();
@@ -352,7 +355,7 @@ impl Locator for Conda {
                         // This might seem incorrect, however the tool is about discovering environments.
                         // The client can activate this env either using another conda manager or using the activation scripts
                         error!("Unable to find Conda Manager for Conda env (even though we have a conda_dir {:?}): Env Details = {:?}", conda_dir, env);
-                        let env = env.to_python_environment(Some(conda_dir.clone()), None);
+                        let env = env.to_python_environment(None);
                         let mut environments = self.environments.lock().unwrap();
                         environments.insert(prefix.clone(), env.clone());
                         reporter.report_environment(&env);
