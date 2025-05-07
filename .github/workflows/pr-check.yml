@@ -26,18 +26,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # - os: windows-latest
-          #   target: x86_64-pc-windows-msvc
-          #   run_cli: "yes"
-          # - os: ubuntu-latest
-          #   target: x86_64-unknown-linux-musl
-          #   run_cli: "yes"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            run_cli: "yes"
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            run_cli: "yes"
           # - os: macos-latest
           #   target: x86_64-apple-darwin
           #   run_cli: "yes"
-          - os: macos-14
-            target: aarch64-apple-darwin
-            run_cli: "yes"
+          # - os: macos-14
+          #   target: aarch64-apple-darwin
+          #   run_cli: "yes"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
