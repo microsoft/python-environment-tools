@@ -84,7 +84,7 @@ pub fn get_conda_environment_info(
     if let Some(conda_dir) = &conda_install_folder {
         if conda_dir.exists() {
             trace!(
-                "Conda install folder {}, found, & will not be used for the Conda Env: {}",
+                "Conda install folder {}, found, & will be used for the Conda Env: {}",
                 env_path.display(),
                 conda_dir.display()
             );
@@ -140,11 +140,6 @@ pub fn get_conda_environment_info(
  * This function returns the path to the conda installation that was used to create the environment.
  */
 pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Option<PathBuf> {
-    // Possible the env_path is the root conda install folder.
-    if is_conda_install(env_path) {
-        return Some(env_path.to_path_buf());
-    }
-
     // If this environment is in a folder named `envs`, then the parent directory of `envs` is the root conda install folder.
     if let Some(parent) = env_path.ancestors().nth(2) {
         if is_conda_install(parent) {
@@ -152,6 +147,8 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
         }
     }
 
+    // First look for the conda-meta/history file in the environment folder.
+    // This could be a conda envirment (not root) but has `conda` installed in it.
     let conda_meta_history = env_path.join("conda-meta").join("history");
     if let Ok(reader) = std::fs::read_to_string(conda_meta_history.clone()) {
         if let Some(line) = reader.lines().map(|l| l.trim()).find(|l| {
@@ -169,7 +166,12 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
         }
     }
 
-    None
+    // Possible the env_path is the root conda install folder.
+    if is_conda_install(env_path) {
+        Some(env_path.to_path_buf())
+    } else {
+        None
+    }
 }
 
 fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
