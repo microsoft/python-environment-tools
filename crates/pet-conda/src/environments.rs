@@ -30,30 +30,27 @@ impl CondaEnvironment {
         get_conda_environment_info(path, manager)
     }
 
-    pub fn to_python_environment(
-        &self,
-        conda_dir: Option<PathBuf>,
-        conda_manager: Option<EnvManager>,
-    ) -> PythonEnvironment {
+    pub fn to_python_environment(&self, conda_manager: Option<EnvManager>) -> PythonEnvironment {
         #[allow(unused_assignments)]
         let mut name: Option<String> = None;
-        if is_conda_install(&self.prefix) {
-            name = Some("base".to_string());
-        } else {
-            name = self
-                .prefix
-                .file_name()
-                .map(|name| name.to_str().unwrap_or_default().to_string());
-        }
-        // if the conda install folder is parent of the env folder, then we can use named activation.
-        // E.g. conda env is = <conda install>/envs/<env name>
-        // Then we can use `<conda install>/bin/conda activate -n <env name>`
-        if let Some(conda_dir) = conda_dir {
-            if !self.prefix.starts_with(conda_dir) {
-                name = None;
+
+        // We can name the conda envs only if we have a conda manager.
+        if let Some(conda_manager) = &conda_manager {
+            // If the conda manager for this environment is in the same folder as the conda environment,
+            // Then this is a root conda environment.
+            if conda_manager.executable.starts_with(&self.prefix)
+                && is_conda_install(&self.prefix)
+                && self.conda_dir.is_some()
+            {
+                name = Some("base".to_string());
+            } else {
+                name = self
+                    .prefix
+                    .file_name()
+                    .map(|name| name.to_str().unwrap_or_default().to_string());
             }
         }
-        // This is a root env.
+
         let builder = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Conda))
             .executable(self.executable.clone())
             .version(self.version.clone())
@@ -75,11 +72,10 @@ pub fn get_conda_environment_info(
         // Not a conda environment (neither root nor a separate env).
         return None;
     }
-    // If we know the conda install folder, then we can use it.
-    let mut conda_install_folder = manager
-        .clone()
-        .and_then(|m| m.conda_dir)
-        .or_else(|| get_conda_installation_used_to_create_conda_env(env_path));
+    // Even if we have the conda manager, always fid the conda manager based on the env.
+    // & then use the given conda manager as a fallback.
+    let mut conda_install_folder = get_conda_installation_used_to_create_conda_env(env_path)
+        .or_else(|| manager.clone().and_then(|m| m.conda_dir));
 
     if let Some(conda_dir) = &conda_install_folder {
         if conda_dir.exists() {
