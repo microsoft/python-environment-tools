@@ -158,7 +158,7 @@ fn get_conda_env_name(
     prefix: &Path,
     conda_dir: &Option<PathBuf>,
 ) -> Option<String> {
-    let mut name: Option<String> = None;
+    let mut name: Option<String>;
     if is_conda_install(prefix) {
         name = Some("base".to_string());
     } else {
