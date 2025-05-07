@@ -40,6 +40,12 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
                 "C:\\ProgramData\\conda\\.condarc",
                 "C:\\ProgramData\\conda\\condarc",
                 "C:\\ProgramData\\conda\\condarc.d",
+                "C:\\ProgramData\\miniconda\\.condarc",
+                "C:\\ProgramData\\miniconda\\condarc",
+                "C:\\ProgramData\\miniconda\\condarc.d",
+                "C:\\ProgramData\\miniconda3\\.condarc",
+                "C:\\ProgramData\\miniconda3\\condarc",
+                "C:\\ProgramData\\miniconda3\\condarc.d",
                 "C:\\ProgramData\\conda\\.mambarc",
                 format!(
                     "{}:\\ProgramData\\conda\\.condarc",
@@ -53,6 +59,36 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
                 .as_str(),
                 format!(
                     "{}:\\ProgramData\\conda\\condarc.d",
+                    env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+                )
+                .as_str(),
+                format!(
+                    "{}:\\ProgramData\\miniconda\\.condarc",
+                    env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+                )
+                .as_str(),
+                format!(
+                    "{}:\\ProgramData\\miniconda\\condarc",
+                    env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+                )
+                .as_str(),
+                format!(
+                    "{}:\\ProgramData\\miniconda\\condarc.d",
+                    env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+                )
+                .as_str(),
+                format!(
+                    "{}:\\ProgramData\\miniconda3\\.condarc",
+                    env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+                )
+                .as_str(),
+                format!(
+                    "{}:\\ProgramData\\miniconda3\\condarc",
+                    env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
+                )
+                .as_str(),
+                format!(
+                    "{}:\\ProgramData\\miniconda3\\condarc.d",
                     env::var("SYSTEMDRIVE").unwrap_or("C".to_string())
                 )
                 .as_str(),
@@ -72,6 +108,22 @@ pub fn get_conda_rc_search_paths(env_vars: &EnvVariables) -> Vec<PathBuf> {
                 "/var/lib/conda/condarc",
                 "/var/lib/conda/condarc.d",
                 "/var/lib/conda/.mambarc",
+                "/etc/miniconda/.condarc",
+                "/etc/miniconda/condarc",
+                "/etc/miniconda/condarc.d",
+                "/etc/miniconda/mambarc",
+                "/var/lib/miniconda/.condarc",
+                "/var/lib/miniconda/condarc",
+                "/var/lib/miniconda/condarc.d",
+                "/var/lib/miniconda/.mambarc",
+                "/etc/miniconda3/.condarc",
+                "/etc/miniconda3/condarc",
+                "/etc/miniconda3/condarc.d",
+                "/etc/miniconda3/mambarc",
+                "/var/lib/miniconda3/.condarc",
+                "/var/lib/miniconda3/condarc",
+                "/var/lib/miniconda3/condarc.d",
+                "/var/lib/miniconda3/.mambarc",
             ]
             .iter()
             .map(PathBuf::from)
