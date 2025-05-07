@@ -128,19 +128,14 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
 
     // First look for the conda-meta/history file in the environment folder.
     // This could be a conda envirment (not root) but has `conda` installed in it.
-    let conda_meta_history = env_path.join("conda-meta").join("history");
-    if let Ok(reader) = std::fs::read_to_string(conda_meta_history.clone()) {
-        if let Some(line) = reader.lines().map(|l| l.trim()).find(|l| {
-            l.to_lowercase().starts_with("# cmd:") && l.to_lowercase().contains(" create -")
-        }) {
-            // Sample lines
-            // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
-            // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
-            // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-            if let Some(conda_dir) = get_conda_dir_from_cmd(line.into()) {
-                if is_conda_install(&conda_dir) {
-                    return Some(conda_dir);
-                }
+    if let Some(line) = get_conda_creation_line_from_history(env_path) {
+        // Sample lines
+        // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+        // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
+        // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+        if let Some(conda_dir) = get_conda_dir_from_cmd(line) {
+            if is_conda_install(&conda_dir) {
+                return Some(conda_dir);
             }
         }
     }
@@ -151,6 +146,24 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
     } else {
         None
     }
+}
+
+pub fn get_conda_creation_line_from_history(env_path: &Path) -> Option<String> {
+    let conda_meta_history = env_path.join("conda-meta").join("history");
+    if let Ok(reader) = std::fs::read_to_string(conda_meta_history.clone()) {
+        if let Some(line) = reader.lines().map(|l| l.trim()).find(|l| {
+            l.to_lowercase().starts_with("# cmd:") && l.to_lowercase().contains(" create -")
+        }) {
+            trace!(
+                "Conda creation line for {:?} is from history file is {:?}",
+                env_path,
+                line
+            );
+            return Some(line.into());
+        }
+    }
+
+    None
 }
 
 fn get_conda_env_name(
@@ -191,20 +204,13 @@ fn get_conda_env_name_from_history_file(env_path: &Path, prefix: &Path) -> Optio
         .map(|name| name.to_str().unwrap_or_default().to_string());
 
     if let Some(name) = name {
-        // First look for the conda-meta/history file in the environment folder.
-        // This could be a conda envirment (not root) but has `conda` installed in it.
-        let conda_meta_history = env_path.join("conda-meta").join("history");
-        if let Ok(reader) = std::fs::read_to_string(conda_meta_history.clone()) {
-            if let Some(line) = reader.lines().map(|l| l.trim()).find(|l| {
-                l.to_lowercase().starts_with("# cmd:") && l.to_lowercase().contains(" create -")
-            }) {
-                // Sample lines
-                // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
-                // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
-                // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-                if is_conda_env_name_in_cmd(line.into(), &name) {
-                    return Some(name);
-                }
+        if let Some(line) = get_conda_creation_line_from_history(env_path) {
+            // Sample lines
+            // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+            // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
+            // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+            if is_conda_env_name_in_cmd(line.into(), &name) {
+                return Some(name);
             }
         }
     }
