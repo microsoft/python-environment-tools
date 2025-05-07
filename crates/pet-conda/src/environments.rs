@@ -30,11 +30,7 @@ impl CondaEnvironment {
         get_conda_environment_info(path, manager)
     }
 
-    pub fn to_python_environment(
-        &self,
-        conda_dir: Option<PathBuf>,
-        conda_manager: Option<EnvManager>,
-    ) -> PythonEnvironment {
+    pub fn to_python_environment(&self, conda_manager: Option<EnvManager>) -> PythonEnvironment {
         #[allow(unused_assignments)]
         let mut name: Option<String> = None;
         if is_conda_install(&self.prefix) {
@@ -48,7 +44,7 @@ impl CondaEnvironment {
         // if the conda install folder is parent of the env folder, then we can use named activation.
         // E.g. conda env is = <conda install>/envs/<env name>
         // Then we can use `<conda install>/bin/conda activate -n <env name>`
-        if let Some(conda_dir) = conda_dir {
+        if let Some(conda_dir) = &self.conda_dir {
             if !self.prefix.starts_with(conda_dir) {
                 name = None;
             }
@@ -76,10 +72,8 @@ pub fn get_conda_environment_info(
         return None;
     }
     // If we know the conda install folder, then we can use it.
-    let mut conda_install_folder = manager
-        .clone()
-        .and_then(|m| m.conda_dir)
-        .or_else(|| get_conda_installation_used_to_create_conda_env(env_path));
+    let mut conda_install_folder = get_conda_installation_used_to_create_conda_env(env_path)
+        .or_else(|| manager.clone().and_then(|m| m.conda_dir));
 
     if let Some(conda_dir) = &conda_install_folder {
         if conda_dir.exists() {
