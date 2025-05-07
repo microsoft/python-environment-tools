@@ -2,10 +2,13 @@
 // Licensed under the MIT License.
 
 use crate::{
-    conda_info::CondaInfo, env_variables::EnvVariables,
-    environments::get_conda_installation_used_to_create_conda_env, package::CondaPackageInfo,
-    utils::is_conda_env,
+    conda_info::CondaInfo,
+    env_variables::EnvVariables,
+    environments::get_conda_installation_used_to_create_conda_env,
+    package::CondaPackageInfo,
+    utils::{is_conda_env, is_conda_install},
 };
+use log::trace;
 use pet_core::{manager::EnvManager, manager::EnvManagerType};
 use std::{
     env,
@@ -78,20 +81,41 @@ impl CondaManager {
         if !is_conda_env(path) {
             return None;
         }
-        if let Some(manager) = get_conda_manager(path) {
-            Some(manager)
+
+        // If this environment is in a folder named `envs`, then the parent directory of `envs` is the root conda install folder.
+        if let Some(parent) = path.ancestors().nth(2) {
+            if is_conda_install(parent) {
+                if let Some(manager) = get_conda_manager(parent) {
+                    return Some(manager);
+                }
+            }
+        }
+
+        // Possible this is a conda environment in some other location
+        // Such as global env folders location configured via condarc file
+        // Or a conda env created using `-p` flag.
+        // Get the conda install folder from the history file.
+        // Or its in a location such as `~/.conda/envs` or `~/miniconda3/envs` where the conda install folder is not a parent of this path.
+        if let Some(conda_install_folder) = get_conda_installation_used_to_create_conda_env(path) {
+            get_conda_manager(&conda_install_folder)
         } else {
-            // Possible this is a conda environment in the `envs` folder
-            let path = path.parent()?.parent()?;
+            // If this is a conda env and the parent is `.conda/envs`, then this is definitely NOT a root conda install folder.
+            // Hence never use conda installs from these env paths.
+            if let Some(parent) = path.parent() {
+                if parent.ends_with(".conda/envs") || parent.ends_with(".conda\\envs") {
+                    trace!(
+                        "Parent path ends with .conda/envs, not a root conda install folder: {:?}",
+                        parent
+                    );
+                    return None;
+                }
+            }
+
             if let Some(manager) = get_conda_manager(path) {
                 Some(manager)
             } else {
-                // Possible this is a conda environment in some other location
-                // Such as global env folders location configured via condarc file
-                // Or a conda env created using `-p` flag.
-                // Get the conda install folder from the history file.
-                let conda_install_folder = get_conda_installation_used_to_create_conda_env(path)?;
-                get_conda_manager(&conda_install_folder)
+                trace!("No conda manager found for path: {:?}", path);
+                None
             }
         }
     }
