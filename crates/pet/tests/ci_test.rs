@@ -719,10 +719,11 @@ fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
         if env.executable.is_none() {
             panic!("Conda environment without executable");
         }
-        let conda_exe = match env.manager.clone() {
-            Some(manager) => manager.executable.to_str().unwrap_or_default().to_string(),
-            None => get_conda_exe().to_string(),
-        };
+        let mut conda_exe = get_conda_exe().to_string();
+
+        if let Some(manager) = &env.manager {
+            conda_exe = manager.executable.to_str().unwrap_or_default().to_string();
+        }
         if let Some(name) = env.name.clone() {
             return vec![
                 conda_exe,
