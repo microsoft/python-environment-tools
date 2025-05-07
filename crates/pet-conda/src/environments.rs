@@ -30,11 +30,7 @@ impl CondaEnvironment {
         get_conda_environment_info(path, manager)
     }
 
-    pub fn to_python_environment(
-        &self,
-        conda_dir: Option<PathBuf>,
-        conda_manager: Option<EnvManager>,
-    ) -> PythonEnvironment {
+    pub fn to_python_environment(&self, conda_manager: Option<EnvManager>) -> PythonEnvironment {
         #[allow(unused_assignments)]
         let mut name: Option<String> = None;
 
@@ -42,13 +38,17 @@ impl CondaEnvironment {
         if let Some(conda_manager) = &conda_manager {
             // If the conda manager for this environment is in the same folder as the conda environment,
             // Then this is a root conda environment.
-            if conda_manager.executable.starts_with(&self.prefix) && is_conda_install(&self.prefix) && self.conda_dir.is_none(){
+            if conda_manager.executable.starts_with(&self.prefix)
+                && is_conda_install(&self.prefix)
+                && !self.conda_dir.is_none()
+            {
                 name = Some("base".to_string());
             } else {
                 name = self
                     .prefix
                     .file_name()
                     .map(|name| name.to_str().unwrap_or_default().to_string());
+            }
         }
 
         let builder = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Conda))

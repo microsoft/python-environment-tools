@@ -32,7 +32,7 @@ fn find_conda_env_without_manager() {
     assert_eq!(env.executable, path.join("bin").join("python").into());
     assert_eq!(env.version, "3.12.2".to_string().into());
     assert_eq!(env.manager, None);
-    assert_eq!(env.name, "env_python_3".to_string().into());
+    assert_eq!(env.name, None);
 }
 
 #[cfg(unix)]
@@ -90,5 +90,5 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
         env.manager.clone().unwrap().version,
         "23.1.0".to_string().into()
     );
-    assert_eq!(env.name, None);
+    assert_eq!(env.name, "env_python_3".to_string().into());
 }
