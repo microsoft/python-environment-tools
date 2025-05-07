@@ -209,7 +209,7 @@ fn get_conda_env_name_from_history_file(env_path: &Path, prefix: &Path) -> Optio
             // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
             // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
             // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-            if is_conda_env_name_in_cmd(line.into(), &name) {
+            if is_conda_env_name_in_cmd(line, &name) {
                 return Some(name);
             }
         }
