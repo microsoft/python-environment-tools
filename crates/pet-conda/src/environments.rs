@@ -40,7 +40,7 @@ impl CondaEnvironment {
             // Then this is a root conda environment.
             if conda_manager.executable.starts_with(&self.prefix)
                 && is_conda_install(&self.prefix)
-                && !self.conda_dir.is_none()
+                && self.conda_dir.is_some()
             {
                 name = Some("base".to_string());
             } else {
