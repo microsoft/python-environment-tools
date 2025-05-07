@@ -141,7 +141,7 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
                 // We try to remove `Scripts` or `bin` from the path in the `get_conda_dir_from_cmd`.
                 // However if there are other directories such as `condabin` or others we are not aware of, lets try.
                 if let Some(conda_dir) = conda_dir.parent() {
-                    if is_conda_install(&conda_dir) {
+                    if is_conda_install(conda_dir) {
                         return Some(conda_dir.into());
                     }
                 }
