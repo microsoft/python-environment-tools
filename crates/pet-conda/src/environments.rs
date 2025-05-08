@@ -136,6 +136,15 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
         if let Some(conda_dir) = get_conda_dir_from_cmd(line) {
             if is_conda_install(&conda_dir) {
                 return Some(conda_dir);
+            } else {
+                // Possible this is a directory such as `C:\Users\donja\miniconda3\Scripts`
+                // We try to remove `Scripts` or `bin` from the path in the `get_conda_dir_from_cmd`.
+                // However if there are other directories such as `condabin` or others we are not aware of, lets try.
+                if let Some(conda_dir) = conda_dir.parent() {
+                    if is_conda_install(conda_dir) {
+                        return Some(conda_dir.into());
+                    }
+                }
             }
         }
     }
@@ -233,6 +242,7 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
         if let Some(conda_dir) = cmd_line.file_name() {
             if conda_dir.to_string_lossy().to_lowercase() == "bin"
                 || conda_dir.to_string_lossy().to_lowercase() == "scripts"
+                || conda_dir.to_string_lossy().to_lowercase() == "condabin"
             {
                 if let Some(conda_dir) = cmd_line.parent() {
                     // Ensure the casing of the paths are correct.
@@ -285,7 +295,8 @@ fn is_conda_env_name_in_cmd(cmd_line: String, name: &str) -> bool {
     // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
     // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
     // Look for "-n <name>" in the command line
-    cmd_line.contains(format!("-n {:?}", name).as_str())
+    cmd_line.contains(format!("-n {}", name).as_str())
+        || cmd_line.contains(format!("--name {}", name).as_str())
 }
 
 pub fn get_activation_command(
@@ -348,5 +359,24 @@ mod tests {
             conda_dir,
             PathBuf::from("/Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3")
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn verify_conda_env_name() {
+        let mut line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --name .conda python=3.12";
+        assert!(is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+
+        let mut line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -n .conda python=3.12";
+        assert!(is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+
+        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --name .conda python=3.12";
+        assert!(!is_conda_env_name_in_cmd(line.to_string(), "base"));
+
+        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
+        assert!(!is_conda_env_name_in_cmd(line.to_string(), "base"));
+
+        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
+        assert!(!is_conda_env_name_in_cmd(line.to_string(), ".conda"));
     }
 }
