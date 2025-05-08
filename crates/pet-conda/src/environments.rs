@@ -296,6 +296,7 @@ fn is_conda_env_name_in_cmd(cmd_line: String, name: &str) -> bool {
     // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
     // Look for "-n <name>" in the command line
     cmd_line.contains(format!("-n {}", name).as_str())
+        || cmd_line.contains(format!("--name {}", name).as_str())
 }
 
 pub fn get_activation_command(
@@ -358,5 +359,24 @@ mod tests {
             conda_dir,
             PathBuf::from("/Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3")
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn verify_conda_env_name() {
+        let mut line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --name .conda python=3.12";
+        assert!(is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+
+        let mut line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -n .conda python=3.12";
+        assert!(is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+
+        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --name .conda python=3.12";
+        assert!(!is_conda_env_name_in_cmd(line.to_string(), "base"));
+
+        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
+        assert!(!is_conda_env_name_in_cmd(line.to_string(), "base"));
+
+        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
+        assert!(!is_conda_env_name_in_cmd(line.to_string(), ".conda"));
     }
 }
