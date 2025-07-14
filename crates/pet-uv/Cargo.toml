@@ -11,3 +11,6 @@ pet-python-utils = { path = "../pet-python-utils" }
 log = "0.4.21"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[dev-dependencies]
+tempfile = "3.0"
