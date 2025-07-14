@@ -20,6 +20,7 @@ This project will be consumed by the [Python extension](https://marketplace.visu
 - VirtualEnvWrapper-Win
 - Venv
 - VirtualEnv
+- UV
 - Python on your PATH
 
 ## Features 

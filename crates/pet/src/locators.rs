@@ -19,6 +19,7 @@ use pet_pixi::Pixi;
 use pet_poetry::Poetry;
 use pet_pyenv::PyEnv;
 use pet_python_utils::env::ResolvedPythonEnv;
+use pet_uv::Uv;
 use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
@@ -52,10 +53,13 @@ pub fn create_locators(
     // 4. Pixi
     locators.push(Arc::new(Pixi::new()));
 
-    // 5. Conda Python
+    // 5. UV
+    locators.push(Arc::new(Uv::from(environment)));
+
+    // 6. Conda Python
     locators.push(conda_locator);
 
-    // 6. Support for Virtual Envs
+    // 7. Support for Virtual Envs
     // The order of these matter.
     // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
     locators.push(poetry_locator);
@@ -65,7 +69,7 @@ pub fn create_locators(
     // VirtualEnv is the most generic, hence should be the last.
     locators.push(Arc::new(VirtualEnv::new()));
 
-    // 7. Homebrew Python
+    // 8. Homebrew Python
     if cfg!(unix) {
         #[cfg(unix)]
         use pet_homebrew::Homebrew;
@@ -75,14 +79,14 @@ pub fn create_locators(
         locators.push(Arc::new(homebrew_locator));
     }
 
-    // 8. Global Mac Python
-    // 9. CommandLineTools Python & xcode
+    // 9. Global Mac Python
+    // 10. CommandLineTools Python & xcode
     if std::env::consts::OS == "macos" {
         locators.push(Arc::new(MacXCode::new()));
         locators.push(Arc::new(MacCmdLineTools::new()));
         locators.push(Arc::new(MacPythonOrg::new()));
     }
-    // 10. Global Linux Python
+    // 11. Global Linux Python
     // All other Linux (not mac, & not windows)
     // THIS MUST BE LAST
     if std::env::consts::OS != "macos" && std::env::consts::OS != "windows" {
