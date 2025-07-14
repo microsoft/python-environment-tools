@@ -1,0 +1,56 @@
+name: Weekly Build
+
+on:
+  schedule:
+    # Run every Sunday at midnight UTC (0 0 * * 0)
+    - cron: '0 0 * * 0'
+  # Allow manual triggering for testing
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Weekly Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          #   - os: ubuntu-latest
+          #     target: aarch64-unknown-linux-gnu
+          #   - os: ubuntu-latest
+          #     target: arm-unknown-linux-gnueabihf
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+          #   - os: ubuntu-latest
+          #     target: x86_64-unknown-linux-gnu
+          #   - os: ubuntu-latest
+          #     target: aarch64-unknown-linux-musl
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cargo Fetch
+        run: cargo fetch
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pet-${{ matrix.target }}-weekly
+          path: target/${{ matrix.target }}/release/pet*
