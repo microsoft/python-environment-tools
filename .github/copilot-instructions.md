@@ -126,3 +126,15 @@ Tests validate discovered environments using 4 verification methods:
 2. `crates/pet/src/locators.rs` - Core architecture patterns
 3. `crates/pet-core/src/lib.rs` - Essential traits and types
 4. `crates/pet/tests/ci_test.rs` - Comprehensive testing patterns
+
+
+## Scripts
+- Use `cargo fetch` to download all dependencies
+- Use `rustup component add clippy` to install Clippy linter
+- Use `cargo fmt --all` to format code in all packages
+- Use `cargo clippy --all-features -- -Dwarnings` to check for linter issues
+- Use `cargo build` to build the project
+- Use `cargo test --all` to test all packages (this can take a few seconds)
+- Use `cargo test [TESTNAME]` to test a specific test
+- Use `cargo test -p [SPEC]` to test a specific package
+- Use `cargo test --all` to test all packages
