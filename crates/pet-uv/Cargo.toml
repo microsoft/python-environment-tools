@@ -1,0 +1,11 @@
+[package]
+name = "pet-uv"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+pet-core = { path = "../pet-core" }
+pet-fs = { path = "../pet-fs" }
+pet-conda = { path = "../pet-conda" }
+log = "0.4.21"
