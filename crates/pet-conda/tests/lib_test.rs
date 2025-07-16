@@ -20,8 +20,8 @@ fn find_conda_env_without_manager() {
 
     let env = locator
         .try_from(&PythonEnv::new(
-            path.join("bin").join("python").into(),
-            Some(path.clone().into()),
+            path.join("bin").join("python"),
+            Some(path.clone()),
             None,
         ))
         .unwrap();
@@ -71,8 +71,8 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
 
     let env = locator
         .try_from(&PythonEnv::new(
-            path.join("bin").join("python").into(),
-            Some(path.clone().into()),
+            path.join("bin").join("python"),
+            Some(path.clone()),
             None,
         ))
         .unwrap();

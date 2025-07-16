@@ -182,8 +182,7 @@ fn find_envs(
                 .into_iter()
                 .map(|(k, v)| {
                     (
-                        k.map(|v| format!("{:?}", v))
-                            .unwrap_or("Unknown".to_string()),
+                        k.map(|v| format!("{v:?}")).unwrap_or("Unknown".to_string()),
                         v,
                     )
                 })
@@ -226,14 +225,14 @@ pub fn resolve_report_stdio(executable: PathBuf, verbose: bool, cache_directory:
 
     if let Some(result) = resolve_environment(&executable, &locators, &environment) {
         //
-        println!("Environment found for {:?}", executable);
+        println!("Environment found for {executable:?}");
         let env = &result.resolved.unwrap_or(result.discovered);
         if let Some(manager) = &env.manager {
             reporter.report_manager(manager);
         }
         reporter.report_environment(env);
     } else {
-        println!("No environment found for {:?}", executable);
+        println!("No environment found for {executable:?}");
     }
 
     println!(

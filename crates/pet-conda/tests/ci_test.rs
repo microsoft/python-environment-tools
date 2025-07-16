@@ -84,7 +84,7 @@ fn detect_conda_root_from_path() {
     let python_env = PythonEnv::new(exe, Some(conda_dir.clone()), None);
     let env = conda.try_from(&python_env).unwrap();
 
-    assert_eq!(env.manager.is_some(), true);
+    assert!(env.manager.is_some());
 
     let manager = env.manager.unwrap();
     assert_eq!(manager.executable, conda_dir.join("bin").join("conda"));
@@ -132,13 +132,7 @@ fn detect_new_conda_env() {
     let env = environments
         .iter()
         .find(|x| x.name == Some(env_name.into()))
-        .expect(
-            format!(
-                "New Environment not created, detected envs {:?}",
-                environments
-            )
-            .as_str(),
-        );
+        .unwrap_or_else(|| panic!("New Environment not created, detected envs {environments:?}"));
 
     let prefix = conda_dir.clone().join("envs").join(env_name);
     assert_eq!(env.prefix, prefix.clone().into());
@@ -182,7 +176,7 @@ fn detect_conda_env_from_path() {
     let python_env = PythonEnv::new(exe.clone(), Some(prefix.clone()), None);
     let env = conda.try_from(&python_env).unwrap();
 
-    assert_eq!(env.manager.is_some(), true);
+    assert!(env.manager.is_some());
 
     let manager = env.manager.unwrap();
     assert_eq!(manager.executable, conda_dir.join("bin").join("conda"));
@@ -231,20 +225,14 @@ fn detect_new_conda_env_without_python() {
     let env = environments
         .iter()
         .find(|x| x.name == Some(env_name.into()))
-        .expect(
-            format!(
-                "New Environment not created, detected envs {:?}",
-                environments
-            )
-            .as_str(),
-        );
+        .unwrap_or_else(|| panic!("New Environment not created, detected envs {environments:?}"));
 
     let prefix = conda_dir.clone().join("envs").join(env_name);
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, Some(env_name.into()));
     assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
-    assert_eq!(env.executable.is_none(), true);
-    assert_eq!(env.version.is_none(), true);
+    assert!(env.executable.is_none());
+    assert!(env.version.is_none());
 
     assert_eq!(env.manager, Some(manager.clone()));
 }
@@ -281,19 +269,15 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
     let env = environments
         .iter()
         .find(|x| x.prefix == Some(prefix.clone()))
-        .expect(
-            format!(
-                "New Environment ({:?}) not created, detected envs {:?}",
-                prefix, environments
-            )
-            .as_str(),
-        );
+        .unwrap_or_else(|| {
+            panic!("New Environment ({prefix:?}) not created, detected envs {environments:?}")
+        });
 
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, None);
     assert_eq!(env.kind, Some(PythonEnvironmentKind::Conda));
-    assert_eq!(env.executable.is_none(), true);
-    assert_eq!(env.version.is_none(), true);
+    assert!(env.executable.is_none());
+    assert!(env.version.is_none());
 
     assert_eq!(env.manager, Some(manager.clone()));
 }
@@ -334,13 +318,7 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
     let env = environments
         .iter()
         .find(|x| x.prefix == Some(prefix.clone()))
-        .expect(
-            format!(
-                "New Environment not created, detected envs {:?}",
-                environments
-            )
-            .as_str(),
-        );
+        .unwrap_or_else(|| panic!("New Environment not created, detected envs {environments:?}"));
 
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, None);

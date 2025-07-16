@@ -48,5 +48,5 @@ fn does_not_find_conda_env_for_bogus_dirs() {
 
     let path = resolve_test_path(&["unix", "bogus_directory"]);
 
-    assert_eq!(CondaManager::from(&path).is_none(), true);
+    assert!(CondaManager::from(&path).is_none());
 }

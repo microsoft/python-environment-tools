@@ -10,7 +10,7 @@ use common::resolve_test_path;
 #[cfg(unix)]
 #[test]
 fn empty_result_for_bogus_paths() {
-    let path: PathBuf = resolve_test_path(&["unix", "bogus_path"]).into();
+    let path: PathBuf = resolve_test_path(&["unix", "bogus_path"]);
     let pkg = CondaPackageInfo::from(&path, &package::Package::Conda);
 
     assert!(pkg.is_none());
@@ -19,7 +19,7 @@ fn empty_result_for_bogus_paths() {
 #[cfg(unix)]
 #[test]
 fn get_conda_package_info() {
-    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03"]).into();
+    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03"]);
     let pkg = CondaPackageInfo::from(&path, &package::Package::Conda).unwrap();
 
     assert_eq!(pkg.package, package::Package::Conda);
@@ -38,7 +38,7 @@ fn get_conda_package_info() {
 #[cfg(unix)]
 #[test]
 fn get_python_package_info() {
-    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03"]).into();
+    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03"]);
     let pkg = CondaPackageInfo::from(&path, &package::Package::Python).unwrap();
 
     assert_eq!(pkg.package, package::Package::Python);
@@ -57,7 +57,7 @@ fn get_python_package_info() {
 #[cfg(unix)]
 #[test]
 fn get_conda_package_info_without_history() {
-    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03-without-history"]).into();
+    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03-without-history"]);
     let pkg = CondaPackageInfo::from(&path, &package::Package::Conda).unwrap();
 
     assert_eq!(pkg.package, package::Package::Conda);
@@ -76,7 +76,7 @@ fn get_conda_package_info_without_history() {
 #[cfg(unix)]
 #[test]
 fn get_python_package_info_without_history() {
-    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03-without-history"]).into();
+    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03-without-history"]);
     let pkg = CondaPackageInfo::from(&path, &package::Package::Python).unwrap();
 
     assert_eq!(pkg.package, package::Package::Python);
