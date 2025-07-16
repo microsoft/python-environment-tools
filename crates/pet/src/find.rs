@@ -11,6 +11,7 @@ use pet_core::{Configuration, Locator, LocatorKind};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_pixi::is_pixi_env;
+use pet_uv::list_uv_virtual_envs_paths;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
@@ -163,6 +164,11 @@ pub fn find_and_report_envs(
                         environment.get_env_var("VIRTUAL_ENV".into()),
                         environment.get_env_var("WORKON_HOME".into()),
                         environment.get_env_var("XDG_DATA_HOME".into()),
+                        environment.get_user_home(),
+                    ),
+                    list_uv_virtual_envs_paths(
+                        environment.get_env_var("UV_CACHE_DIR".into()),
+                        environment.get_env_var("XDG_CACHE_HOME".into()),
                         environment.get_user_home(),
                     ),
                     possible_environments,

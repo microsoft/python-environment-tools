@@ -22,6 +22,9 @@ pub mod find;
 pub mod locators;
 pub mod resolve;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone)]
 pub struct FindOptions {
     pub print_list: bool,
