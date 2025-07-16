@@ -29,8 +29,8 @@ fn does_not_find_any_pyenv_envs() {
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
 
-    assert_eq!(managers.is_empty(), true);
-    assert_eq!(environments.is_empty(), true);
+    assert!(managers.is_empty());
+    assert!(environments.is_empty());
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
     use pet_pyenv::PyEnv;
     use pet_reporter::{cache::CacheReporter, collect};
     use serde_json::json;
-    use std::{collections::HashMap, path::PathBuf, sync::Arc};
+    use std::{collections::HashMap, sync::Arc};
 
     let home = resolve_test_path(&["unix", "pyenv_without_envs", "user_home"]);
     let homebrew_bin = resolve_test_path(&[
@@ -60,12 +60,8 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
         "bin",
     ]);
     let pyenv_exe = resolve_test_path(&[homebrew_bin.to_str().unwrap(), "pyenv"]);
-    let environment = create_test_environment(
-        HashMap::new(),
-        Some(home.clone()),
-        vec![PathBuf::from(homebrew_bin)],
-        None,
-    );
+    let environment =
+        create_test_environment(HashMap::new(), Some(home.clone()), vec![homebrew_bin], None);
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
@@ -101,7 +97,7 @@ fn find_pyenv_envs() {
     use pet_pyenv::PyEnv;
     use pet_reporter::{cache::CacheReporter, collect};
     use serde_json::json;
-    use std::{collections::HashMap, path::PathBuf, sync::Arc};
+    use std::{collections::HashMap, sync::Arc};
 
     let home = resolve_test_path(&["unix", "pyenv", "user_home"]);
     let homebrew_bin = resolve_test_path(&["unix", "pyenv", "home", "opt", "homebrew", "bin"]);
@@ -116,12 +112,8 @@ fn find_pyenv_envs() {
     ]);
     let conda_exe = conda_dir.join("bin").join("conda");
 
-    let environment = create_test_environment(
-        HashMap::new(),
-        Some(home.clone()),
-        vec![PathBuf::from(homebrew_bin)],
-        None,
-    );
+    let environment =
+        create_test_environment(HashMap::new(), Some(home.clone()), vec![homebrew_bin], None);
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
@@ -479,7 +471,7 @@ fn resolve_pyenv_environment() {
         None,
     ));
 
-    assert_eq!(result.is_none(), true);
+    assert!(result.is_none());
 
     // Should not resolve conda envs using Conda Locator
     let result = conda.try_from(&PythonEnv::new(
@@ -494,6 +486,6 @@ fn resolve_pyenv_environment() {
         None,
     ));
 
-    assert_eq!(result.is_some(), true);
+    assert!(result.is_some());
     assert_eq!(result.unwrap().kind, Some(PythonEnvironmentKind::Conda));
 }

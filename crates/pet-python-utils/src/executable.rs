@@ -119,6 +119,46 @@ fn is_python_executable_name(exe: &Path) -> bool {
     }
 }
 
+pub fn should_search_for_environments_in_path<P: AsRef<Path>>(path: &P) -> bool {
+    // Never search in the .git folder
+    // Never search in the node_modules folder
+    // Mostly copied from https://github.com/github/gitignore/blob/main/Python.gitignore
+    let folders_to_ignore = [
+        "node_modules",
+        ".cargo",
+        ".devcontainer",
+        ".github",
+        ".git",
+        ".tox",
+        ".nox",
+        ".hypothesis",
+        ".ipynb_checkpoints",
+        ".eggs",
+        ".coverage",
+        ".cache",
+        ".pyre",
+        ".ptype",
+        ".pytest_cache",
+        ".vscode",
+        "__pycache__",
+        "__pypackages__",
+        ".mypy_cache",
+        "cython_debug",
+        "env.bak",
+        "venv.bak",
+        "Scripts", // If the folder ends bin/scripts, then ignore it, as the parent is most likely an env.
+        "bin", // If the folder ends bin/scripts, then ignore it, as the parent is most likely an env.
+    ];
+    for folder in folders_to_ignore.iter() {
+        if path.as_ref().ends_with(folder) {
+            trace!("Ignoring folder: {:?}", path.as_ref());
+            return false;
+        }
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,44 +225,4 @@ mod tests {
             PathBuf::from("pythonw3.exe").as_path()
         ));
     }
-}
-
-pub fn should_search_for_environments_in_path<P: AsRef<Path>>(path: &P) -> bool {
-    // Never search in the .git folder
-    // Never search in the node_modules folder
-    // Mostly copied from https://github.com/github/gitignore/blob/main/Python.gitignore
-    let folders_to_ignore = [
-        "node_modules",
-        ".cargo",
-        ".devcontainer",
-        ".github",
-        ".git",
-        ".tox",
-        ".nox",
-        ".hypothesis",
-        ".ipynb_checkpoints",
-        ".eggs",
-        ".coverage",
-        ".cache",
-        ".pyre",
-        ".ptype",
-        ".pytest_cache",
-        ".vscode",
-        "__pycache__",
-        "__pypackages__",
-        ".mypy_cache",
-        "cython_debug",
-        "env.bak",
-        "venv.bak",
-        "Scripts", // If the folder ends bin/scripts, then ignore it, as the parent is most likely an env.
-        "bin", // If the folder ends bin/scripts, then ignore it, as the parent is most likely an env.
-    ];
-    for folder in folders_to_ignore.iter() {
-        if path.as_ref().ends_with(folder) {
-            trace!("Ignoring folder: {:?}", path.as_ref());
-            return false;
-        }
-    }
-
-    true
 }

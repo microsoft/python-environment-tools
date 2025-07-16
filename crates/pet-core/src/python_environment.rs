@@ -416,7 +416,6 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     #[cfg(windows)]
