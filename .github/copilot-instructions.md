@@ -132,8 +132,6 @@ Tests validate discovered environments using 4 verification methods:
 - Use `cargo fetch` to download all dependencies
 - Use `rustup component add clippy` to install Clippy linter
 - Use `cargo fmt --all` to format code in all packages
-- Use `cargo clippy --all-features -- -Dwarnings` to check for linter issues
-- Use `cargo clippy --all-features --fix --allow-dirty -- -Dwarnings` to automatically fix linter issues
 - Use `cargo build` to build the project
 - Use `cargo test --all` to test all packages (this can take a few seconds)
 - Use `cargo test [TESTNAME]` to test a specific test
