@@ -18,6 +18,7 @@ pet-homebrew = { path = "../pet-homebrew" }
 pet-core = { path = "../pet-core" }
 pet-conda = { path = "../pet-conda" }
 pet-pixi = { path = "../pet-pixi" }
+pet-uv = { path = "../pet-uv" }
 pet-jsonrpc = { path = "../pet-jsonrpc" }
 pet-fs = { path = "../pet-fs" }
 pet-pyenv = { path = "../pet-pyenv" }
