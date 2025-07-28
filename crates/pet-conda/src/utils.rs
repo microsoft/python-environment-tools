@@ -32,8 +32,9 @@ pub fn is_conda_install(path: &Path) -> bool {
 
 /// conda-meta must exist as this contains a mandatory `history` file.
 /// The root conda installation folder is also a conda environment (its the base environment).
+/// Exclude Pixi environments to avoid misidentifying them as conda environments.
 pub fn is_conda_env(path: &Path) -> bool {
-    path.join("conda-meta").is_dir()
+    path.join("conda-meta").is_dir() && !path.join("conda-meta").join("pixi").is_file()
 }
 
 /// Only used in tests, noop in production.
