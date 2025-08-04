@@ -9,6 +9,7 @@ pub enum EnvManagerType {
     Conda,
     Poetry,
     Pyenv,
+    Uv,
 }
 
 impl Ord for EnvManagerType {
