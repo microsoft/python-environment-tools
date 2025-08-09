@@ -412,6 +412,13 @@ pub fn get_known_conda_install_locations(
             known_paths.push(prefix.clone().join("miniconda3"));
             known_paths.push(prefix.clone().join("miniforge3"));
             known_paths.push(prefix.clone().join("micromamba"));
+            
+            // Homebrew cask installations are in the Caskroom subdirectory
+            if prefix == PathBuf::from("/opt/homebrew") {
+                known_paths.push(prefix.clone().join("Caskroom").join("miniforge").join("base"));
+                known_paths.push(prefix.clone().join("Caskroom").join("miniconda").join("base"));
+                known_paths.push(prefix.clone().join("Caskroom").join("anaconda").join("base"));
+            }
         }
 
         known_paths.push(PathBuf::from("/opt").join("conda"));

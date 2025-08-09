@@ -1,0 +1,13 @@
+prefix=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3
+exec_prefix=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3
+libdir=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3/lib
+sharedlibdir=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3/lib
+includedir=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3/include
+
+Name: zlib
+Description: zlib compression library
+Version: 1.2.13
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}

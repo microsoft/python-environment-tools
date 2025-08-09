@@ -1,0 +1,7 @@
+prefix=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3
+includedir=${prefix}/include
+ 
+Name: FontsProto
+Description: Fonts extension headers
+Version: 2.1.3
+Cflags: -I${includedir}

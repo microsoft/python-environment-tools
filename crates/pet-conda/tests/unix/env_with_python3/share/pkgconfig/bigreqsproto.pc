@@ -1,0 +1,7 @@
+prefix=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3
+includedir=${prefix}/include
+ 
+Name: BigReqsProto
+Description: BigReqs extension headers
+Version: 1.1.2
+Cflags: -I${includedir}
