@@ -1,8 +1,0 @@
-prefix=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3
-includedir=${prefix}/include
-
-Name: FixesProto
-Description: X Fixes extension headers
-Version: 6.1
-Cflags: -I${includedir}
-Requires: xextproto >= 7.0.99.1

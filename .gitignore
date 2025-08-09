@@ -19,3 +19,6 @@ temp/
 docs/node_modules/
 docs/package.json
 docs/package-lock.json
+# Test-generated conda environments
+crates/pet-conda/tests/unix/env_with_python3/
+crates/pet-conda/tests/unix/env_without_python3/

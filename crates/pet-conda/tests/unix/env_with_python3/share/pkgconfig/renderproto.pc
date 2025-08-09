@@ -1,7 +1,0 @@
-prefix=/home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/env_with_python3
-includedir=${prefix}/include
-
-Name: RenderProto
-Description: Render extension headers
-Version: 0.11.1
-Cflags: -I${includedir}
