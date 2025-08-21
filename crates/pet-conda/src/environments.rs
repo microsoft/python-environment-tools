@@ -64,14 +64,14 @@ pub fn get_conda_environment_info(
         if conda_dir.exists() {
             trace!(
                 "Conda install folder {}, found, & will be used for the Conda Env: {}",
-                env_path.display(),
-                conda_dir.display()
+                conda_dir.display(),
+                env_path.display()
             );
         } else {
             warn!(
                 "Conda install folder {}, does not exist, hence will not be used for the Conda Env: {}",
-                env_path.display(),
-                conda_dir.display()
+                conda_dir.display(),
+                env_path.display()
             );
             conda_install_folder = None;
         }
