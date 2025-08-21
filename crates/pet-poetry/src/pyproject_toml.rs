@@ -96,4 +96,30 @@ build-backend = "poetry.core.masonry.api"
             "poetry-demo"
         );
     }
+
+    #[test]
+    fn extract_normalized_name_from_pyproject_toml() {
+        let cfg = r#"
+[tool.poetry]
+name = "poetry_.demo"
+version = "0.1.0"
+description = ""
+authors = ["User Name <bogus.user@some.email.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+"#;
+        assert_eq!(
+            parse_contents(cfg, Path::new("pyproject.toml"))
+                .unwrap()
+                .name,
+            "poetry-demo"
+        );
+    }
 }
