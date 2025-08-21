@@ -23,6 +23,7 @@ pub enum PythonEnvironmentKind {
     MacCommandLineTools,
     LinuxGlobal,
     MacXCode,
+    Uv,
     Venv,
     VirtualEnv,
     VirtualEnvWrapper,

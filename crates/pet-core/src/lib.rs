@@ -50,6 +50,7 @@ pub enum LocatorKind {
     Pixi,
     Poetry,
     PyEnv,
+    Uv,
     Venv,
     VirtualEnv,
     VirtualEnvWrapper,
