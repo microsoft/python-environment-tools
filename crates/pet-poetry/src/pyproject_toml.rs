@@ -6,7 +6,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use lazy_static::lazy_static;
 use log::{error, trace};
+use regex::Regex;
+
+lazy_static! {
+    static ref NORMALIZE_NAME: Regex = Regex::new(r"[-_.]+")
+        .expect("Error generating RegEx for poetry project name normalization");
+}
 
 #[derive(Debug)]
 pub struct PyProjectToml {
@@ -15,8 +22,17 @@ pub struct PyProjectToml {
 
 impl PyProjectToml {
     fn new(name: String, file: PathBuf) -> Self {
-        trace!("Poetry project: {:?} with name {:?}", file, name);
-        PyProjectToml { name }
+        // Source from https://github.com/python-poetry/poetry-core/blob/a2c068227358984d835c9684de723b046bdcd67a/src/poetry/core/_vendor/packaging/utils.py#L46-L51
+        // normalized_name = re.sub(r"[-_.]+", "-", name).lower()
+        let normalized_name = NORMALIZE_NAME
+            .replace_all(&name.to_lowercase(), "-")
+            .chars()
+            .collect::<String>();
+
+        trace!("Poetry project: {:?} with name {:?}", file, normalized_name);
+        PyProjectToml {
+            name: normalized_name,
+        }
     }
     pub fn find(path: &Path) -> Option<Self> {
         trace!("Finding poetry file in {:?}", path);
