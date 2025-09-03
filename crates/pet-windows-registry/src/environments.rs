@@ -20,12 +20,17 @@ use std::{path::PathBuf, sync::Arc};
 use winreg::RegKey;
 
 #[cfg(windows)]
+use log::{trace, warn};
+#[cfg(windows)]
+use pet_conda::utils::is_conda_env;
+#[cfg(windows)]
+use pet_fs::path::norm_case;
+
+#[cfg(windows)]
 pub fn get_registry_pythons(
     conda_locator: &Arc<dyn CondaLocator>,
     reporter: &Option<&dyn Reporter>,
 ) -> LocatorResult {
-    use log::{trace, warn};
-
     let mut environments = vec![];
     let mut managers: Vec<EnvManager> = vec![];
 
@@ -88,10 +93,6 @@ fn get_registry_pythons_from_key_for_company(
     conda_locator: &Arc<dyn CondaLocator>,
     reporter: &Option<&dyn Reporter>,
 ) -> LocatorResult {
-    use log::{trace, warn};
-    use pet_conda::utils::is_conda_env;
-    use pet_fs::path::norm_case;
-
     let mut environments = vec![];
     // let company_display_name: Option<String> = company_key.get_value("DisplayName").ok();
     for installed_python in company_key.enum_keys().filter_map(Result::ok) {

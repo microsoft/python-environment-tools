@@ -22,6 +22,13 @@ use std::path::PathBuf;
 use winreg::RegKey;
 
 #[cfg(windows)]
+use crate::environment_locations::get_search_locations;
+#[cfg(windows)]
+use log::{trace, warn};
+#[cfg(windows)]
+use std::collections::HashMap;
+
+#[cfg(windows)]
 lazy_static! {
     static ref PYTHON_SOFTWARE_FOUNDATION_FOLDER_VERSION: Regex = Regex::new(
         "PythonSoftwareFoundation.Python.(\\d+\\.\\d+)_.*"
@@ -92,10 +99,6 @@ impl PotentialPython {
 
 #[cfg(windows)]
 pub fn list_store_pythons(environment: &EnvVariables) -> Option<Vec<PythonEnvironment>> {
-    use crate::environment_locations::get_search_locations;
-    use log::{trace, warn};
-    use std::collections::HashMap;
-
     let mut python_envs: Vec<PythonEnvironment> = vec![];
     let apps_path = get_search_locations(environment)?;
     let hkcu = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
@@ -238,8 +241,6 @@ struct StorePythonInfo {
 
 #[cfg(windows)]
 fn get_package_display_name_and_location(name: &String, hkcu: &RegKey) -> Option<StorePythonInfo> {
-    use log::trace;
-
     if let Some(name) = get_package_full_name_from_registry(name, hkcu) {
         let key = format!("Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages\\{}", name);
         trace!("Opening registry key {:?}", key);
@@ -258,8 +259,6 @@ fn get_package_display_name_and_location(name: &String, hkcu: &RegKey) -> Option
 
 #[cfg(windows)]
 fn get_package_full_name_from_registry(name: &String, hkcu: &RegKey) -> Option<String> {
-    use log::trace;
-
     let key = format!("Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\SystemAppData\\{}\\Schemas", name);
     trace!("Opening registry key {:?}", key);
     let package_key = hkcu.open_subkey(key).ok()?;

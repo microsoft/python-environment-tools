@@ -16,6 +16,13 @@ use pet_core::{os_environment::Environment, Locator};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+#[cfg(windows)]
+use pet_core::python_environment::PythonEnvironmentBuilder;
+#[cfg(windows)]
+use pet_virtualenv::is_virtualenv;
+#[cfg(windows)]
+use std::path::PathBuf;
+
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
     path.to_str().unwrap_or_default().to_string().to_lowercase()[1..]
         .starts_with(":\\program files\\windowsapps")
@@ -61,11 +68,6 @@ impl Locator for WindowsStore {
 
     #[cfg(windows)]
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
-        use std::path::PathBuf;
-
-        use pet_core::python_environment::PythonEnvironmentBuilder;
-        use pet_virtualenv::is_virtualenv;
-
         // Assume we create a virtual env from a python install,
         // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
         // Hence the first part of the condition will be true, but the second part will be false.
