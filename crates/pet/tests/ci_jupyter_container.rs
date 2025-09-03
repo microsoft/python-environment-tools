@@ -137,7 +137,7 @@ fn verify_python_in_jupyter_contaner() {
         let python_env = environments
             .iter()
             .find(|e| e.executable == env.executable)
-            .expect(format!("Expected to find python environment {:?}", env.executable).as_str());
+            .unwrap_or_else(|| panic!("Expected to find python environment {:?}", env.executable));
         assert_eq!(
             python_env.executable, env.executable,
             "Expected exe to be same when comparing {python_env:?} and {env:?}"
