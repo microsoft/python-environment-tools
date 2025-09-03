@@ -290,12 +290,11 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
                 && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
                 && interpreter_info.clone().sys_prefix == "/usr/local/python/current"))
-        || (interpreter_info.clone().executable
-            == "/home/codespace/.python/current/bin/python"
-            && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
-                && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
-            || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
-                && interpreter_info.clone().sys_prefix == "/home/codespace/.python/current"))
+            || (interpreter_info.clone().executable == "/home/codespace/.python/current/bin/python"
+                && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
+                    && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
+                || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
+                    && interpreter_info.clone().sys_prefix == "/home/codespace/.python/current"))
         {
             // known issue https://github.com/microsoft/python-environment-tools/issues/64
         } else {
@@ -367,7 +366,9 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     let env = PythonEnv::new(executable.clone(), None, None);
     let resolved =
         identify_python_environment_using_locators(&env, &locators, &global_env_search_paths)
-            .unwrap_or_else(|| panic!("Failed to resolve environment using `resolve` for {environment:?}"));
+            .unwrap_or_else(|| {
+                panic!("Failed to resolve environment using `resolve` for {environment:?}")
+            });
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
@@ -488,17 +489,19 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
     actual.version = expected.clone().version;
 
     if let Some(prefix) = expected.clone().prefix {
-        if (actual.clone().executable == Some(PathBuf::from("/usr/local/python/current/bin/python"))
+        if (actual.clone().executable
+            == Some(PathBuf::from("/usr/local/python/current/bin/python"))
             && (prefix.to_str().unwrap() == "/usr/local/python/current"
                 && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
                 && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/current"))))
-        || (actual.clone().executable
-            == Some(PathBuf::from("/home/codespace/.python/current/bin/python"))
-            && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
-                && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
-            || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
-                && actual.clone().prefix == Some(PathBuf::from("/home/codespace/.python/current"))))
+            || (actual.clone().executable
+                == Some(PathBuf::from("/home/codespace/.python/current/bin/python"))
+                && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
+                    && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
+                || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
+                    && actual.clone().prefix
+                        == Some(PathBuf::from("/home/codespace/.python/current"))))
         {
             // known issue https://github.com/microsoft/python-environment-tools/issues/64
             actual.prefix = expected.clone().prefix;
@@ -513,7 +516,8 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
             .iter()
             .filter(|p| {
                 // This is in the path, but not easy to figure out, unless we add support for codespaces or CI.
-                !(p.starts_with("/Users/runner/hostedtoolcache/Python") && p.to_string_lossy().contains("arm64"))
+                !(p.starts_with("/Users/runner/hostedtoolcache/Python")
+                    && p.to_string_lossy().contains("arm64"))
             })
             .map(|p| p.to_path_buf())
             .collect::<Vec<PathBuf>>(),
@@ -526,30 +530,35 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
             .iter()
             .filter(|p| {
                 // This is in the path, but not easy to figure out, unless we add support for codespaces or CI.
-                !(p.starts_with("/Users/runner/hostedtoolcache/Python") && p.to_string_lossy().contains("arm64"))
+                !(p.starts_with("/Users/runner/hostedtoolcache/Python")
+                    && p.to_string_lossy().contains("arm64"))
             })
             .map(|p| p.to_path_buf())
             .collect::<Vec<PathBuf>>(),
     );
 
     // if we know the arch, then verify it
-    if expected.arch.as_ref().is_some() && actual.arch.as_ref().is_some()
-        && actual.arch.as_ref() != expected.arch.as_ref() {
-            error!(
-                "Arch mismatch when using {} for {:?} and {:?}",
-                method, expected, actual
-            );
-        }
+    if expected.arch.as_ref().is_some()
+        && actual.arch.as_ref().is_some()
+        && actual.arch.as_ref() != expected.arch.as_ref()
+    {
+        error!(
+            "Arch mismatch when using {} for {:?} and {:?}",
+            method, expected, actual
+        );
+    }
     actual.arch = expected.clone().arch;
 
     // if we know the prefix, then verify it
-    if expected.prefix.as_ref().is_some() && actual.prefix.as_ref().is_some()
-        && actual.prefix.as_ref() != expected.prefix.as_ref() {
-            error!(
-                "Prefirx mismatch when using {} for {:?} and {:?}",
-                method, expected, actual
-            );
-        }
+    if expected.prefix.as_ref().is_some()
+        && actual.prefix.as_ref().is_some()
+        && actual.prefix.as_ref() != expected.prefix.as_ref()
+    {
+        error!(
+            "Prefirx mismatch when using {} for {:?} and {:?}",
+            method, expected, actual
+        );
+    }
     actual.prefix = expected.clone().prefix;
 
     assert_eq!(
@@ -596,8 +605,9 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
         locator.configure(&config);
     }
 
-    let env = resolve_environment(executable, &locators, &os_environment)
-        .unwrap_or_else(|| panic!("Failed to resolve environment using `resolve` for {environment:?}"));
+    let env = resolve_environment(executable, &locators, &os_environment).unwrap_or_else(|| {
+        panic!("Failed to resolve environment using `resolve` for {environment:?}")
+    });
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,

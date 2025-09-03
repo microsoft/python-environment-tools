@@ -69,13 +69,11 @@ fn global_config_with_specific_values() {
             "config.toml"
         ]))
     );
-    assert!(
-        config
-            .clone()
-            .unwrap()
-            .virtualenvs_in_project
-            .unwrap_or_default()
-    );
+    assert!(config
+        .clone()
+        .unwrap()
+        .virtualenvs_in_project
+        .unwrap_or_default());
     assert_eq!(
         config.clone().unwrap().virtualenvs_path,
         PathBuf::from("some/path/virtualenvs".to_string())
@@ -115,13 +113,11 @@ fn local_config_with_specific_values() {
             "poetry.toml"
         ]))
     );
-    assert!(
-        !config
-            .clone()
-            .unwrap()
-            .virtualenvs_in_project
-            .unwrap_or_default()
-    );
+    assert!(!config
+        .clone()
+        .unwrap()
+        .virtualenvs_in_project
+        .unwrap_or_default());
     assert_eq!(
         config.clone().unwrap().virtualenvs_path,
         PathBuf::from("/directory/virtualenvs".to_string())

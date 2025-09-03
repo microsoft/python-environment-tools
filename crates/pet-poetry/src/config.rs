@@ -241,12 +241,10 @@ create = false
 
 "#;
 
-        assert!(
-            !parse_contents(cfg)
-                .unwrap()
-                .virtualenvs_in_project
-                .unwrap_or_default()
-        );
+        assert!(!parse_contents(cfg)
+            .unwrap()
+            .virtualenvs_in_project
+            .unwrap_or_default());
 
         let cfg = r#"
 [virtualenvs]
@@ -254,43 +252,35 @@ in-project = true
 create = false
 
 "#;
-        assert!(
-            parse_contents(cfg)
-                .unwrap()
-                .virtualenvs_in_project
-                .unwrap_or_default()
-        );
+        assert!(parse_contents(cfg)
+            .unwrap()
+            .virtualenvs_in_project
+            .unwrap_or_default());
 
         let cfg = r#"
 [virtualenvs]
 create = false
 
 "#;
-        assert!(
-            !parse_contents(cfg)
-                .unwrap()
-                .virtualenvs_in_project
-                .unwrap_or_default()
-        );
+        assert!(!parse_contents(cfg)
+            .unwrap()
+            .virtualenvs_in_project
+            .unwrap_or_default());
 
         let cfg = r#"
 virtualenvs.in-project = true # comment
 "#;
-        assert!(
-            parse_contents(cfg)
-                .unwrap()
-                .virtualenvs_in_project
-                .unwrap_or_default()
-        );
+        assert!(parse_contents(cfg)
+            .unwrap()
+            .virtualenvs_in_project
+            .unwrap_or_default());
 
         let cfg = r#"
 "#;
-        assert!(
-            !parse_contents(cfg)
-                .unwrap()
-                .virtualenvs_in_project
-                .unwrap_or_default()
-        );
+        assert!(!parse_contents(cfg)
+            .unwrap()
+            .virtualenvs_in_project
+            .unwrap_or_default());
     }
 
     #[test]
@@ -326,10 +316,7 @@ virtualenvs.path = "/path/to/virtualenvs"
 some-other-value = 1234
 
 "#;
-        assert_eq!(
-            parse_contents(cfg).unwrap().virtualenvs_path,
-            None
-        );
+        assert_eq!(parse_contents(cfg).unwrap().virtualenvs_path, None);
     }
 
     #[test]

@@ -60,12 +60,8 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
         "bin",
     ]);
     let pyenv_exe = resolve_test_path(&[homebrew_bin.to_str().unwrap(), "pyenv"]);
-    let environment = create_test_environment(
-        HashMap::new(),
-        Some(home.clone()),
-        vec![homebrew_bin],
-        None,
-    );
+    let environment =
+        create_test_environment(HashMap::new(), Some(home.clone()), vec![homebrew_bin], None);
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);
@@ -116,12 +112,8 @@ fn find_pyenv_envs() {
     ]);
     let conda_exe = conda_dir.join("bin").join("conda");
 
-    let environment = create_test_environment(
-        HashMap::new(),
-        Some(home.clone()),
-        vec![homebrew_bin],
-        None,
-    );
+    let environment =
+        create_test_environment(HashMap::new(), Some(home.clone()), vec![homebrew_bin], None);
 
     let conda = Arc::new(Conda::from(&environment));
     let locator = PyEnv::from(&environment, conda);

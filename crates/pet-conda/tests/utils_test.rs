@@ -23,8 +23,7 @@ fn is_not_conda_install() {
     assert!(!utils::is_conda_install(&path));
 
     // Conda env is not an install location.
-    let path: PathBuf =
-        resolve_test_path(&["unix", "anaconda3-2023.03", "envs", "env_python_3"]);
+    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03", "envs", "env_python_3"]);
     assert!(!utils::is_conda_install(&path));
 }
 
@@ -37,8 +36,7 @@ fn is_conda_env() {
     let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03-without-history"]);
     assert!(utils::is_conda_env(&path));
 
-    let path: PathBuf =
-        resolve_test_path(&["unix", "anaconda3-2023.03", "envs", "env_python_3"]);
+    let path: PathBuf = resolve_test_path(&["unix", "anaconda3-2023.03", "envs", "env_python_3"]);
     assert!(utils::is_conda_env(&path));
 }
 

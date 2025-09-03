@@ -34,8 +34,7 @@ fn version_from_sys_prefix_using_version_info_format() {
 #[cfg(unix)]
 #[test]
 fn no_version_without_pyvenv_cfg_and_without_headers() {
-    let path: PathBuf =
-        resolve_test_path(&["unix", "pyvenv_cfg", "python3.9.9_without_headers"]);
+    let path: PathBuf = resolve_test_path(&["unix", "pyvenv_cfg", "python3.9.9_without_headers"]);
     let version = version::from_prefix(&path);
     assert!(version.is_none());
 

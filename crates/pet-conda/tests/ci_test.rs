@@ -132,8 +132,12 @@ fn detect_new_conda_env() {
     let env = environments
         .iter()
         .find(|x| x.name == Some(env_name.into()))
-        .unwrap_or_else(|| panic!("New Environment not created, detected envs {:?}",
-                environments));
+        .unwrap_or_else(|| {
+            panic!(
+                "New Environment not created, detected envs {:?}",
+                environments
+            )
+        });
 
     let prefix = conda_dir.clone().join("envs").join(env_name);
     assert_eq!(env.prefix, prefix.clone().into());
@@ -226,8 +230,12 @@ fn detect_new_conda_env_without_python() {
     let env = environments
         .iter()
         .find(|x| x.name == Some(env_name.into()))
-        .unwrap_or_else(|| panic!("New Environment not created, detected envs {:?}",
-                environments));
+        .unwrap_or_else(|| {
+            panic!(
+                "New Environment not created, detected envs {:?}",
+                environments
+            )
+        });
 
     let prefix = conda_dir.clone().join("envs").join(env_name);
     assert_eq!(env.prefix, prefix.clone().into());
@@ -271,8 +279,12 @@ fn detect_new_conda_env_created_with_p_flag_without_python() {
     let env = environments
         .iter()
         .find(|x| x.prefix == Some(prefix.clone()))
-        .unwrap_or_else(|| panic!("New Environment ({:?}) not created, detected envs {:?}",
-                prefix, environments));
+        .unwrap_or_else(|| {
+            panic!(
+                "New Environment ({:?}) not created, detected envs {:?}",
+                prefix, environments
+            )
+        });
 
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, None);
@@ -319,8 +331,12 @@ fn detect_new_conda_env_created_with_p_flag_with_python() {
     let env = environments
         .iter()
         .find(|x| x.prefix == Some(prefix.clone()))
-        .unwrap_or_else(|| panic!("New Environment not created, detected envs {:?}",
-                environments));
+        .unwrap_or_else(|| {
+            panic!(
+                "New Environment not created, detected envs {:?}",
+                environments
+            )
+        });
 
     assert_eq!(env.prefix, prefix.clone().into());
     assert_eq!(env.name, None);
