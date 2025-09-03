@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![cfg(unix)]
 
 use serde::Deserialize;
 use std::path::PathBuf;

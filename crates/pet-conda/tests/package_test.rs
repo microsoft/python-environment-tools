@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![cfg(unix)]
 
 mod common;
 use pet_conda::package::{self, CondaPackageInfo};
