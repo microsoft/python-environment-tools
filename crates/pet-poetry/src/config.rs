@@ -241,12 +241,11 @@ create = false
 
 "#;
 
-        assert_eq!(
-            parse_contents(cfg)
+        assert!(
+            !parse_contents(cfg)
                 .unwrap()
                 .virtualenvs_in_project
-                .unwrap_or_default(),
-            false
+                .unwrap_or_default()
         );
 
         let cfg = r#"
@@ -255,12 +254,11 @@ in-project = true
 create = false
 
 "#;
-        assert_eq!(
+        assert!(
             parse_contents(cfg)
                 .unwrap()
                 .virtualenvs_in_project
-                .unwrap_or_default(),
-            true
+                .unwrap_or_default()
         );
 
         let cfg = r#"
@@ -268,19 +266,18 @@ create = false
 create = false
 
 "#;
-        assert_eq!(
-            parse_contents(cfg)
+        assert!(
+            !parse_contents(cfg)
                 .unwrap()
                 .virtualenvs_in_project
-                .unwrap_or_default(),
-            false
+                .unwrap_or_default()
         );
 
         let cfg = r#"
 virtualenvs.in-project = true # comment
 "#;
         assert!(
-            parse_contents(&cfg)
+            parse_contents(cfg)
                 .unwrap()
                 .virtualenvs_in_project
                 .unwrap_or_default()
@@ -289,7 +286,7 @@ virtualenvs.in-project = true # comment
         let cfg = r#"
 "#;
         assert!(
-            !parse_contents(&cfg)
+            !parse_contents(cfg)
                 .unwrap()
                 .virtualenvs_in_project
                 .unwrap_or_default()

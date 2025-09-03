@@ -270,7 +270,7 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
                 .symlinks
                 .clone()
                 .unwrap_or_default()
-                .contains(&PathBuf::from(expected_executable)),
+                .contains(&expected_executable),
             "Executable mismatch for {:?}",
             environment.clone()
         );
@@ -285,19 +285,17 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
         }
     }
     if let Some(prefix) = environment.clone().prefix {
-        if interpreter_info.clone().executable == "/usr/local/python/current/bin/python"
+        if (interpreter_info.clone().executable == "/usr/local/python/current/bin/python"
             && (prefix.to_str().unwrap() == "/usr/local/python/current"
                 && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
-                && interpreter_info.clone().sys_prefix == "/usr/local/python/current")
-        {
-            // known issue https://github.com/microsoft/python-environment-tools/issues/64
-        } else if interpreter_info.clone().executable
+                && interpreter_info.clone().sys_prefix == "/usr/local/python/current"))
+        || (interpreter_info.clone().executable
             == "/home/codespace/.python/current/bin/python"
             && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
                 && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
-                && interpreter_info.clone().sys_prefix == "/home/codespace/.python/current")
+                && interpreter_info.clone().sys_prefix == "/home/codespace/.python/current"))
         {
             // known issue https://github.com/microsoft/python-environment-tools/issues/64
         } else {
@@ -490,20 +488,17 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
     actual.version = expected.clone().version;
 
     if let Some(prefix) = expected.clone().prefix {
-        if actual.clone().executable == Some(PathBuf::from("/usr/local/python/current/bin/python"))
+        if (actual.clone().executable == Some(PathBuf::from("/usr/local/python/current/bin/python"))
             && (prefix.to_str().unwrap() == "/usr/local/python/current"
                 && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
-                && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/current")))
-        {
-            // known issue https://github.com/microsoft/python-environment-tools/issues/64
-            actual.prefix = expected.clone().prefix;
-        } else if actual.clone().executable
+                && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/current"))))
+        || (actual.clone().executable
             == Some(PathBuf::from("/home/codespace/.python/current/bin/python"))
             && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
                 && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
-                && actual.clone().prefix == Some(PathBuf::from("/home/codespace/.python/current")))
+                && actual.clone().prefix == Some(PathBuf::from("/home/codespace/.python/current"))))
         {
             // known issue https://github.com/microsoft/python-environment-tools/issues/64
             actual.prefix = expected.clone().prefix;
@@ -518,13 +513,7 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
             .iter()
             .filter(|p| {
                 // This is in the path, but not easy to figure out, unless we add support for codespaces or CI.
-                if p.starts_with("/Users/runner/hostedtoolcache/Python")
-                    && p.to_string_lossy().contains("arm64")
-                {
-                    false
-                } else {
-                    true
-                }
+                !(p.starts_with("/Users/runner/hostedtoolcache/Python") && p.to_string_lossy().contains("arm64"))
             })
             .map(|p| p.to_path_buf())
             .collect::<Vec<PathBuf>>(),
@@ -537,38 +526,30 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
             .iter()
             .filter(|p| {
                 // This is in the path, but not easy to figure out, unless we add support for codespaces or CI.
-                if p.starts_with("/Users/runner/hostedtoolcache/Python")
-                    && p.to_string_lossy().contains("arm64")
-                {
-                    false
-                } else {
-                    true
-                }
+                !(p.starts_with("/Users/runner/hostedtoolcache/Python") && p.to_string_lossy().contains("arm64"))
             })
             .map(|p| p.to_path_buf())
             .collect::<Vec<PathBuf>>(),
     );
 
     // if we know the arch, then verify it
-    if expected.arch.as_ref().is_some() && actual.arch.as_ref().is_some() {
-        if actual.arch.as_ref() != expected.arch.as_ref() {
+    if expected.arch.as_ref().is_some() && actual.arch.as_ref().is_some()
+        && actual.arch.as_ref() != expected.arch.as_ref() {
             error!(
                 "Arch mismatch when using {} for {:?} and {:?}",
                 method, expected, actual
             );
         }
-    }
     actual.arch = expected.clone().arch;
 
     // if we know the prefix, then verify it
-    if expected.prefix.as_ref().is_some() && actual.prefix.as_ref().is_some() {
-        if actual.prefix.as_ref() != expected.prefix.as_ref() {
+    if expected.prefix.as_ref().is_some() && actual.prefix.as_ref().is_some()
+        && actual.prefix.as_ref() != expected.prefix.as_ref() {
             error!(
                 "Prefirx mismatch when using {} for {:?} and {:?}",
                 method, expected, actual
             );
         }
-    }
     actual.prefix = expected.clone().prefix;
 
     assert_eq!(

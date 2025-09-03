@@ -11,8 +11,8 @@ use common::resolve_test_path;
 #[test]
 fn find_executables() {
     // .venv
-    let path: PathBuf = resolve_test_path(&["unix", "executables", ".venv"]).into();
-    let mut executables = executable::find_executables(&path.clone());
+    let path: PathBuf = resolve_test_path(&["unix", "executables", ".venv"]);
+    let mut executables = executable::find_executables(path.clone());
     executables.sort();
 
     assert_eq!(
@@ -24,8 +24,8 @@ fn find_executables() {
     );
 
     // Python3.9.9
-    let path: PathBuf = resolve_test_path(&["unix", "executables", "python3.9.9"]).into();
-    let mut executables = executable::find_executables(&path.clone());
+    let path: PathBuf = resolve_test_path(&["unix", "executables", "python3.9.9"]);
+    let mut executables = executable::find_executables(path.clone());
     executables.sort();
 
     assert_eq!(
@@ -37,14 +37,14 @@ fn find_executables() {
     );
 
     // Conda without Python.
-    let path: PathBuf = resolve_test_path(&["unix", "executables", "conda_without_python"]).into();
-    let executables = executable::find_executables(&path.clone());
+    let path: PathBuf = resolve_test_path(&["unix", "executables", "conda_without_python"]);
+    let executables = executable::find_executables(path.clone());
 
     assert_eq!(executables.len(), 0);
 
     // Bogus dir
-    let path: PathBuf = resolve_test_path(&["unix_bogus_dir"]).into();
-    let executables = executable::find_executables(&path.clone());
+    let path: PathBuf = resolve_test_path(&["unix_bogus_dir"]);
+    let executables = executable::find_executables(path.clone());
 
     assert_eq!(executables.len(), 0);
 }

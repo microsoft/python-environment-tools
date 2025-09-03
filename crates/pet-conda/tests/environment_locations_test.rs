@@ -9,8 +9,8 @@ fn non_existent_envrionments_txt() {
     use common::{create_env_variables, resolve_test_path};
     use pet_conda::environment_locations::get_conda_envs_from_environment_txt;
 
-    let root = resolve_test_path(&["unix", "root_empty"]).into();
-    let home = resolve_test_path(&["unix", "bogus directory"]).into();
+    let root = resolve_test_path(&["unix", "root_empty"]);
+    let home = resolve_test_path(&["unix", "bogus directory"]);
     let env = create_env_variables(home, root);
 
     let environments = get_conda_envs_from_environment_txt(&env);
