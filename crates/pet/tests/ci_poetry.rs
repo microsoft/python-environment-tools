@@ -40,8 +40,10 @@ fn verify_ci_poetry_global() {
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
-    let mut config = Configuration::default();
-    config.workspace_directories = Some(vec![workspace_dir.clone()]);
+    let config = Configuration {
+        workspace_directories: Some(vec![workspace_dir.clone()]),
+        ..Default::default()
+    };
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
@@ -110,8 +112,10 @@ fn verify_ci_poetry_project() {
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
-    let mut config = Configuration::default();
-    config.workspace_directories = Some(vec![workspace_dir.clone()]);
+    let config = Configuration {
+        workspace_directories: Some(vec![workspace_dir.clone()]),
+        ..Default::default()
+    };
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
