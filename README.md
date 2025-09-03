@@ -30,7 +30,7 @@ This project will be consumed by the [Python extension](https://marketplace.visu
 - Discovery of all Python virtual environments
 - Fast performance using Rust with minimal I/O operations
 - JSONRPC server interface for IDE integration
-- Support for 15+ Python environment types across Windows, macOS, and Linux
+- Support for 17+ Python environment types across Windows, macOS, and Linux
 
 ## Build and Usage
 
