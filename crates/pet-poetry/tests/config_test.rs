@@ -4,7 +4,7 @@
 mod common;
 
 #[cfg(unix)]
-#[cfg_attr(any(feature = "ci",), test)]
+#[test]
 #[allow(dead_code)]
 fn global_config_with_defaults() {
     use common::create_env_variables;
@@ -37,7 +37,7 @@ fn global_config_with_defaults() {
 }
 
 #[cfg(unix)]
-#[cfg_attr(any(feature = "ci",), test)]
+#[test]
 #[allow(dead_code)]
 fn global_config_with_specific_values() {
     use std::path::PathBuf;
@@ -69,13 +69,12 @@ fn global_config_with_specific_values() {
             "config.toml"
         ]))
     );
-    assert_eq!(
+    assert!(
         config
             .clone()
             .unwrap()
             .virtualenvs_in_project
-            .unwrap_or_default(),
-        true
+            .unwrap_or_default()
     );
     assert_eq!(
         config.clone().unwrap().virtualenvs_path,
@@ -84,9 +83,8 @@ fn global_config_with_specific_values() {
 }
 
 #[cfg(unix)]
-#[cfg_attr(any(feature = "ci",), test)]
+#[test]
 #[allow(dead_code)]
-
 fn local_config_with_specific_values() {
     use std::path::PathBuf;
 
@@ -117,13 +115,12 @@ fn local_config_with_specific_values() {
             "poetry.toml"
         ]))
     );
-    assert_eq!(
-        config
+    assert!(
+        !config
             .clone()
             .unwrap()
             .virtualenvs_in_project
-            .unwrap_or_default(),
-        false
+            .unwrap_or_default()
     );
     assert_eq!(
         config.clone().unwrap().virtualenvs_path,

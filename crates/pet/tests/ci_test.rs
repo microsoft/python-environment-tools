@@ -66,7 +66,7 @@ fn verify_validity_of_discovered_envs() {
     use pet::{find::find_and_report_envs, locators::create_locators};
     use pet_conda::Conda;
     use pet_core::{os_environment::EnvironmentApi, Configuration};
-    use std::{env, sync::Arc, thread};
+    use std::{env, sync::Arc};
 
     setup();
 
@@ -75,8 +75,10 @@ fn verify_validity_of_discovered_envs() {
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
-    let mut config = Configuration::default();
-    config.workspace_directories = Some(vec![workspace_dir.clone()]);
+    let config = Configuration {
+        workspace_directories: Some(vec![workspace_dir.clone()]),
+        ..Default::default()
+    };
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
@@ -205,7 +207,7 @@ fn check_if_pipenv_exists() {
             env.kind == Some(PythonEnvironmentKind::Pipenv)
                 && env.project == Some(workspace_dir.clone())
         })
-        .expect(format!("Pipenv environment not found, found {environments:?}").as_str());
+        .unwrap_or_else(|| panic!("Pipenv environment not found, found {environments:?}"));
 }
 
 #[cfg(unix)]
@@ -367,10 +369,7 @@ fn verify_we_can_get_same_env_info_using_from_with_exe(
     let env = PythonEnv::new(executable.clone(), None, None);
     let resolved =
         identify_python_environment_using_locators(&env, &locators, &global_env_search_paths)
-            .expect(
-                format!("Failed to resolve environment using `resolve` for {environment:?}")
-                    .as_str(),
-            );
+            .unwrap_or_else(|| panic!("Failed to resolve environment using `resolve` for {environment:?}"));
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
@@ -603,8 +602,10 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     let os_environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&os_environment));
     let poetry_locator = Arc::new(Poetry::from(&os_environment));
-    let mut config = Configuration::default();
-    config.workspace_directories = Some(vec![workspace_dir.clone()]);
+    let config = Configuration {
+        workspace_directories: Some(vec![workspace_dir.clone()]),
+        ..Default::default()
+    };
     let locators = create_locators(
         conda_locator.clone(),
         poetry_locator.clone(),
@@ -614,9 +615,8 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
         locator.configure(&config);
     }
 
-    let env = resolve_environment(&executable, &locators, &os_environment).expect(
-        format!("Failed to resolve environment using `resolve` for {environment:?}").as_str(),
-    );
+    let env = resolve_environment(executable, &locators, &os_environment)
+        .unwrap_or_else(|| panic!("Failed to resolve environment using `resolve` for {environment:?}"));
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",
         executable,
@@ -724,21 +724,21 @@ fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
             None => get_conda_exe().to_string(),
         };
         if let Some(name) = env.name.clone() {
-            return vec![
+            vec![
                 conda_exe,
                 "run".to_string(),
                 "-n".to_string(),
                 name,
                 "python".to_string(),
-            ];
+            ]
         } else if let Some(prefix) = env.prefix.clone() {
-            return vec![
+            vec![
                 conda_exe,
                 "run".to_string(),
                 "-p".to_string(),
                 prefix.to_str().unwrap_or_default().to_string(),
                 "python".to_string(),
-            ];
+            ]
         } else {
             panic!("Conda environment without name or prefix")
         }
@@ -753,8 +753,8 @@ fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
     }
 }
 
-fn get_python_interpreter_info(cli: &Vec<String>) -> InterpreterInfo {
-    let mut cli = cli.clone();
+fn get_python_interpreter_info(cli: &[String]) -> InterpreterInfo {
+    let mut cli = cli.to_owned();
     cli.push(
         resolve_test_path(&["interpreterInfo.py"])
             .to_str()
@@ -765,13 +765,13 @@ fn get_python_interpreter_info(cli: &Vec<String>) -> InterpreterInfo {
     let output = std::process::Command::new(cli.first().unwrap())
         .args(&cli[1..])
         .output()
-        .expect(format!("Failed to execute command {cli:?}").as_str());
+        .unwrap_or_else(|_| panic!("Failed to execute command {cli:?}"));
     let output = String::from_utf8(output.stdout).unwrap();
     trace!("Get Interpreter Info: {:?} => {:?}", cli, output);
     let output = output
         .split_once("503bebe7-c838-4cea-a1bc-0f2963bcb657")
         .unwrap()
         .1;
-    let info: InterpreterInfo = serde_json::from_str(&output).unwrap();
+    let info: InterpreterInfo = serde_json::from_str(output).unwrap();
     info
 }
