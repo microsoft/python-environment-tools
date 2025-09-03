@@ -75,8 +75,10 @@ fn verify_validity_of_discovered_envs() {
     let environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&environment));
     let poetry_locator = Arc::new(Poetry::from(&environment));
-    let mut config = Configuration::default();
-    config.workspace_directories = Some(vec![workspace_dir.clone()]);
+    let config = Configuration {
+        workspace_directories: Some(vec![workspace_dir.clone()]),
+        ..Default::default()
+    };
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), &environment);
     for locator in locators.iter() {
         locator.configure(&config);
@@ -288,12 +290,9 @@ fn verify_validity_of_interpreter_info(environment: PythonEnvironment) {
                 && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
                 && interpreter_info.clone().sys_prefix == "/usr/local/python/current")
-        {
-            // known issue https://github.com/microsoft/python-environment-tools/issues/64
-        } else if interpreter_info.clone().executable
-            == "/home/codespace/.python/current/bin/python"
-            && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
-                && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
+            || interpreter_info.clone().executable == "/home/codespace/.python/current/bin/python"
+                && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
+                    && interpreter_info.clone().sys_prefix == "/usr/local/python/3.10.13")
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
                 && interpreter_info.clone().sys_prefix == "/home/codespace/.python/current")
         {
@@ -492,13 +491,10 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
                 && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
                 && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/current")))
-        {
-            // known issue https://github.com/microsoft/python-environment-tools/issues/64
-            actual.prefix = expected.clone().prefix;
-        } else if actual.clone().executable
-            == Some(PathBuf::from("/home/codespace/.python/current/bin/python"))
-            && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
-                && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
+            || actual.clone().executable
+                == Some(PathBuf::from("/home/codespace/.python/current/bin/python"))
+                && (prefix.to_str().unwrap() == "/home/codespace/.python/current"
+                    && actual.clone().prefix == Some(PathBuf::from("/usr/local/python/3.10.13")))
             || (prefix.to_str().unwrap() == "/usr/local/python/3.10.13"
                 && actual.clone().prefix == Some(PathBuf::from("/home/codespace/.python/current")))
         {
@@ -591,8 +587,10 @@ fn verify_we_can_get_same_env_info_using_resolve_with_exe(
     let os_environment = EnvironmentApi::new();
     let conda_locator = Arc::new(Conda::from(&os_environment));
     let poetry_locator = Arc::new(Poetry::from(&os_environment));
-    let mut config = Configuration::default();
-    config.workspace_directories = Some(vec![workspace_dir.clone()]);
+    let config = Configuration {
+        workspace_directories: Some(vec![workspace_dir.clone()]),
+        ..Default::default()
+    };
     let locators = create_locators(
         conda_locator.clone(),
         poetry_locator.clone(),
@@ -720,13 +718,13 @@ fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
                 "python".to_string(),
             ]
         } else if let Some(prefix) = env.prefix.clone() {
-            return vec![
+            vec![
                 conda_exe,
                 "run".to_string(),
                 "-p".to_string(),
                 prefix.to_str().unwrap_or_default().to_string(),
                 "python".to_string(),
-            ];
+            ]
         } else {
             panic!("Conda environment without name or prefix")
         }
@@ -741,8 +739,8 @@ fn get_python_run_command(env: &PythonEnvironment) -> Vec<String> {
     }
 }
 
-fn get_python_interpreter_info(cli: &Vec<String>) -> InterpreterInfo {
-    let mut cli = cli.clone();
+fn get_python_interpreter_info(cli: &[String]) -> InterpreterInfo {
+    let mut cli = cli.to_owned();
     cli.push(
         resolve_test_path(&["interpreterInfo.py"])
             .to_str()
