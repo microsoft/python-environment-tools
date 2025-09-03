@@ -426,10 +426,7 @@ fn verify_we_can_get_same_env_info_using_find_with_exe(
 
     let envs = collect_reporter.environments.lock().unwrap().clone();
     if envs.is_empty() {
-        panic!(
-            "Failed to find Python environment {:?}, details => {:?}",
-            executable, environment
-        );
+        panic!("Failed to find Python environment {executable:?}, details => {environment:?}");
     }
     trace!(
         "For exe {:?} we got Environment = {:?}, To compare against {:?}",

@@ -245,7 +245,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                         .locators
                         .clone()
                         .iter()
-                        .map(|(k, v)| (format!("{:?}", k), v.as_millis()))
+                        .map(|(k, v)| (format!("{k:?}"), v.as_millis()))
                         .collect::<BTreeMap<String, u128>>(),
                     breakdown: summary
                         .breakdown
@@ -450,7 +450,7 @@ pub fn handle_clear_cache(_context: Arc<Context>, id: u32, _params: Value) {
     thread::spawn(move || {
         if let Err(e) = clear_cache() {
             error!("Failed to clear cache {:?}", e);
-            send_error(Some(id), -4, format!("Failed to clear cache {:?}", e));
+            send_error(Some(id), -4, format!("Failed to clear cache {e:?}"));
         } else {
             info!("Cleared cache");
             send_reply(id, None::<()>);

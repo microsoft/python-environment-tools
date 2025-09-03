@@ -115,7 +115,7 @@ fn generate_hash(executable: &PathBuf) -> String {
     let h_bytes = hasher.finalize();
     // Convert 256 bits => Hext and then take 16 of the hex chars (that should be unique enough)
     // We will handle collisions if they happen.
-    format!("{:x}", h_bytes)[..16].to_string()
+    format!("{h_bytes:x}")[..16].to_string()
 }
 
 #[cfg(test)]
