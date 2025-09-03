@@ -242,7 +242,7 @@ create = false
 "#;
 
         assert_eq!(
-            parse_contents(&cfg.to_string())
+            parse_contents(cfg)
                 .unwrap()
                 .virtualenvs_in_project
                 .unwrap_or_default(),
@@ -256,7 +256,7 @@ create = false
 
 "#;
         assert_eq!(
-            parse_contents(&cfg.to_string())
+            parse_contents(cfg)
                 .unwrap()
                 .virtualenvs_in_project
                 .unwrap_or_default(),
@@ -269,7 +269,7 @@ create = false
 
 "#;
         assert_eq!(
-            parse_contents(&cfg.to_string())
+            parse_contents(cfg)
                 .unwrap()
                 .virtualenvs_in_project
                 .unwrap_or_default(),
@@ -279,22 +279,20 @@ create = false
         let cfg = r#"
 virtualenvs.in-project = true # comment
 "#;
-        assert_eq!(
-            parse_contents(&cfg.to_string())
+        assert!(
+            parse_contents(&cfg)
                 .unwrap()
                 .virtualenvs_in_project
-                .unwrap_or_default(),
-            true
+                .unwrap_or_default()
         );
 
         let cfg = r#"
 "#;
-        assert_eq!(
-            parse_contents(&cfg.to_string())
+        assert!(
+            !parse_contents(&cfg)
                 .unwrap()
                 .virtualenvs_in_project
-                .unwrap_or_default(),
-            false
+                .unwrap_or_default()
         );
     }
 
@@ -305,7 +303,7 @@ cache-dir = "/path/to/cache/directory"
 
 "#;
         assert_eq!(
-            parse_contents(&cfg.to_string()).unwrap().cache_dir,
+            parse_contents(cfg).unwrap().cache_dir,
             Some(PathBuf::from("/path/to/cache/directory".to_string()))
         );
 
@@ -313,7 +311,7 @@ cache-dir = "/path/to/cache/directory"
 some-other-value = 1234
 
 "#;
-        assert_eq!(parse_contents(&cfg.to_string()).unwrap().cache_dir, None);
+        assert_eq!(parse_contents(cfg).unwrap().cache_dir, None);
     }
 
     #[test]
@@ -323,7 +321,7 @@ virtualenvs.path = "/path/to/virtualenvs"
 
 "#;
         assert_eq!(
-            parse_contents(&cfg.to_string()).unwrap().virtualenvs_path,
+            parse_contents(cfg).unwrap().virtualenvs_path,
             Some(PathBuf::from("/path/to/virtualenvs".to_string()))
         );
 
@@ -332,7 +330,7 @@ some-other-value = 1234
 
 "#;
         assert_eq!(
-            parse_contents(&cfg.to_string()).unwrap().virtualenvs_path,
+            parse_contents(cfg).unwrap().virtualenvs_path,
             None
         );
     }
@@ -343,7 +341,7 @@ some-other-value = 1234
 cache-dir = "/path/to/cache/directory"
 "#;
         assert_eq!(
-            parse_contents(&cfg.to_string()).unwrap().virtualenvs_path,
+            parse_contents(cfg).unwrap().virtualenvs_path,
             Some(PathBuf::from("/path/to/cache/directory/virtualenvs"))
         );
     }

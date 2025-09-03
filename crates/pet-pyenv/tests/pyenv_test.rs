@@ -29,8 +29,8 @@ fn does_not_find_any_pyenv_envs() {
     let environments = reporter.environments.lock().unwrap().clone();
     let managers = reporter.managers.lock().unwrap().clone();
 
-    assert_eq!(managers.is_empty(), true);
-    assert_eq!(environments.is_empty(), true);
+    assert!(managers.is_empty());
+    assert!(environments.is_empty());
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn does_not_find_any_pyenv_envs_even_with_pyenv_installed() {
     let environment = create_test_environment(
         HashMap::new(),
         Some(home.clone()),
-        vec![PathBuf::from(homebrew_bin)],
+        vec![homebrew_bin],
         None,
     );
 
@@ -119,7 +119,7 @@ fn find_pyenv_envs() {
     let environment = create_test_environment(
         HashMap::new(),
         Some(home.clone()),
-        vec![PathBuf::from(homebrew_bin)],
+        vec![homebrew_bin],
         None,
     );
 

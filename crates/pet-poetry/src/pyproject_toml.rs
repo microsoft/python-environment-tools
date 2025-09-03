@@ -90,7 +90,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 "#;
         assert_eq!(
-            parse_contents(&cfg.to_string(), Path::new("pyproject.toml"))
+            parse_contents(cfg, Path::new("pyproject.toml"))
                 .unwrap()
                 .name,
             "poetry-demo"
