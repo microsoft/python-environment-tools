@@ -20,22 +20,35 @@ mod env_variables;
 
 fn get_pipenv_project(env: &PythonEnv) -> Option<PathBuf> {
     if let Some(prefix) = &env.prefix {
-        get_pipenv_project_from_prefix(prefix)
-    } else {
-        // If the parent is bin or script, then get the parent.
-        let bin = env.executable.parent()?;
-        if bin.file_name().unwrap_or_default() == Path::new("bin")
-            || bin.file_name().unwrap_or_default() == Path::new("Scripts")
-        {
-            get_pipenv_project_from_prefix(env.executable.parent()?.parent()?)
-        } else {
-            get_pipenv_project_from_prefix(env.executable.parent()?)
+        if let Some(project) = get_pipenv_project_from_prefix(prefix) {
+            return Some(project);
         }
+    }
+
+    // We can also have a venv in the workspace that has pipenv installed in it.
+    // In such cases, the project is the workspace folder containing the venv.
+    if let Some(project) = &env.project {
+        if project.join("Pipfile").exists() {
+            return Some(project.clone());
+        }
+    }
+
+    // If the parent is bin or script, then get the parent.
+    let bin = env.executable.parent()?;
+    if bin.file_name().unwrap_or_default() == Path::new("bin")
+        || bin.file_name().unwrap_or_default() == Path::new("Scripts")
+    {
+        get_pipenv_project_from_prefix(env.executable.parent()?.parent()?)
+    } else {
+        get_pipenv_project_from_prefix(env.executable.parent()?)
     }
 }
 
 fn get_pipenv_project_from_prefix(prefix: &Path) -> Option<PathBuf> {
     let project_file = prefix.join(".project");
+    if !project_file.exists() {
+        return None;
+    }
     let contents = fs::read_to_string(project_file).ok()?;
     let project_folder = norm_case(PathBuf::from(contents.trim().to_string()));
     if project_folder.exists() {
@@ -45,11 +58,23 @@ fn get_pipenv_project_from_prefix(prefix: &Path) -> Option<PathBuf> {
     }
 }
 
+fn is_pipenv_from_project(env: &PythonEnv) -> bool {
+    if let Some(project) = &env.project {
+        if project.join("Pipfile").exists() {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_pipenv(env: &PythonEnv, env_vars: &EnvVariables) -> bool {
     if let Some(project_path) = get_pipenv_project(env) {
         if project_path.join(env_vars.pipenv_pipfile.clone()).exists() {
             return true;
         }
+    }
+    if is_pipenv_from_project(env) {
+        return true;
     }
     // If we have a Pipfile, then this is a pipenv environment.
     // Else likely a virtualenvwrapper or the like.
