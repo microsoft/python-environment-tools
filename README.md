@@ -2,7 +2,7 @@
 
 Performant Python environment tooling and support, such as locating all global Python installs and virtual environments. 
 
-This project will be consumed by the [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) directly. You can find the code to consume `pet` in the Python extension [source code](https://github.com/microsoft/vscode-python/blob/main/src/client/pythonEnvironments/base/locators/common/nativePythonFinder.ts). For more information on JSNORPC requests/notifications for this tool, please reference [/docs/JSONRPC.md](https://github.com/microsoft/python-environment-tools/blob/main/docs/JSONRPC.md).
+This project will be consumed by the [Python extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) directly. You can find the code to consume `pet` in the Python extension [source code](https://github.com/microsoft/vscode-python/blob/main/src/client/pythonEnvironments/base/locators/common/nativePythonFinder.ts). For more information on JSONRPC requests/notifications for this tool, please reference [/docs/JSONRPC.md](https://github.com/microsoft/python-environment-tools/blob/main/docs/JSONRPC.md).
 
 ## Environment Types Supported 
 
@@ -15,6 +15,8 @@ This project will be consumed by the [Python extension](https://marketplace.visu
 - Miniconda
 - Miniforge
 - PipEnv
+- Pixi
+- Poetry
 - Homebrew
 - VirtualEnvWrapper
 - VirtualEnvWrapper-Win
@@ -26,10 +28,51 @@ This project will be consumed by the [Python extension](https://marketplace.visu
 
 - Discovery of all global Python installs
 - Discovery of all Python virtual environments
+- Fast performance using Rust with minimal I/O operations
+- JSONRPC server interface for IDE integration
+- Support for 15+ Python environment types across Windows, macOS, and Linux
+
+## Build and Usage
+
+### Building from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/microsoft/python-environment-tools.git
+cd python-environment-tools
+
+# Build the project
+cargo build --release
+
+# Run tests
+cargo test --all
+```
+
+### Usage
+
+```bash
+# Start as a JSONRPC server (for IDE integration)
+./target/release/pet server
+
+# Find all Python environments (CLI mode)
+./target/release/pet find
+
+# Resolve details for a specific Python executable
+./target/release/pet resolve /path/to/python
+```
+
+For detailed JSONRPC API documentation, see [/docs/JSONRPC.md](./docs/JSONRPC.md).
 
 ## Key Methodology
 
 Our approach prioritizes performance and efficiency by leveraging Rust. We minimize I/O operations by collecting all necessary environment information at once, which reduces repeated I/O and the need to spawn additional processes, significantly enhancing overall performance.
+
+### Performance Principles
+
+- **Avoid spawning processes**: Extract information from files and filesystem when possible
+- **Report immediately**: Use asynchronous discovery pattern to report environments as soon as they are found
+- **Complete information**: Gather all environment details in one pass, avoiding incremental reporting
+- **Minimal I/O**: Reduce filesystem operations through efficient batching and caching
 
 ## Contributing
 
