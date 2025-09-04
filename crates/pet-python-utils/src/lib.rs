@@ -8,3 +8,5 @@ pub mod fs_cache;
 mod headers;
 pub mod platform_dirs;
 pub mod version;
+
+pub use env::is_pyenv_shim;
