@@ -35,25 +35,27 @@ pub struct TestEnvironment {
     home: Option<PathBuf>,
     root: Option<PathBuf>,
 }
+
+impl Environment for TestEnvironment {
+    fn get_env_var(&self, key: String) -> Option<String> {
+        self.vars.get(&key).cloned()
+    }
+    fn get_root(&self) -> Option<PathBuf> {
+        self.root.clone()
+    }
+    fn get_user_home(&self) -> Option<PathBuf> {
+        self.home.clone()
+    }
+    fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+        vec![]
+    }
+}
+
 #[allow(dead_code)]
 pub fn create_test_environment(
     vars: HashMap<String, String>,
     home: Option<PathBuf>,
     root: Option<PathBuf>,
 ) -> TestEnvironment {
-    impl Environment for TestEnvironment {
-        fn get_env_var(&self, key: String) -> Option<String> {
-            self.vars.get(&key).cloned()
-        }
-        fn get_root(&self) -> Option<PathBuf> {
-            self.root.clone()
-        }
-        fn get_user_home(&self) -> Option<PathBuf> {
-            self.home.clone()
-        }
-        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-            vec![]
-        }
-    }
     TestEnvironment { vars, home, root }
 }
