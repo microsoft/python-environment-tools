@@ -31,7 +31,6 @@ pet-linux-global-python = { path = "../pet-linux-global-python" }
 pet-mac-xcode = { path = "../pet-mac-xcode" }
 pet-mac-python-org = { path = "../pet-mac-python-org" }
 pet-venv = { path = "../pet-venv" }
-pet-venv-uv = { path = "../pet-venv-uv" }
 pet-virtualenv = { path = "../pet-virtualenv" }
 pet-pipenv = { path = "../pet-pipenv" }
 pet-telemetry = { path = "../pet-telemetry" }

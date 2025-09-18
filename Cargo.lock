@@ -361,7 +361,6 @@ dependencies = [
  "pet-reporter",
  "pet-telemetry",
  "pet-venv",
- "pet-venv-uv",
  "pet-virtualenv",
  "pet-virtualenvwrapper",
  "pet-windows-registry",
@@ -627,16 +626,6 @@ dependencies = [
  "pet-core",
  "pet-python-utils",
  "pet-virtualenv",
-]
-
-[[package]]
-name = "pet-venv-uv"
-version = "0.1.0"
-dependencies = [
- "log",
- "msvc_spectre_libs",
- "pet-core",
- "pet-python-utils",
 ]
 
 [[package]]

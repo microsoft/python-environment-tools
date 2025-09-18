@@ -51,7 +51,6 @@ pub enum LocatorKind {
     Poetry,
     PyEnv,
     Venv,
-    VenvUv,
     VirtualEnv,
     VirtualEnvWrapper,
     WindowsRegistry,
