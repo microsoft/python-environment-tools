@@ -24,6 +24,7 @@ pub enum PythonEnvironmentKind {
     LinuxGlobal,
     MacXCode,
     Venv,
+    VenvUv, // Virtual environments created with UV
     VirtualEnv,
     VirtualEnvWrapper,
     WindowsStore,

@@ -23,6 +23,7 @@ pub struct PyVenvCfg {
     pub version_major: u64,
     pub version_minor: u64,
     pub prompt: Option<String>,
+    pub uv_version: Option<String>, // UV version if this was created by UV
 }
 
 impl PyVenvCfg {
@@ -31,14 +32,22 @@ impl PyVenvCfg {
         version_major: u64,
         version_minor: u64,
         prompt: Option<String>,
+        uv_version: Option<String>,
     ) -> Self {
         Self {
             version,
             version_major,
             version_minor,
             prompt,
+            uv_version,
         }
     }
+    
+    /// Returns true if this virtual environment was created with UV
+    pub fn is_uv(&self) -> bool {
+        self.uv_version.is_some()
+    }
+    
     pub fn find(path: &Path) -> Option<Self> {
         if let Some(ref file) = find(path) {
             parse(file)
@@ -99,6 +108,7 @@ fn parse(file: &Path) -> Option<PyVenvCfg> {
     let mut version_major: Option<u64> = None;
     let mut version_minor: Option<u64> = None;
     let mut prompt: Option<String> = None;
+    let mut uv_version: Option<String> = None;
 
     for line in contents.lines() {
         if version.is_none() {
@@ -120,13 +130,18 @@ fn parse(file: &Path) -> Option<PyVenvCfg> {
                 prompt = Some(p);
             }
         }
-        if version.is_some() && prompt.is_some() {
+        if uv_version.is_none() {
+            if let Some(uv_ver) = parse_uv_version(line) {
+                uv_version = Some(uv_ver);
+            }
+        }
+        if version.is_some() && prompt.is_some() && uv_version.is_some() {
             break;
         }
     }
 
     match (version, version_major, version_minor) {
-        (Some(ver), Some(major), Some(minor)) => Some(PyVenvCfg::new(ver, major, minor, prompt)),
+        (Some(ver), Some(major), Some(minor)) => Some(PyVenvCfg::new(ver, major, minor, prompt, uv_version)),
         _ => None,
     }
 }
@@ -172,6 +187,19 @@ fn parse_prompt(line: &str) -> Option<String> {
             }
             if !name.is_empty() {
                 return Some(name);
+            }
+        }
+    }
+    None
+}
+
+fn parse_uv_version(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if trimmed.starts_with("uv") {
+        if let Some(eq_idx) = trimmed.find('=') {
+            let value = trimmed[eq_idx + 1..].trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
             }
         }
     }

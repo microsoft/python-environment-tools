@@ -20,11 +20,33 @@ fn is_venv_internal(env: &PythonEnv) -> Option<bool> {
             || PyVenvCfg::find(&env.prefix.clone()?).is_some(),
     )
 }
+
 pub fn is_venv(env: &PythonEnv) -> bool {
     is_venv_internal(env).unwrap_or_default()
 }
+
 pub fn is_venv_dir(path: &Path) -> bool {
     PyVenvCfg::find(path).is_some()
+}
+
+/// Check if this is a UV-created virtual environment
+pub fn is_venv_uv(env: &PythonEnv) -> bool {
+    if let Some(cfg) = PyVenvCfg::find(env.executable.parent().unwrap_or(&env.executable))
+        .or_else(|| PyVenvCfg::find(&env.prefix.clone().unwrap_or_else(|| env.executable.parent().unwrap().parent().unwrap().to_path_buf())))
+    {
+        cfg.is_uv()
+    } else {
+        false
+    }
+}
+
+/// Check if a directory contains a UV-created virtual environment
+pub fn is_venv_uv_dir(path: &Path) -> bool {
+    if let Some(cfg) = PyVenvCfg::find(path) {
+        cfg.is_uv()
+    } else {
+        false
+    }
 }
 pub struct Venv {}
 
@@ -43,7 +65,7 @@ impl Locator for Venv {
         LocatorKind::Venv
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
-        vec![PythonEnvironmentKind::Venv]
+        vec![PythonEnvironmentKind::Venv, PythonEnvironmentKind::VenvUv]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -67,10 +89,17 @@ impl Locator for Venv {
             // Get the name from the prefix if it exists.
             let cfg = PyVenvCfg::find(env.executable.parent()?)
                 .or_else(|| PyVenvCfg::find(&env.prefix.clone()?));
-            let name = cfg.and_then(|cfg| cfg.prompt);
+            let name = cfg.as_ref().and_then(|cfg| cfg.prompt.clone());
+            
+            // Determine environment kind based on whether UV was used
+            let kind = match &cfg {
+                Some(cfg) if cfg.is_uv() => Some(PythonEnvironmentKind::VenvUv),
+                Some(_) => Some(PythonEnvironmentKind::Venv),
+                None => Some(PythonEnvironmentKind::Venv), // Default to Venv if no cfg found
+            };
 
             Some(
-                PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+                PythonEnvironmentBuilder::new(kind)
                     .name(name)
                     .executable(Some(env.executable.clone()))
                     .version(version)
