@@ -118,13 +118,19 @@ mod tests {
     fn test_is_venv_uv_dir_does_not_detect_regular_environment() {
         // This test checks if we can properly ignore regular venv environments
         let regular_env_path = PathBuf::from("/tmp/test_regular_env");
-        assert!(!is_venv_uv_dir(&regular_env_path), "Should not detect regular venv as UV environment");
+        assert!(
+            !is_venv_uv_dir(&regular_env_path),
+            "Should not detect regular venv as UV environment"
+        );
     }
 
     #[test]
     fn test_is_venv_uv_dir_handles_nonexistent_environment() {
         // This test checks if we handle non-existent environments gracefully
         let nonexistent_path = PathBuf::from("/tmp/nonexistent_env");
-        assert!(!is_venv_uv_dir(&nonexistent_path), "Should not detect non-existent environment as UV");
+        assert!(
+            !is_venv_uv_dir(&nonexistent_path),
+            "Should not detect non-existent environment as UV"
+        );
     }
 }

@@ -138,7 +138,9 @@ fn parse(file: &Path) -> Option<PyVenvCfg> {
     }
 
     match (version, version_major, version_minor) {
-        (Some(ver), Some(major), Some(minor)) => Some(PyVenvCfg::new(ver, major, minor, prompt, uv_version)),
+        (Some(ver), Some(major), Some(minor)) => {
+            Some(PyVenvCfg::new(ver, major, minor, prompt, uv_version))
+        }
         _ => None,
     }
 }
@@ -219,14 +221,20 @@ fn parse_uv_version(line: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::PathBuf, fs};
+    use std::{fs, path::PathBuf};
 
     #[test]
     fn test_parse_uv_version() {
         assert_eq!(parse_uv_version("uv = 0.8.14"), Some("0.8.14".to_string()));
         assert_eq!(parse_uv_version("uv=0.8.14"), Some("0.8.14".to_string()));
-        assert_eq!(parse_uv_version("uv = \"0.8.14\""), Some("0.8.14".to_string()));
-        assert_eq!(parse_uv_version("uv = '0.8.14'"), Some("0.8.14".to_string()));
+        assert_eq!(
+            parse_uv_version("uv = \"0.8.14\""),
+            Some("0.8.14".to_string())
+        );
+        assert_eq!(
+            parse_uv_version("uv = '0.8.14'"),
+            Some("0.8.14".to_string())
+        );
         assert_eq!(parse_uv_version("version = 3.12.11"), None);
         assert_eq!(parse_uv_version("prompt = test-env"), None);
     }
@@ -236,12 +244,12 @@ mod tests {
         let temp_file = "/tmp/test_pyvenv_uv.cfg";
         let contents = "home = /usr/bin/python3.12\nimplementation = CPython\nuv = 0.8.14\nversion_info = 3.12.11\ninclude-system-site-packages = false\nprompt = test-uv-env\n";
         fs::write(temp_file, contents).unwrap();
-        
+
         let cfg = parse(&PathBuf::from(temp_file)).unwrap();
         assert!(cfg.is_uv());
         assert_eq!(cfg.uv_version, Some("0.8.14".to_string()));
         assert_eq!(cfg.prompt, Some("test-uv-env".to_string()));
-        
+
         fs::remove_file(temp_file).ok();
     }
 
@@ -250,11 +258,11 @@ mod tests {
         let temp_file = "/tmp/test_pyvenv_regular.cfg";
         let contents = "home = /usr/bin/python3.12\ninclude-system-site-packages = false\nversion = 3.13.5\nexecutable = /usr/bin/python3.12\ncommand = python -m venv /path/to/env\n";
         fs::write(temp_file, contents).unwrap();
-        
+
         let cfg = parse(&PathBuf::from(temp_file)).unwrap();
         assert!(!cfg.is_uv());
         assert_eq!(cfg.uv_version, None);
-        
+
         fs::remove_file(temp_file).ok();
     }
 }
