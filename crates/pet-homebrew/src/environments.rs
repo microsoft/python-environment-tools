@@ -147,12 +147,11 @@ fn get_prefix(_resolved_file: &Path) -> Option<PathBuf> {
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(unix)]
     fn extract_version() {
         assert_eq!(
             get_version(&PathBuf::from(

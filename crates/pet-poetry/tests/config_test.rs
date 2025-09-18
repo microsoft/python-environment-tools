@@ -83,7 +83,6 @@ fn global_config_with_specific_values() {
 #[cfg(unix)]
 #[cfg_attr(any(feature = "ci",), test)]
 #[allow(dead_code)]
-
 fn local_config_with_specific_values() {
     use std::path::PathBuf;
 

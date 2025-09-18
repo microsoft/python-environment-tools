@@ -416,7 +416,10 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    #[cfg(windows)]
+    use super::{get_shortest_executable, PythonEnvironmentKind};
+    #[cfg(windows)]
+    use std::path::PathBuf;
 
     #[test]
     #[cfg(windows)]
