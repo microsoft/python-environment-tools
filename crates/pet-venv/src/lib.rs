@@ -31,8 +31,17 @@ pub fn is_venv_dir(path: &Path) -> bool {
 
 /// Check if this is a UV-created virtual environment
 pub fn is_venv_uv(env: &PythonEnv) -> bool {
-    if let Some(cfg) = PyVenvCfg::find(env.executable.parent().unwrap_or(&env.executable))
-        .or_else(|| PyVenvCfg::find(&env.prefix.clone().unwrap_or_else(|| env.executable.parent().unwrap().parent().unwrap().to_path_buf())))
+    if let Some(cfg) =
+        PyVenvCfg::find(env.executable.parent().unwrap_or(&env.executable)).or_else(|| {
+            PyVenvCfg::find(&env.prefix.clone().unwrap_or_else(|| {
+                env.executable
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+            }))
+        })
     {
         cfg.is_uv()
     } else {
@@ -90,7 +99,7 @@ impl Locator for Venv {
             let cfg = PyVenvCfg::find(env.executable.parent()?)
                 .or_else(|| PyVenvCfg::find(&env.prefix.clone()?));
             let name = cfg.as_ref().and_then(|cfg| cfg.prompt.clone());
-            
+
             // Determine environment kind based on whether UV was used
             let kind = match &cfg {
                 Some(cfg) if cfg.is_uv() => Some(PythonEnvironmentKind::VenvUv),

@@ -42,12 +42,12 @@ impl PyVenvCfg {
             uv_version,
         }
     }
-    
+
     /// Returns true if this virtual environment was created with UV
     pub fn is_uv(&self) -> bool {
         self.uv_version.is_some()
     }
-    
+
     pub fn find(path: &Path) -> Option<Self> {
         if let Some(ref file) = find(path) {
             parse(file)
@@ -141,7 +141,9 @@ fn parse(file: &Path) -> Option<PyVenvCfg> {
     }
 
     match (version, version_major, version_minor) {
-        (Some(ver), Some(major), Some(minor)) => Some(PyVenvCfg::new(ver, major, minor, prompt, uv_version)),
+        (Some(ver), Some(major), Some(minor)) => {
+            Some(PyVenvCfg::new(ver, major, minor, prompt, uv_version))
+        }
         _ => None,
     }
 }
