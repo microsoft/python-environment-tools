@@ -90,7 +90,7 @@ impl Locator for Venv {
             let name = cfg.as_ref().and_then(|cfg| cfg.prompt.clone());
 
             // Determine the environment kind based on whether it was created with UV
-            let kind = if cfg.as_ref().map_or(false, |c| c.is_uv()) {
+            let kind = if cfg.as_ref().is_some_and(|c| c.is_uv()) {
                 PythonEnvironmentKind::VenvUv
             } else {
                 PythonEnvironmentKind::Venv
