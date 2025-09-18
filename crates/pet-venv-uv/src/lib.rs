@@ -110,18 +110,34 @@ mod tests {
     #[test]
     fn test_is_venv_uv_dir_detects_uv_environment() {
         // This test checks if we can detect a UV environment from pyvenv.cfg
-        let uv_env_path = PathBuf::from("/tmp/test_uv_env");
-        assert!(is_venv_uv_dir(&uv_env_path), "Should detect UV environment");
+        use std::fs;
+        let test_dir = PathBuf::from("/tmp/test_uv_env_venv_uv");
+        fs::create_dir_all(&test_dir).unwrap();
+        let pyvenv_cfg = test_dir.join("pyvenv.cfg");
+        let contents = "home = /usr/bin/python3.12\nimplementation = CPython\nuv = 0.8.14\nversion_info = 3.12.11\ninclude-system-site-packages = false\nprompt = test-uv-env\n";
+        fs::write(&pyvenv_cfg, contents).unwrap();
+
+        assert!(is_venv_uv_dir(&test_dir), "Should detect UV environment");
+
+        fs::remove_dir_all(&test_dir).ok();
     }
 
     #[test]
     fn test_is_venv_uv_dir_does_not_detect_regular_environment() {
         // This test checks if we can properly ignore regular venv environments
-        let regular_env_path = PathBuf::from("/tmp/test_regular_env");
+        use std::fs;
+        let test_dir = PathBuf::from("/tmp/test_regular_env_venv_uv");
+        fs::create_dir_all(&test_dir).unwrap();
+        let pyvenv_cfg = test_dir.join("pyvenv.cfg");
+        let contents = "home = /usr/bin/python3.12\ninclude-system-site-packages = false\nversion = 3.13.5\nexecutable = /usr/bin/python3.12\ncommand = python -m venv /path/to/env\n";
+        fs::write(&pyvenv_cfg, contents).unwrap();
+
         assert!(
-            !is_venv_uv_dir(&regular_env_path),
+            !is_venv_uv_dir(&test_dir),
             "Should not detect regular venv as UV environment"
         );
+
+        fs::remove_dir_all(&test_dir).ok();
     }
 
     #[test]
