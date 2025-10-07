@@ -22,8 +22,8 @@ extends:
     tsa:
       enabled: true
       config:
-        areaPath: "Visual Studio Code Python Extensions"
-        serviceTreeID: 6e6194bc-7baa-4486-86d0-9f5419626d46
+        areaPath: "Pylance"
+        serviceTreeID: e3c408e8-09e7-404f-a9af-22b4ac3807a3
 
     buildPlatforms:
       - name: linux
