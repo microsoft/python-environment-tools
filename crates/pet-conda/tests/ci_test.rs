@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#![cfg(unix)]
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -387,7 +388,7 @@ fn create_conda_env(mode: &CondaCreateEnvNameOrPath, python_version: Option<Stri
         .expect("Failed to execute command");
 }
 
-fn get_version(value: &String) -> String {
+fn get_version(value: &str) -> String {
     // Regex to extract just the d.d.d version from the full version string
     let re = regex::Regex::new(r"\d+\.\d+\.\d+").unwrap();
     let captures = re.captures(value).unwrap();

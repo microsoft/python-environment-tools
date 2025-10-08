@@ -22,12 +22,12 @@ pub fn resolve_test_path(paths: &[&str]) -> PathBuf {
 }
 
 #[allow(dead_code)]
-pub fn does_version_match(version: &String, expected_version: &String) -> bool {
+pub fn does_version_match(version: &str, expected_version: &str) -> bool {
     let version = get_version(version);
     expected_version.starts_with(&version)
 }
 
-fn get_version(value: &String) -> String {
+fn get_version(value: &str) -> String {
     // Regex to extract just the d.d.d version from the full version string
     let captures = PYTHON_VERSION.captures(value).unwrap();
     let version = captures.get(1).unwrap().as_str().to_string();
@@ -39,6 +39,6 @@ fn get_version(value: &String) -> String {
 }
 
 #[allow(dead_code)]
-pub fn is_valid_version(value: &String) -> bool {
+pub fn is_valid_version(value: &str) -> bool {
     PYTHON_FULLVERSION.is_match(value)
 }
