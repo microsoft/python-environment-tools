@@ -91,7 +91,7 @@ impl CacheImpl {
             Entry::Occupied(lock) => lock.get().clone(),
             Entry::Vacant(lock) => {
                 let cache = Box::new(CacheEntryImpl::create(cache_directory.clone(), executable))
-                    as Box<(dyn CacheEntry + 'static)>;
+                    as Box<dyn CacheEntry + 'static>;
                 lock.insert(Arc::new(Mutex::new(cache))).clone()
             }
         }
