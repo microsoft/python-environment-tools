@@ -5,6 +5,7 @@ use log::{error, trace};
 use pet_core::{arch::Architecture, env::PythonEnv, python_environment::PythonEnvironment};
 use serde::{Deserialize, Serialize};
 use std::{
+    fs,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -88,6 +89,12 @@ impl ResolvedPythonEnv {
 }
 
 fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
+    // Skip pyenv shims as they don't work when executed directly
+    if is_pyenv_shim(executable) {
+        trace!("Skipping pyenv shim: {:?}", executable);
+        return None;
+    }
+
     // Spawn the python exe and get the version, sys.prefix and sys.executable.
     let executable = executable.to_str()?;
     let start = SystemTime::now();
@@ -142,4 +149,26 @@ fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
             None
         }
     }
+}
+
+/// Detect if an executable is a pyenv shim by checking if its path contains .pyenv/shims
+/// or by reading the file content to look for pyenv-specific patterns
+pub fn is_pyenv_shim(executable: &Path) -> bool {
+    // Check if the path contains .pyenv/shims
+    if let Some(path_str) = executable.to_str() {
+        if path_str.contains("/.pyenv/shims/") {
+            return true;
+        }
+    }
+
+    // Additionally, check if it's a shell script with pyenv content
+    if let Ok(content) = fs::read_to_string(executable) {
+        // Look for common pyenv shim patterns
+        if content.contains("PYENV_ROOT") && content.contains("pyenv") && content.contains("exec") {
+            trace!("Detected pyenv shim by content: {:?}", executable);
+            return true;
+        }
+    }
+
+    false
 }
