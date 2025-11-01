@@ -287,4 +287,273 @@ struct ToolUv {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_uv_venv_parse_valid_pyvenv_cfg() {
+        let temp_dir = TempDir::new().unwrap();
+        let cfg_path = temp_dir.path().join("pyvenv.cfg");
+
+        let contents = r#"home = /usr/bin
+include-system-site-packages = false
+version = 3.11.0
+executable = /usr/bin/python3.11
+uv = 0.1.0
+version_info = 3.11.0
+prompt = test-env"#;
+
+        std::fs::write(&cfg_path, contents).unwrap();
+
+        let uv_venv = UvVenv::maybe_from_file(&cfg_path);
+        assert!(uv_venv.is_some());
+
+        let uv_venv = uv_venv.unwrap();
+        assert_eq!(uv_venv.uv_version, "0.1.0");
+        assert_eq!(uv_venv.python_version, "3.11.0");
+        assert_eq!(uv_venv.prompt, "test-env");
+    }
+
+    #[test]
+    fn test_uv_venv_parse_missing_uv_field() {
+        let temp_dir = TempDir::new().unwrap();
+        let cfg_path = temp_dir.path().join("pyvenv.cfg");
+
+        let contents = r#"home = /usr/bin
+version_info = 3.11.0
+prompt = test-env"#;
+
+        std::fs::write(&cfg_path, contents).unwrap();
+
+        let uv_venv = UvVenv::maybe_from_file(&cfg_path);
+        assert!(
+            uv_venv.is_none(),
+            "Should return None when 'uv' field is missing"
+        );
+    }
+
+    #[test]
+    fn test_uv_venv_parse_missing_version_info() {
+        let temp_dir = TempDir::new().unwrap();
+        let cfg_path = temp_dir.path().join("pyvenv.cfg");
+
+        let contents = r#"home = /usr/bin
+uv = 0.1.0
+prompt = test-env"#;
+
+        std::fs::write(&cfg_path, contents).unwrap();
+
+        let uv_venv = UvVenv::maybe_from_file(&cfg_path);
+        assert!(
+            uv_venv.is_none(),
+            "Should return None when 'version_info' field is missing"
+        );
+    }
+
+    #[test]
+    fn test_uv_venv_parse_missing_prompt() {
+        let temp_dir = TempDir::new().unwrap();
+        let cfg_path = temp_dir.path().join("pyvenv.cfg");
+
+        let contents = r#"home = /usr/bin
+uv = 0.1.0
+version_info = 3.11.0"#;
+
+        std::fs::write(&cfg_path, contents).unwrap();
+
+        let uv_venv = UvVenv::maybe_from_file(&cfg_path);
+        assert!(
+            uv_venv.is_none(),
+            "Should return None when 'prompt' field is missing"
+        );
+    }
+
+    #[test]
+    fn test_uv_venv_parse_with_whitespace() {
+        let temp_dir = TempDir::new().unwrap();
+        let cfg_path = temp_dir.path().join("pyvenv.cfg");
+
+        let contents = r#"  uv = 0.2.5
+  version_info = 3.12.1
+  prompt = my-project  "#;
+
+        std::fs::write(&cfg_path, contents).unwrap();
+
+        let uv_venv = UvVenv::maybe_from_file(&cfg_path);
+        assert!(uv_venv.is_some());
+
+        let uv_venv = uv_venv.unwrap();
+        assert_eq!(uv_venv.uv_version, "0.2.5");
+        assert_eq!(uv_venv.python_version, "3.12.1");
+        assert_eq!(uv_venv.prompt, "my-project");
+    }
+
+    #[test]
+    fn test_uv_venv_parse_nonexistent_file() {
+        let uv_venv = UvVenv::maybe_from_file(Path::new("/nonexistent/path/pyvenv.cfg"));
+        assert!(uv_venv.is_none());
+    }
+
+    #[test]
+    fn test_parse_pyproject_toml_with_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+        let pyproject_path = temp_dir.path().join("pyproject.toml");
+
+        let contents = r#"[project]
+name = "my-workspace"
+
+[tool.uv.workspace]
+members = ["packages/*"]"#;
+
+        std::fs::write(&pyproject_path, contents).unwrap();
+
+        let pyproject = parse_pyproject_toml_in(temp_dir.path());
+        assert!(pyproject.is_some());
+
+        let pyproject = pyproject.unwrap();
+        assert!(pyproject.project.is_some());
+        assert_eq!(
+            pyproject.project.unwrap().name,
+            Some("my-workspace".to_string())
+        );
+        assert!(pyproject.tool.is_some());
+        assert!(pyproject.tool.unwrap().uv.is_some());
+    }
+
+    #[test]
+    fn test_parse_pyproject_toml_without_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+        let pyproject_path = temp_dir.path().join("pyproject.toml");
+
+        let contents = r#"[project]
+name = "my-project"
+
+[tool.uv]
+dev-dependencies = ["pytest"]"#;
+
+        std::fs::write(&pyproject_path, contents).unwrap();
+
+        let pyproject = parse_pyproject_toml_in(temp_dir.path());
+        assert!(pyproject.is_some());
+
+        let pyproject = pyproject.unwrap();
+        assert!(pyproject.project.is_some());
+        assert_eq!(
+            pyproject.project.unwrap().name,
+            Some("my-project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_pyproject_toml_missing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let pyproject = parse_pyproject_toml_in(temp_dir.path());
+        assert!(pyproject.is_none());
+    }
+
+    #[test]
+    fn test_parse_pyproject_toml_invalid_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let pyproject_path = temp_dir.path().join("pyproject.toml");
+
+        let contents = r#"[project
+name = "invalid"#;
+
+        std::fs::write(&pyproject_path, contents).unwrap();
+
+        let pyproject = parse_pyproject_toml_in(temp_dir.path());
+        assert!(pyproject.is_none());
+    }
+
+    #[test]
+    fn test_list_envs_in_directory_with_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_path = temp_dir.path();
+
+        // Create pyproject.toml with workspace
+        let pyproject_path = project_path.join("pyproject.toml");
+        let pyproject_contents = r#"[tool.uv.workspace]
+members = ["packages/*"]"#;
+        std::fs::write(&pyproject_path, pyproject_contents).unwrap();
+
+        // Create .venv directory
+        let venv_path = project_path.join(".venv");
+        std::fs::create_dir_all(&venv_path).unwrap();
+
+        // Create pyvenv.cfg
+        let pyvenv_cfg_path = venv_path.join("pyvenv.cfg");
+        let pyvenv_contents = r#"uv = 0.1.0
+version_info = 3.11.0
+prompt = workspace-env"#;
+        std::fs::write(&pyvenv_cfg_path, pyvenv_contents).unwrap();
+
+        // Create executables directory (Unix style for testing)
+        let bin_path = venv_path.join("bin");
+        std::fs::create_dir_all(&bin_path).unwrap();
+        let python_path = bin_path.join("python");
+        std::fs::File::create(&python_path).unwrap();
+
+        let envs = list_envs_in_directory(project_path);
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].kind, Some(PythonEnvironmentKind::UvWorkspace));
+        assert_eq!(envs[0].name, Some("workspace-env".to_string()));
+    }
+
+    #[test]
+    fn test_list_envs_in_directory_with_project() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_path = temp_dir.path();
+
+        // Create pyproject.toml with project (no workspace)
+        let pyproject_path = project_path.join("pyproject.toml");
+        let pyproject_contents = r#"[project]
+name = "my-project"
+
+[tool.uv]
+dev-dependencies = []"#;
+        std::fs::write(&pyproject_path, pyproject_contents).unwrap();
+
+        // Create .venv directory
+        let venv_path = project_path.join(".venv");
+        std::fs::create_dir_all(&venv_path).unwrap();
+
+        // Create pyvenv.cfg
+        let pyvenv_cfg_path = venv_path.join("pyvenv.cfg");
+        let pyvenv_contents = r#"uv = 0.1.0
+version_info = 3.11.0
+prompt = my-project"#;
+        std::fs::write(&pyvenv_cfg_path, pyvenv_contents).unwrap();
+
+        // Create executables directory
+        let bin_path = venv_path.join("bin");
+        std::fs::create_dir_all(&bin_path).unwrap();
+        let python_path = bin_path.join("python");
+        std::fs::File::create(&python_path).unwrap();
+
+        let envs = list_envs_in_directory(project_path);
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].kind, Some(PythonEnvironmentKind::Uv));
+        assert_eq!(envs[0].display_name, Some("my-project".to_string()));
+    }
+
+    #[test]
+    fn test_list_envs_in_directory_no_pyproject() {
+        let temp_dir = TempDir::new().unwrap();
+        let envs = list_envs_in_directory(temp_dir.path());
+        assert_eq!(envs.len(), 0);
+    }
+
+    #[test]
+    fn test_list_envs_in_directory_no_venv() {
+        let temp_dir = TempDir::new().unwrap();
+        let project_path = temp_dir.path();
+
+        // Create pyproject.toml but no .venv
+        let pyproject_path = project_path.join("pyproject.toml");
+        let pyproject_contents = r#"[project]
+name = "my-project""#;
+        std::fs::write(&pyproject_path, pyproject_contents).unwrap();
+
+        let envs = list_envs_in_directory(project_path);
+        assert_eq!(envs.len(), 0);
+    }
 }
