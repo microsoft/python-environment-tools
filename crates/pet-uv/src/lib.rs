@@ -41,6 +41,10 @@ impl UvVenv {
             if let Some(prompt_value) = line.trim_start().strip_prefix("prompt = ") {
                 prompt = Some(prompt_value.trim_end().to_string());
             }
+            if uv_version.is_some() && python_version.is_some() && prompt.is_some() {
+                // we've found all the values we need, stop parsing
+                break;
+            }
         }
         Some(Self {
             uv_version: uv_version?,
@@ -193,10 +197,9 @@ fn find_workspace(path: &Path) -> Option<PythonEnvironment> {
 fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
     let mut envs = Vec::new();
     let pyproject = parse_pyproject_toml_in(&path);
-    if pyproject.is_none() {
+    let Some(pyproject) = pyproject else {
         return envs;
-    }
-    let pyproject = pyproject.unwrap();
+    };
     let pyvenv_cfg = path.join(".venv/pyvenv.cfg");
     let prefix = path.join(".venv");
     let unix_executable = prefix.join("bin/python");
@@ -215,7 +218,6 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
         .is_some()
     {
         trace!("Workspace found in {}", path.display());
-        let pyvenv_cfg = path.join(".venv/pyvenv.cfg");
         if let Some(uv_venv) = UvVenv::maybe_from_file(&pyvenv_cfg) {
             trace!("uv-managed venv found for workspace in {}", path.display());
             let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::UvWorkspace))
