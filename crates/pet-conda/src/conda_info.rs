@@ -3,6 +3,7 @@
 
 use log::{error, trace, warn};
 use pet_fs::path::resolve_symlink;
+use pet_python_utils::executable::new_silent_command;
 use std::path::PathBuf;
 
 #[derive(Debug, serde::Deserialize)]
@@ -45,7 +46,7 @@ impl CondaInfo {
             resolve_symlink(&executable).unwrap_or(executable)
         };
 
-        let result = std::process::Command::new(&executable)
+        let result = new_silent_command(&executable)
             .arg("info")
             .arg("--json")
             .output();
