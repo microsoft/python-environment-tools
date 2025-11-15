@@ -1,10 +1,19 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
+//! Tests for Poetry environment identification by path pattern.
+//! 
+//! This test module verifies that Poetry environments are correctly identified
+//! even when they are not discovered during the find() phase. This can happen when:
+//! - Workspace directories are not configured
+//! - The pyproject.toml is not in the workspace directories
+//! - The environment is in the Poetry cache but wasn't enumerated
+//!
+//! The fix adds a fallback path-based detection that checks if the environment
+//! path matches Poetry's naming pattern ({name}-{8-char-hash}-py{version}) and
+//! is located in a Poetry cache directory (containing "pypoetry/virtualenvs").
 
-// Import the is_poetry_environment function - we'll need to make it public for testing
-// For now, we'll test via the public API
+use std::path::PathBuf;
 
 #[cfg(test)]
 mod tests {
