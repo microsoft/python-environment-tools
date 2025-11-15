@@ -3,6 +3,7 @@
 
 use env_variables::EnvVariables;
 use environment_locations::list_environments;
+use lazy_static::lazy_static;
 use log::trace;
 use manager::PoetryManager;
 use pet_core::{
@@ -13,8 +14,9 @@ use pet_core::{
     Configuration, Locator, LocatorKind, LocatorResult,
 };
 use pet_virtualenv::is_virtualenv;
+use regex::Regex;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 use telemetry::report_missing_envs;
@@ -27,6 +29,38 @@ mod environment_locations_spawn;
 pub mod manager;
 mod pyproject_toml;
 mod telemetry;
+
+lazy_static! {
+    static ref POETRY_ENV_NAME_PATTERN: Regex = Regex::new(r"^.+-[A-Za-z0-9_-]{8}-py.*$")
+        .expect("Error generating RegEx for poetry environment name pattern");
+}
+
+/// Check if a path looks like a Poetry environment by examining the directory structure
+/// Poetry environments typically have names like: {name}-{hash}-py{version}
+/// and are located in cache directories or as .venv in project directories
+fn is_poetry_environment(path: &Path) -> bool {
+    // Check if the environment is in a directory that looks like Poetry's virtualenvs cache
+    // Common patterns:
+    // - Linux: ~/.cache/pypoetry/virtualenvs/
+    // - macOS: ~/Library/Caches/pypoetry/virtualenvs/
+    // - Windows: %LOCALAPPDATA%\pypoetry\Cache\virtualenvs\
+    let path_str = path.to_str().unwrap_or_default();
+
+    // Check if path contains typical Poetry cache directory structure
+    if path_str.contains("pypoetry") && path_str.contains("virtualenvs") {
+        // Further validate by checking if the directory name matches Poetry's naming pattern
+        // Pattern: {name}-{8-char-hash}-py or just .venv
+        if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+            // Check for Poetry's hash-based naming: name-XXXXXXXX-py
+            // The hash is 8 characters of base64url encoding
+            if POETRY_ENV_NAME_PATTERN.is_match(dir_name) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
 
 pub trait PoetryLocator: Send + Sync {
     fn find_and_report_missing_envs(
@@ -153,6 +187,8 @@ impl Locator for Poetry {
         if !is_virtualenv(env) {
             return None;
         }
+
+        // First, check if the environment is in our cache
         if let Some(result) = self.find_with_cache() {
             for found_env in result.environments {
                 if let Some(symlinks) = &found_env.symlinks {
@@ -162,6 +198,24 @@ impl Locator for Poetry {
                 }
             }
         }
+
+        // Fallback: Check if the path looks like a Poetry environment
+        // This handles cases where the environment wasn't discovered during find()
+        // (e.g., workspace directories not configured, or pyproject.toml not found)
+        if let Some(prefix) = &env.prefix {
+            if is_poetry_environment(prefix) {
+                trace!(
+                    "Identified Poetry environment by path pattern: {:?}",
+                    prefix
+                );
+                return environment::create_poetry_env(
+                    prefix,
+                    prefix.clone(), // We don't have the project directory, use prefix
+                    None,           // No manager available in this fallback case
+                );
+            }
+        }
+
         None
     }
 
