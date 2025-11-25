@@ -4,6 +4,7 @@
 use lazy_static::lazy_static;
 use log::trace;
 use regex::Regex;
+use std::ffi::OsStr;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -157,6 +158,22 @@ pub fn should_search_for_environments_in_path<P: AsRef<Path>>(path: &P) -> bool 
     }
 
     true
+}
+
+#[cfg(target_os = "windows")]
+pub fn new_silent_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let mut command = std::process::Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn new_silent_command(program: impl AsRef<OsStr>) -> std::process::Command {
+    std::process::Command::new(program)
 }
 
 #[cfg(test)]

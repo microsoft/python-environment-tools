@@ -4,6 +4,7 @@
 use lazy_static::lazy_static;
 use log::{error, trace};
 use pet_core::python_environment::PythonEnvironment;
+use pet_python_utils::executable::new_silent_command;
 use regex::Regex;
 use std::{path::PathBuf, time::SystemTime};
 
@@ -36,7 +37,7 @@ pub fn list_environments(
 
 fn get_environments(executable: &PathBuf, workspace_dir: &PathBuf) -> Option<Vec<PathBuf>> {
     let start = SystemTime::now();
-    let result = std::process::Command::new(executable)
+    let result = new_silent_command(executable)
         .arg("env")
         .arg("list")
         .arg("--full-path")

@@ -9,7 +9,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::cache::create_cache;
+use crate::{cache::create_cache, executable::new_silent_command};
 
 const PYTHON_INFO_JSON_SEPARATOR: &str = "093385e9-59f7-4a16-a604-14bf206256fe";
 const PYTHON_INFO_CMD:&str = "import json, sys; print('093385e9-59f7-4a16-a604-14bf206256fe');print(json.dumps({'version': '.'.join(str(n) for n in sys.version_info), 'sys_prefix': sys.prefix, 'executable': sys.executable, 'is64_bit': sys.maxsize > 2**32}))";
@@ -92,7 +92,7 @@ fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
     let executable = executable.to_str()?;
     let start = SystemTime::now();
     trace!("Executing Python: {} -c {}", executable, PYTHON_INFO_CMD);
-    let result = std::process::Command::new(executable)
+    let result = new_silent_command(executable)
         .args(["-c", PYTHON_INFO_CMD])
         .output();
     match result {
