@@ -54,6 +54,12 @@ impl UvVenv {
     }
 }
 
+impl Default for Uv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Uv {
     pub fn new() -> Self {
         Self {
@@ -86,11 +92,11 @@ impl Locator for Uv {
         let cfg = env
             .executable
             .parent()
-            .and_then(|parent| PyVenvCfg::find(parent))
+            .and_then(PyVenvCfg::find)
             .or_else(|| {
                 env.prefix
                     .as_ref()
-                    .and_then(|prefix| PyVenvCfg::find(&prefix))
+                    .and_then(|prefix| PyVenvCfg::find(prefix))
             })?;
         let uv_venv = UvVenv::maybe_from_file(&cfg.file_path)?;
         trace!(
@@ -106,7 +112,7 @@ impl Locator for Uv {
         let pyproject = prefix
             .as_ref()
             .and_then(|prefix| prefix.parent())
-            .and_then(|parent| parse_pyproject_toml_in(parent));
+            .and_then(parse_pyproject_toml_in);
         let kind = if pyproject
             .and_then(|pyproject| pyproject.tool)
             .and_then(|t| t.uv)
@@ -123,7 +129,7 @@ impl Locator for Uv {
                 .name(Some(uv_venv.prompt))
                 .executable(Some(env.executable.clone()))
                 .version(Some(uv_venv.python_version))
-                .symlinks(prefix.as_ref().map(|p| find_executables(p)))
+                .symlinks(prefix.as_ref().map(find_executables))
                 .prefix(prefix)
                 .build(),
         )
@@ -143,7 +149,7 @@ impl Locator for Uv {
 
 fn find_workspace(path: &Path) -> Option<PythonEnvironment> {
     for candidate in path.ancestors() {
-        let pyproject = parse_pyproject_toml_in(&candidate);
+        let pyproject = parse_pyproject_toml_in(candidate);
         if pyproject
             .as_ref()
             .and_then(|pp| pp.tool.as_ref())
@@ -196,7 +202,7 @@ fn find_workspace(path: &Path) -> Option<PythonEnvironment> {
 
 fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
     let mut envs = Vec::new();
-    let pyproject = parse_pyproject_toml_in(&path);
+    let pyproject = parse_pyproject_toml_in(path);
     let Some(pyproject) = pyproject else {
         return envs;
     };
@@ -250,7 +256,7 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
         } else {
             trace!("No uv-managed venv found in {}", path.display());
         }
-        if let Some(workspace) = path.parent().and_then(|p| find_workspace(p)) {
+        if let Some(workspace) = path.parent().and_then(find_workspace) {
             envs.push(workspace);
         }
     }
