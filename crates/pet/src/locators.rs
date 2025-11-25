@@ -19,6 +19,7 @@ use pet_pixi::Pixi;
 use pet_poetry::Poetry;
 use pet_pyenv::PyEnv;
 use pet_python_utils::env::ResolvedPythonEnv;
+use pet_uv::Uv;
 use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
@@ -58,6 +59,7 @@ pub fn create_locators(
     // 6. Support for Virtual Envs
     // The order of these matter.
     // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
+    locators.push(Arc::new(Uv::new()));
     locators.push(poetry_locator);
     locators.push(Arc::new(PipEnv::from(environment)));
     locators.push(Arc::new(VirtualEnvWrapper::from(environment)));

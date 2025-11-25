@@ -35,6 +35,7 @@ pet-virtualenv = { path = "../pet-virtualenv" }
 pet-pipenv = { path = "../pet-pipenv" }
 pet-telemetry = { path = "../pet-telemetry" }
 pet-global-virtualenvs = { path = "../pet-global-virtualenvs" }
+pet-uv = { path = "../pet-uv" }
 log = "0.4.21"
 clap = { version = "4.5.4", features = ["derive", "cargo"] }
 serde = { version = "1.0.152", features = ["derive"] }
