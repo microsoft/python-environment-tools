@@ -6,6 +6,10 @@ license = "MIT"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }
 
 [dependencies]
 log = "0.4.21"
