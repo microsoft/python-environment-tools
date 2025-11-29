@@ -151,7 +151,7 @@ pub fn find_and_report_envs(
                         possible_environments.append(
                             &mut reader
                                 .filter_map(Result::ok)
-                                .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+                                .filter(|d| d.path().is_dir())
                                 .map(|p| p.path())
                                 .collect(),
                         );
@@ -270,7 +270,7 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     if let Ok(reader) = fs::read_dir(workspace_folder.join(".pixi").join("envs")) {
         reader
             .filter_map(Result::ok)
-            .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+            .filter(|d| d.path().is_dir())
             .map(|p| p.path())
             .for_each(|p| paths_to_search_first.push(p));
     }
@@ -295,7 +295,7 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     if let Ok(reader) = fs::read_dir(workspace_folder) {
         for folder in reader
             .filter_map(Result::ok)
-            .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+            .filter(|d| d.path().is_dir())
             .map(|p| p.path())
             .filter(|p| {
                 // If this directory is a sub directory or is in the environment_directories, then do not search in this directory.
