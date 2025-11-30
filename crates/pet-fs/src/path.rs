@@ -106,7 +106,7 @@ pub fn is_junction<P: AsRef<Path>>(path: P) -> bool {
     };
 
     let handle = file.as_raw_handle();
-    if handle as isize == INVALID_HANDLE_VALUE {
+    if handle as isize == INVALID_HANDLE_VALUE as isize {
         return false;
     }
 
