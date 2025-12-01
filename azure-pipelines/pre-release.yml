@@ -1,4 +1,4 @@
-# Run on a schedule and weekly
+# Run on both a schedule and weekly
 trigger:
   branches:
     include:
