@@ -1,46 +1,70 @@
-# Run on a schedule
+# Pre-Release Pipeline for Python Environment Tools (PET)
+# 
+# This pipeline builds and publishes pre-release versions of the PET binary from the main branch.
+# It automatically triggers on main branch commits and publishes to the Azure Pipeline feed.
+# The built artifacts are consumed by VS Code Python extension pre-release/insider builds.
+
+# Trigger Configuration - Automatic builds from main branch
+# Run on a schedule when main branch is updated
 trigger:
   branches:
     include:
-      - main
-pr: none
+      - main  # Build whenever main branch receives commits
+pr: none  # Don't trigger on pull requests to avoid unnecessary builds
 
+# External Resources - Reference to shared build templates
 resources:
   repositories:
+    # Microsoft VS Code engineering shared templates for consistent build processes
     - repository: templates
       type: github
       name: microsoft/vscode-engineering
       ref: main
       endpoint: Monaco
 
+# Pipeline Definition - Extends shared Rust package template
 extends:
   template: azure-pipelines/rust-package/pipeline.yml@templates
   parameters:
+    # Binary Configuration
     binaryName: "pet"
-    signing: true
-    apiScanSoftwareVersion: 2024 # major version of `pet` for internal reporting
+    
+    # Security Configuration - Required for pre-release distribution
+    signing: true  # Code signing required for any distributed builds
+    apiScanSoftwareVersion: 2024 # Major version of `pet` for internal reporting
+    
+    # Threat and Security Analysis (TSA) Configuration
     tsa:
-      enabled: true
+      enabled: true  # Enable security analysis for pre-release builds
       config:
         areaPath: "Visual Studio Code Python Extensions"
         serviceTreeID: 6e6194bc-7baa-4486-86d0-9f5419626d46
 
+    # Multi-Platform Build Targets
+    # Supporting diverse architectures for broad VS Code compatibility
     buildPlatforms:
+      # Linux targets - covering x86_64, ARM64, and ARM32 architectures
       - name: linux
-        target: x86_64-unknown-linux-musl
+        target: x86_64-unknown-linux-musl  # Static linking for broad Linux compatibility
       - name: linux
-        target: aarch64-unknown-linux-gnu
+        target: aarch64-unknown-linux-gnu   # ARM64 Linux (e.g., newer Raspberry Pi, AWS Graviton)
       - name: linux
-        target: armv7-unknown-linux-gnueabihf
+        target: armv7-unknown-linux-gnueabihf  # ARM32 Linux (e.g., older Raspberry Pi)
+      
+      # macOS targets - supporting both Intel and Apple Silicon
       - name: darwin
-        target: aarch64-apple-darwin
+        target: aarch64-apple-darwin        # Apple Silicon Macs (M1/M2/M3)
       - name: darwin
-        target: x86_64-apple-darwin
+        target: x86_64-apple-darwin         # Intel Macs
+      
+      # Windows targets - supporting both x64 and ARM64 architectures
       - name: windows
-        target: aarch64-pc-windows-msvc
+        target: aarch64-pc-windows-msvc     # ARM64 Windows (Surface Pro X, etc.)
       - name: windows
-        target: x86_64-pc-windows-msvc
+        target: x86_64-pc-windows-msvc      # x64 Windows (most common)
 
+    # Pre-Build Setup Steps
     preBuildSteps:
+      # Enable Azure-specific Rust build configuration for proper dependency resolution
       - pwsh: Rename-Item -Path "./.cargo/config.toml.disabled" -NewName "config.toml"
         displayName: "Enable Azure Build config for Rust"

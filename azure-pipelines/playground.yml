@@ -1,38 +1,63 @@
+# Playground Pipeline for Python Environment Tools (PET)
+# 
+# This pipeline is designed for engineering testing and development purposes.
+# It allows developers to test builds and fixes without affecting production pipeline feeds.
+# No artifacts are published to feeds and no code signing is required, making it ideal for rapid iteration.
+
+# Trigger Configuration - Manual execution only
 trigger: none
 pr: none
-# Should only ever be manually run.
+# Should only ever be manually run for testing/development purposes
 
+# External Resources - Reference to shared build templates
 resources:
   repositories:
+    # Microsoft VS Code engineering shared templates for consistent build processes
     - repository: templates
       type: github
       name: microsoft/vscode-engineering
       ref: main
       endpoint: Monaco
 
+# Pipeline Definition - Extends shared Rust package template
 extends:
   template: azure-pipelines/rust-package/pipeline.yml@templates
   parameters:
+    # Binary Configuration
     binaryName: "pet"
-    signing: false
-    apiScanSoftwareVersion: 2024 # major version of `pet` for internal reporting
+    
+    # Security Configuration - Relaxed for development/testing
+    signing: false  # No code signing required for playground builds
+    apiScanSoftwareVersion: 2024 # Major version of `pet` for internal reporting
+    
+    # Note: TSA (Threat and Security Analysis) is disabled for playground builds
+    # since these artifacts are not distributed
 
+    # Multi-Platform Build Targets
+    # Supporting diverse architectures for comprehensive testing across platforms
     buildPlatforms:
+      # Linux targets - covering x86_64, ARM64, and ARM32 architectures
       - name: linux
-        target: x86_64-unknown-linux-musl
+        target: x86_64-unknown-linux-musl  # Static linking for broad Linux compatibility
       - name: linux
-        target: aarch64-unknown-linux-gnu
+        target: aarch64-unknown-linux-gnu   # ARM64 Linux (e.g., newer Raspberry Pi, AWS Graviton)
       - name: linux
-        target: armv7-unknown-linux-gnueabihf
+        target: armv7-unknown-linux-gnueabihf  # ARM32 Linux (e.g., older Raspberry Pi)
+      
+      # macOS targets - supporting both Intel and Apple Silicon
       - name: darwin
-        target: aarch64-apple-darwin
+        target: aarch64-apple-darwin        # Apple Silicon Macs (M1/M2/M3)
       - name: darwin
-        target: x86_64-apple-darwin
+        target: x86_64-apple-darwin         # Intel Macs
+      
+      # Windows targets - supporting both x64 and ARM64 architectures
       - name: windows
-        target: aarch64-pc-windows-msvc
+        target: aarch64-pc-windows-msvc     # ARM64 Windows (Surface Pro X, etc.)
       - name: windows
-        target: x86_64-pc-windows-msvc
+        target: x86_64-pc-windows-msvc      # x64 Windows (most common)
 
+    # Pre-Build Setup Steps
     preBuildSteps:
+      # Enable Azure-specific Rust build configuration for proper dependency resolution
       - pwsh: Rename-Item -Path "./.cargo/config.toml.disabled" -NewName "config.toml"
         displayName: "Enable Azure Build config for Rust"
