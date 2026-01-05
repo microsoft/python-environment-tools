@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 //! Tests for Poetry environment identification by path pattern.
-//! 
 //! This test module verifies that Poetry environments are correctly identified
 //! even when they are not discovered during the find() phase. This can happen when:
 //! - Workspace directories are not configured
