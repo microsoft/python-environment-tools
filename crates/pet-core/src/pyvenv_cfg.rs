@@ -23,6 +23,7 @@ pub struct PyVenvCfg {
     pub version_major: u64,
     pub version_minor: u64,
     pub prompt: Option<String>,
+    pub file_path: PathBuf,
 }
 
 impl PyVenvCfg {
@@ -31,12 +32,14 @@ impl PyVenvCfg {
         version_major: u64,
         version_minor: u64,
         prompt: Option<String>,
+        file_path: PathBuf,
     ) -> Self {
         Self {
             version,
             version_major,
             version_minor,
             prompt,
+            file_path,
         }
     }
     pub fn find(path: &Path) -> Option<Self> {
@@ -126,7 +129,13 @@ fn parse(file: &Path) -> Option<PyVenvCfg> {
     }
 
     match (version, version_major, version_minor) {
-        (Some(ver), Some(major), Some(minor)) => Some(PyVenvCfg::new(ver, major, minor, prompt)),
+        (Some(ver), Some(major), Some(minor)) => Some(PyVenvCfg::new(
+            ver,
+            major,
+            minor,
+            prompt,
+            file.to_path_buf(),
+        )),
         _ => None,
     }
 }

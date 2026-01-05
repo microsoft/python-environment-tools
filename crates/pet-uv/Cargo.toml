@@ -1,0 +1,15 @@
+[package]
+name = "pet-uv"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+pet-core = { path = "../pet-core" }
+pet-python-utils = { path = "../pet-python-utils" }
+serde = {version = "1.0.226", features = ["derive"]}
+toml = "0.9.7"
+log = "0.4.21"
+
+[dev-dependencies]
+tempfile = "3.13"
