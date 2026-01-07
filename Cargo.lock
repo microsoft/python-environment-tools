@@ -470,6 +470,7 @@ version = "0.1.0"
 dependencies = [
  "log",
  "msvc_spectre_libs",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

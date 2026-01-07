@@ -3,6 +3,7 @@
 
 use log::{error, trace};
 use pet_core::{arch::Architecture, env::PythonEnv, python_environment::PythonEnvironment};
+use pet_fs::path::path_contains_junction;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -89,9 +90,13 @@ impl ResolvedPythonEnv {
 
 fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
     // Spawn the python exe and get the version, sys.prefix and sys.executable.
-    let executable = executable.to_str()?;
+    let executable_str = executable.to_str()?;
     let start = SystemTime::now();
-    trace!("Executing Python: {} -c {}", executable, PYTHON_INFO_CMD);
+    trace!(
+        "Executing Python: {} -c {}",
+        executable_str,
+        PYTHON_INFO_CMD
+    );
     let result = new_silent_command(executable)
         .args(["-c", PYTHON_INFO_CMD])
         .output();
@@ -100,20 +105,38 @@ fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
             let output = String::from_utf8(output.stdout).unwrap().trim().to_string();
             trace!(
                 "Executed Python {:?} in {:?} & produced an output {:?}",
-                executable,
+                executable_str,
                 start.elapsed(),
                 output
             );
             if let Some((_, output)) = output.split_once(PYTHON_INFO_JSON_SEPARATOR) {
                 if let Ok(info) = serde_json::from_str::<InterpreterInfo>(output) {
+                    // Python's sys.executable may resolve junctions to their physical location.
+                    // If the user provided a path that goes through a junction, we should
+                    // preserve their original path instead of using the resolved path.
+                    // This is important for:
+                    // 1. Windows Store Python (junctions to WindowsApps)
+                    // 2. User-created junctions (e.g., C: -> S: drive mappings)
+                    let final_executable = if path_contains_junction(executable) {
+                        // User's path contains a junction - preserve their path
+                        trace!(
+                            "Preserving user-provided path {:?} (contains junction), Python reported {:?}",
+                            executable,
+                            info.executable
+                        );
+                        executable.to_path_buf()
+                    } else {
+                        PathBuf::from(info.executable.clone())
+                    };
+
                     let mut symlinks = vec![
-                        PathBuf::from(executable),
+                        executable.to_path_buf(),
                         PathBuf::from(info.executable.clone()),
                     ];
                     symlinks.sort();
                     symlinks.dedup();
                     Some(ResolvedPythonEnv {
-                        executable: PathBuf::from(info.executable.clone()),
+                        executable: final_executable,
                         prefix: PathBuf::from(info.sys_prefix),
                         version: info.version.trim().to_string(),
                         is64_bit: info.is64_bit,
@@ -122,14 +145,14 @@ fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
                 } else {
                     error!(
                             "Python Execution for {:?} produced an output {:?} that could not be parsed as JSON",
-                            executable, output,
+                            executable_str, output,
                         );
                     None
                 }
             } else {
                 error!(
                     "Python Execution for {:?} produced an output {:?} without a separator",
-                    executable, output,
+                    executable_str, output,
                 );
                 None
             }
@@ -137,7 +160,7 @@ fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
         Err(err) => {
             error!(
                 "Failed to execute Python to resolve info {:?}: {}",
-                executable, err
+                executable_str, err
             );
             None
         }
