@@ -6,9 +6,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-// Similar to fs::canonicalize, but ignores UNC paths and returns the path as is (for windows).
-// Usefulfor windows to ensure we have the paths in the right casing.
+// Normalizes the case of a path on Windows without resolving junctions/symlinks.
+// Uses GetLongPathNameW which normalizes case but preserves junction paths.
 // For unix, this is a noop.
+// See: https://github.com/microsoft/python-environment-tools/issues/186
 pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
     // On unix do not use canonicalize, results in weird issues with homebrew paths
     // Even readlink does the same thing
@@ -18,24 +19,70 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
     return path.as_ref().to_path_buf();
 
     #[cfg(windows)]
-    use std::fs;
-
-    #[cfg(windows)]
-    if let Ok(resolved) = fs::canonicalize(&path) {
-        if cfg!(unix) {
-            return resolved;
-        }
-        // Windows specific handling, https://github.com/rust-lang/rust/issues/42869
-        let has_unc_prefix = path.as_ref().to_string_lossy().starts_with(r"\\?\");
-        if resolved.to_string_lossy().starts_with(r"\\?\") && !has_unc_prefix {
-            // If the resolved path has a UNC prefix, but the original path did not,
-            // we need to remove the UNC prefix.
-            PathBuf::from(resolved.to_string_lossy().trim_start_matches(r"\\?\"))
+    {
+        // First, convert to absolute path if relative, without resolving symlinks/junctions
+        let absolute_path = if path.as_ref().is_absolute() {
+            path.as_ref().to_path_buf()
+        } else if let Ok(abs) = std::env::current_dir() {
+            abs.join(path.as_ref())
         } else {
-            resolved
-        }
+            path.as_ref().to_path_buf()
+        };
+
+        // Use GetLongPathNameW to normalize case without resolving junctions
+        normalize_case_windows(&absolute_path).unwrap_or_else(|| path.as_ref().to_path_buf())
+    }
+}
+
+/// Windows-specific path case normalization using GetLongPathNameW.
+/// This normalizes the case of path components but does NOT resolve junctions or symlinks.
+#[cfg(windows)]
+fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::Storage::FileSystem::GetLongPathNameW;
+
+    // Convert path to wide string (UTF-16) with null terminator
+    let wide_path: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // First call to get required buffer size
+    let required_len = unsafe { GetLongPathNameW(wide_path.as_ptr(), std::ptr::null_mut(), 0) };
+
+    if required_len == 0 {
+        // GetLongPathNameW failed, return None
+        return None;
+    }
+
+    // Allocate buffer and get the normalized path
+    let mut buffer: Vec<u16> = vec![0; required_len as usize];
+    let actual_len =
+        unsafe { GetLongPathNameW(wide_path.as_ptr(), buffer.as_mut_ptr(), required_len) };
+
+    if actual_len == 0 || actual_len > required_len {
+        // Call failed or buffer too small
+        return None;
+    }
+
+    // Truncate buffer to actual length (excluding null terminator)
+    buffer.truncate(actual_len as usize);
+
+    // Convert back to PathBuf
+    let os_string = OsString::from_wide(&buffer);
+    let result = PathBuf::from(os_string);
+
+    // Remove UNC prefix if original path didn't have it
+    // GetLongPathNameW may add \\?\ prefix in some cases
+    let result_str = result.to_string_lossy();
+    let original_has_unc = path.to_string_lossy().starts_with(r"\\?\");
+
+    if result_str.starts_with(r"\\?\") && !original_has_unc {
+        Some(PathBuf::from(result_str.trim_start_matches(r"\\?\")))
     } else {
-        path.as_ref().to_path_buf()
+        Some(result)
     }
 }
 
