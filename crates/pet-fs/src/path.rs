@@ -72,18 +72,24 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
 
     // Convert back to PathBuf
     let os_string = OsString::from_wide(&buffer);
-    let result = PathBuf::from(os_string);
+    let mut result_str = os_string.to_string_lossy().to_string();
 
     // Remove UNC prefix if original path didn't have it
     // GetLongPathNameW may add \\?\ prefix in some cases
-    let result_str = result.to_string_lossy();
     let original_has_unc = path.to_string_lossy().starts_with(r"\\?\");
-
     if result_str.starts_with(r"\\?\") && !original_has_unc {
-        Some(PathBuf::from(result_str.trim_start_matches(r"\\?\")))
-    } else {
-        Some(result)
+        result_str = result_str.trim_start_matches(r"\\?\").to_string();
     }
+
+    // Strip trailing path separators to match canonicalize behavior
+    // (but keep the root like "C:\")
+    while result_str.len() > 3
+        && (result_str.ends_with('\\') || result_str.ends_with('/'))
+    {
+        result_str.pop();
+    }
+
+    Some(PathBuf::from(result_str))
 }
 
 // Resolves symlinks to the real file.
@@ -289,6 +295,28 @@ mod tests {
         assert!(
             !result.to_string_lossy().starts_with(r"\\?\"),
             "Should not add UNC prefix"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_strips_trailing_slash() {
+        // norm_case should strip trailing slashes to match canonicalize behavior
+        let path_with_slash = PathBuf::from("C:\\Windows\\");
+        let result = norm_case(&path_with_slash);
+        assert!(
+            !result.to_string_lossy().ends_with('\\'),
+            "Should strip trailing backslash, got: {:?}",
+            result
+        );
+
+        // But root paths like C:\ should keep their slash
+        let root_path = PathBuf::from("C:\\");
+        let root_result = norm_case(&root_path);
+        assert!(
+            root_result.to_string_lossy().ends_with('\\'),
+            "Root path should keep trailing backslash, got: {:?}",
+            root_result
         );
     }
 }
