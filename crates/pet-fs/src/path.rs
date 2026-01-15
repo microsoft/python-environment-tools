@@ -154,3 +154,141 @@ fn get_user_home() -> Option<PathBuf> {
         Err(_) => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_norm_case_returns_path_for_nonexistent() {
+        // norm_case should return the original path if it doesn't exist
+        let nonexistent = PathBuf::from("/this/path/does/not/exist/anywhere");
+        let result = norm_case(&nonexistent);
+        assert_eq!(result, nonexistent);
+    }
+
+    #[test]
+    fn test_norm_case_existing_path() {
+        // norm_case should work on existing paths
+        let temp_dir = std::env::temp_dir();
+        let result = norm_case(&temp_dir);
+        // On unix, should return unchanged; on Windows, should normalize case
+        assert!(result.exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_norm_case_unix_noop() {
+        // On unix, norm_case should return the path unchanged
+        let path = PathBuf::from("/Some/Path/With/Mixed/Case");
+        let result = norm_case(&path);
+        assert_eq!(result, path);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_case_normalization() {
+        // On Windows, norm_case should normalize the case of existing paths
+        // Use the Windows directory which always exists
+        let path = PathBuf::from("c:\\windows\\system32");
+        let result = norm_case(&path);
+        // The result should have proper casing (C:\Windows\System32)
+        assert!(result.to_string_lossy().contains("Windows"));
+        assert!(result.to_string_lossy().contains("System32"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_preserves_junction() {
+        // This is the key test for issue #186:
+        // norm_case should NOT resolve junctions to their target
+        use std::fs;
+        use std::process::Command;
+
+        let temp_dir = std::env::temp_dir();
+        let target_dir = temp_dir.join("pet_test_junction_target");
+        let junction_dir = temp_dir.join("pet_test_junction_link");
+
+        // Clean up any existing test directories
+        let _ = fs::remove_dir_all(&target_dir);
+        let _ = fs::remove_dir_all(&junction_dir);
+
+        // Create target directory
+        fs::create_dir_all(&target_dir).expect("Failed to create target directory");
+
+        // Create a junction using mklink /J (requires no special privileges)
+        let output = Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &junction_dir.to_string_lossy(),
+                &target_dir.to_string_lossy(),
+            ])
+            .output()
+            .expect("Failed to create junction");
+
+        if !output.status.success() {
+            // Clean up and skip test if junction creation failed
+            let _ = fs::remove_dir_all(&target_dir);
+            eprintln!(
+                "Skipping junction test - failed to create junction: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        // Verify junction was created
+        assert!(junction_dir.exists(), "Junction should exist");
+
+        // The key assertion: norm_case should return the junction path, NOT the target path
+        let result = norm_case(&junction_dir);
+
+        // The result should still be the junction path, not resolved to target
+        // Compare the path names (case-insensitive on Windows)
+        assert!(
+            result
+                .to_string_lossy()
+                .to_lowercase()
+                .contains("pet_test_junction_link"),
+            "norm_case should preserve junction path, got: {:?}",
+            result
+        );
+        assert!(
+            !result
+                .to_string_lossy()
+                .to_lowercase()
+                .contains("pet_test_junction_target"),
+            "norm_case should NOT resolve to target path, got: {:?}",
+            result
+        );
+
+        // Clean up
+        // Remove junction first (using rmdir, not remove_dir_all, to not follow the junction)
+        let _ = Command::new("cmd")
+            .args(["/C", "rmdir", &junction_dir.to_string_lossy()])
+            .output();
+        let _ = fs::remove_dir_all(&target_dir);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_relative_path() {
+        // Test that relative paths are converted to absolute
+        let relative = PathBuf::from(".");
+        let result = norm_case(&relative);
+        assert!(result.is_absolute(), "Result should be absolute path");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_no_unc_prefix_added() {
+        // Ensure we don't add UNC prefix to paths that didn't have it
+        let path = PathBuf::from("C:\\Windows");
+        let result = norm_case(&path);
+        assert!(
+            !result.to_string_lossy().starts_with(r"\\?\"),
+            "Should not add UNC prefix"
+        );
+    }
+}
