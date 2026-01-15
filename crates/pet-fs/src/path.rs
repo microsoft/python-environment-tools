@@ -42,8 +42,12 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::Storage::FileSystem::GetLongPathNameW;
 
+    // Normalize forward slashes to backslashes (canonicalize did this)
+    let path_str = path.to_string_lossy().replace('/', "\\");
+    let normalized_path = PathBuf::from(&path_str);
+
     // Convert path to wide string (UTF-16) with null terminator
-    let wide_path: Vec<u16> = path
+    let wide_path: Vec<u16> = normalized_path
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
@@ -76,7 +80,7 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
 
     // Remove UNC prefix if original path didn't have it
     // GetLongPathNameW may add \\?\ prefix in some cases
-    let original_has_unc = path.to_string_lossy().starts_with(r"\\?\");
+    let original_has_unc = path_str.starts_with(r"\\?\");
     if result_str.starts_with(r"\\?\") && !original_has_unc {
         result_str = result_str.trim_start_matches(r"\\?\").to_string();
     }
@@ -315,6 +319,24 @@ mod tests {
             root_result.to_string_lossy().ends_with('\\'),
             "Root path should keep trailing backslash, got: {:?}",
             root_result
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_normalizes_slashes() {
+        // norm_case should convert forward slashes to backslashes (like canonicalize did)
+        let path_with_forward_slashes = PathBuf::from("C:/Windows/System32");
+        let result = norm_case(&path_with_forward_slashes);
+        assert!(
+            !result.to_string_lossy().contains('/'),
+            "Should convert forward slashes to backslashes, got: {:?}",
+            result
+        );
+        assert!(
+            result.to_string_lossy().contains('\\'),
+            "Should have backslashes, got: {:?}",
+            result
         );
     }
 }
