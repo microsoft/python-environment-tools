@@ -93,58 +93,74 @@ fn get_conda_package_info_from_history(path: &Path, name: &Package) -> Option<Co
     let package_entry = format!(":{}-", name.to_name());
 
     let history_contents = fs::read_to_string(history).ok()?;
-    for line in history_contents
+
+    // Filter to only include lines that:
+    // 1. Start with '+' (installed packages, not '-' for removed packages)
+    // 2. Contain the package entry (e.g., ":python-")
+    //
+    // We need the LAST matching entry because conda appends to history chronologically.
+    // When a package is upgraded, the old version is removed (-) and new version installed (+).
+    // The last '+' entry represents the currently installed version.
+    //
+    // Sample history for Python upgrade from 3.9.18 to 3.9.21:
+    //   +defaults::python-3.9.18-h123456_0     <- initial install
+    //   ...
+    //   -defaults::python-3.9.18-h123456_0     <- removed during upgrade
+    //   +defaults::python-3.9.21-h789abc_0     <- current version (we want this)
+    let matching_lines: Vec<&str> = history_contents
         .lines()
-        .filter(|l| l.contains(&package_entry))
-    {
-        // Sample entry in the history file
-        // +conda-forge/osx-arm64::psutil-5.9.8-py312he37b823_0
-        // +conda-forge/osx-arm64::python-3.12.2-hdf0ec26_0_cpython
-        // +conda-forge/osx-arm64::python_abi-3.12-4_cp312
-        let regex = get_package_version_history_regex(name);
-        if let Some(captures) = regex.captures(line) {
-            if let Some(version) = captures.get(1) {
-                if let Some(hash) = captures.get(2) {
-                    let package_path = format!(
-                        "{}-{}-{}.json",
-                        name.to_name(),
-                        version.as_str(),
-                        hash.as_str()
-                    );
-                    let package_path = path.join(package_path);
-                    let mut arch: Option<Architecture> = None;
-                    // Sample contents
-                    // {
-                    //   "build": "h966fe2a_2",
-                    //   "build_number": 2,
-                    //   "channel": "https://repo.anaconda.com/pkgs/main/win-64",
-                    //   "constrains": [],
-                    // }
-                    // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
-                    // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
-                    if let Ok(contents) = read_to_string(&package_path) {
-                        if let Ok(js) = serde_json::from_str::<CondaMetaPackageStructure>(&contents)
-                        {
-                            if let Some(channel) = js.channel {
-                                if channel.ends_with("64") {
-                                    arch = Some(Architecture::X64);
-                                } else if channel.ends_with("32") {
-                                    arch = Some(Architecture::X86);
-                                }
+        .filter(|l| l.starts_with('+') && l.contains(&package_entry))
+        .collect();
+
+    // Get the last matching line (most recent installation)
+    let line = matching_lines.last()?;
+
+    // Sample entry in the history file
+    // +conda-forge/osx-arm64::psutil-5.9.8-py312he37b823_0
+    // +conda-forge/osx-arm64::python-3.12.2-hdf0ec26_0_cpython
+    // +conda-forge/osx-arm64::python_abi-3.12-4_cp312
+    let regex = get_package_version_history_regex(name);
+    if let Some(captures) = regex.captures(line) {
+        if let Some(version) = captures.get(1) {
+            if let Some(hash) = captures.get(2) {
+                let package_path = format!(
+                    "{}-{}-{}.json",
+                    name.to_name(),
+                    version.as_str(),
+                    hash.as_str()
+                );
+                let package_path = path.join(package_path);
+                let mut arch: Option<Architecture> = None;
+                // Sample contents
+                // {
+                //   "build": "h966fe2a_2",
+                //   "build_number": 2,
+                //   "channel": "https://repo.anaconda.com/pkgs/main/win-64",
+                //   "constrains": [],
+                // }
+                // 32bit channel is https://repo.anaconda.com/pkgs/main/win-32/
+                // 64bit channel is "channel": "https://repo.anaconda.com/pkgs/main/osx-arm64",
+                if let Ok(contents) = read_to_string(&package_path) {
+                    if let Ok(js) = serde_json::from_str::<CondaMetaPackageStructure>(&contents) {
+                        if let Some(channel) = js.channel {
+                            if channel.ends_with("64") {
+                                arch = Some(Architecture::X64);
+                            } else if channel.ends_with("32") {
+                                arch = Some(Architecture::X86);
                             }
-                            if let Some(version) = js.version {
-                                return Some(CondaPackageInfo {
-                                    package: name.clone(),
-                                    path: package_path,
-                                    version,
-                                    arch,
-                                });
-                            } else {
-                                warn!(
-                                    "Unable to find version for package {} in {:?}",
-                                    name, package_path
-                                );
-                            }
+                        }
+                        if let Some(version) = js.version {
+                            return Some(CondaPackageInfo {
+                                package: name.clone(),
+                                path: package_path,
+                                version,
+                                arch,
+                            });
+                        } else {
+                            warn!(
+                                "Unable to find version for package {} in {:?}",
+                                name, package_path
+                            );
                         }
                     }
                 }
