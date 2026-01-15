@@ -3,15 +3,97 @@
 
 use std::{
     env,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR},
 };
 
-// Normalizes the case of a path on Windows without resolving junctions/symlinks.
-// Uses GetLongPathNameW which normalizes case but preserves junction paths.
-// For unix, this is a noop.
-// Note: On Windows, case normalization only works for existing paths. For non-existent
-// paths, the function falls back to the absolute path without case normalization.
-// See: https://github.com/microsoft/python-environment-tools/issues/186
+/// Strips trailing path separators from a path, preserving root paths.
+///
+/// This function removes trailing `/` or `\` from paths while ensuring that root paths
+/// like `/` on Unix or `C:\` on Windows are preserved.
+///
+/// # Examples
+/// - `/home/user/` → `/home/user`
+/// - `C:\Users\` → `C:\Users`
+/// - `/` → `/` (preserved)
+/// - `C:\` → `C:\` (preserved)
+///
+/// # Use Cases
+/// Use this when path data comes from external sources that may include trailing separators:
+/// - Windows Registry entries (e.g., `C:\...\x64\`)
+/// - Configuration files (environments.txt, .condarc)
+/// - Environment variables
+///
+/// # Related
+/// - `norm_case()` - Full path normalization (includes trailing separator stripping on Windows)
+pub fn strip_trailing_separator<P: AsRef<Path>>(path: P) -> PathBuf {
+    let path_str = path.as_ref().to_string_lossy();
+
+    #[cfg(windows)]
+    {
+        // On Windows, preserve root paths like "C:\"
+        let mut result = path_str.to_string();
+        while result.len() > 3 && (result.ends_with('\\') || result.ends_with('/')) {
+            result.pop();
+        }
+        PathBuf::from(result)
+    }
+
+    #[cfg(unix)]
+    {
+        // On Unix, preserve the root "/"
+        let mut result = path_str.to_string();
+        while result.len() > 1 && result.ends_with(MAIN_SEPARATOR) {
+            result.pop();
+        }
+        PathBuf::from(result)
+    }
+}
+
+/// Normalizes path case on Windows without resolving symlinks/junctions.
+///
+/// # Behavior by Platform
+///
+/// ## Windows
+/// - Normalizes path case to match the actual filesystem casing
+/// - Converts relative paths to absolute paths
+/// - Converts forward slashes to backslashes
+/// - Strips trailing path separators (except for root paths like `C:\`)
+/// - Removes UNC prefix (`\\?\`) if the original path didn't have it
+/// - **Does NOT resolve symlinks or junctions** (uses `GetLongPathNameW`)
+/// - For non-existent paths, returns the absolute path without case normalization
+///
+/// ## Unix
+/// - Returns the path unchanged (no-op)
+/// - Path case is significant on Unix, so no normalization is performed
+///
+/// # Use Cases
+///
+/// This function is typically used for:
+///
+/// 1. **Path Comparison/Hashing**: Ensures consistent path representation for cache keys
+///    and hash generation (e.g., Poetry environment name hashing, fs_cache)
+///
+/// 2. **Sanitizing External Path Sources**: Normalizes paths from external sources like:
+///    - Windows Registry entries (may have trailing slashes)
+///    - Configuration files (environments.txt, .condarc)
+///    - Environment variables (VIRTUAL_ENV, WORKON_HOME)
+///
+/// 3. **Storing/Displaying Paths**: Ensures paths are in a canonical form for storage
+///    and display (e.g., `PythonEnvironment.executable`, `PythonEnvironment.prefix`)
+///
+/// # Important Notes
+///
+/// - On Windows, this function uses `GetLongPathNameW` which **preserves junction paths**
+///   unlike `fs::canonicalize` which would resolve them to their target.
+/// - For symlink resolution, use `resolve_symlink()` instead.
+///
+/// # Related
+/// - `strip_trailing_separator()` - Just removes trailing separators
+/// - `resolve_symlink()` - Resolves symlinks to their target
+/// - `expand_path()` - Expands `~` and environment variables
+///
+/// See: <https://github.com/microsoft/python-environment-tools/issues/186>
+/// See: <https://github.com/microsoft/python-environment-tools/issues/278>
 pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
     // On unix do not use canonicalize, results in weird issues with homebrew paths
     // Even readlink does the same thing
@@ -113,8 +195,23 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(result_str))
 }
 
-// Resolves symlinks to the real file.
-// If the real file == exe, then it is not a symlink.
+/// Resolves a symlink to its real file path.
+///
+/// Returns `None` if the path is not a symlink or cannot be resolved.
+/// If the real file equals the input, returns `None` (the path is not a symlink).
+///
+/// # Filtering
+/// This function only resolves symlinks for Python and Conda related executables:
+/// - Files starting with `python` or `conda` (e.g., `python3.12`, `conda`)
+/// - Excludes files ending with `-config` or `-build` (e.g., `python3-config`)
+///
+/// # Use Cases
+/// - Identifying the actual Python executable behind symbolic links
+/// - Homebrew Python symlinks: `/opt/homebrew/bin/python3.12` → actual Cellar path
+/// - Tracking all symlink variants of a Python installation
+///
+/// # Related
+/// - `norm_case()` - Normalizes path case without resolving symlinks
 pub fn resolve_symlink<T: AsRef<Path>>(exe: &T) -> Option<PathBuf> {
     let name = exe.as_ref().file_name()?.to_string_lossy();
     // In bin directory of homebrew, we have files like python-build, python-config, python3-config
@@ -143,6 +240,28 @@ pub fn resolve_symlink<T: AsRef<Path>>(exe: &T) -> Option<PathBuf> {
     }
 }
 
+/// Expands `~` (home directory) and environment variables in a path.
+///
+/// This function handles:
+/// - `~` prefix: Expands to the user's home directory
+/// - `${USERNAME}`: Expands to the current username
+/// - `${HOME}`: Expands to the home directory
+///
+/// # Examples
+/// - `~/envs` → `/home/user/envs`
+/// - `${HOME}/.conda` → `/home/user/.conda`
+///
+/// # Environment Variables
+/// - On Unix: Uses `$HOME` for home directory, `$USER` for username
+/// - On Windows: Uses `%USERPROFILE%` for home directory, `%USERNAME%` for username
+///
+/// # Use Cases
+/// Used primarily for expanding paths from conda rc files which support
+/// [environment variable expansion](https://docs.conda.io/projects/conda/en/23.1.x/user-guide/configuration/use-condarc.html#expansion-of-environment-variables).
+///
+/// # Related
+/// - `norm_case()` - Normalizes path case
+/// - `strip_trailing_separator()` - Removes trailing path separators
 pub fn expand_path(path: PathBuf) -> PathBuf {
     if path.starts_with("~") {
         if let Some(ref home) = get_user_home() {
@@ -185,6 +304,57 @@ fn get_user_home() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ==================== strip_trailing_separator tests ====================
+
+    #[test]
+    fn test_strip_trailing_separator_no_trailing() {
+        // Paths without trailing separators should remain unchanged
+        assert_eq!(
+            strip_trailing_separator("/home/user"),
+            PathBuf::from("/home/user")
+        );
+        assert_eq!(
+            strip_trailing_separator("/home/user/envs"),
+            PathBuf::from("/home/user/envs")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_strip_trailing_separator_unix() {
+        // Strip trailing slash
+        assert_eq!(
+            strip_trailing_separator("/home/user/"),
+            PathBuf::from("/home/user")
+        );
+        // Multiple trailing slashes
+        assert_eq!(
+            strip_trailing_separator("/home/user///"),
+            PathBuf::from("/home/user")
+        );
+        // Root path should be preserved
+        assert_eq!(strip_trailing_separator("/"), PathBuf::from("/"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_strip_trailing_separator_windows() {
+        // Strip trailing backslash
+        assert_eq!(
+            strip_trailing_separator("C:\\Users\\"),
+            PathBuf::from("C:\\Users")
+        );
+        // Strip trailing forward slash (also valid on Windows)
+        assert_eq!(
+            strip_trailing_separator("C:\\Users/"),
+            PathBuf::from("C:\\Users")
+        );
+        // Root path should be preserved
+        assert_eq!(strip_trailing_separator("C:\\"), PathBuf::from("C:\\"));
+    }
+
+    // ==================== norm_case tests ====================
 
     #[test]
     #[cfg(unix)]
