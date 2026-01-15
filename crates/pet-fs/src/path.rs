@@ -9,6 +9,8 @@ use std::{
 // Normalizes the case of a path on Windows without resolving junctions/symlinks.
 // Uses GetLongPathNameW which normalizes case but preserves junction paths.
 // For unix, this is a noop.
+// Note: On Windows, case normalization only works for existing paths. For non-existent
+// paths, the function falls back to the absolute path without case normalization.
 // See: https://github.com/microsoft/python-environment-tools/issues/186
 pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
     // On unix do not use canonicalize, results in weird issues with homebrew paths
@@ -29,21 +31,31 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
             path.as_ref().to_path_buf()
         };
 
-        // Use GetLongPathNameW to normalize case without resolving junctions
-        normalize_case_windows(&absolute_path).unwrap_or_else(|| path.as_ref().to_path_buf())
+        // Use GetLongPathNameW to normalize case without resolving junctions.
+        // If normalization fails, fall back to the computed absolute path to keep behavior consistent.
+        normalize_case_windows(&absolute_path).unwrap_or(absolute_path)
     }
 }
 
 /// Windows-specific path case normalization using GetLongPathNameW.
 /// This normalizes the case of path components but does NOT resolve junctions or symlinks.
+/// Note: GetLongPathNameW requires the path to exist on the filesystem to normalize it.
+/// For non-existent paths, it will fail and this function returns None.
+/// Also note: Converting paths to strings via to_string_lossy() may lose information
+/// for paths with invalid UTF-8 sequences (replaced with U+FFFD), though Windows paths
+/// are typically valid Unicode.
 #[cfg(windows)]
 fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
     use std::ffi::OsString;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use windows_sys::Win32::Storage::FileSystem::GetLongPathNameW;
 
+    // Check if original path has UNC prefix before normalization
+    let original_path_str = path.to_string_lossy();
+    let original_has_unc = original_path_str.starts_with(r"\\?\");
+
     // Normalize forward slashes to backslashes (canonicalize did this)
-    let path_str = path.to_string_lossy().replace('/', "\\");
+    let path_str = original_path_str.replace('/', "\\");
     let normalized_path = PathBuf::from(&path_str);
 
     // Convert path to wide string (UTF-16) with null terminator
@@ -57,7 +69,7 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
     let required_len = unsafe { GetLongPathNameW(wide_path.as_ptr(), std::ptr::null_mut(), 0) };
 
     if required_len == 0 {
-        // GetLongPathNameW failed, return None
+        // GetLongPathNameW failed (path likely doesn't exist), return None
         return None;
     }
 
@@ -80,15 +92,22 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
 
     // Remove UNC prefix if original path didn't have it
     // GetLongPathNameW may add \\?\ prefix in some cases
-    let original_has_unc = path_str.starts_with(r"\\?\");
     if result_str.starts_with(r"\\?\") && !original_has_unc {
         result_str = result_str.trim_start_matches(r"\\?\").to_string();
     }
 
-    // Strip trailing path separators to match canonicalize behavior
-    // (but keep the root like "C:\")
-    while result_str.len() > 3 && (result_str.ends_with('\\') || result_str.ends_with('/')) {
-        result_str.pop();
+    // Strip trailing path separators to match canonicalize behavior,
+    // but avoid stripping them from root paths (drive roots, UNC roots, network paths).
+    // We use Path::parent() to detect root paths robustly.
+    let mut current_path = PathBuf::from(&result_str);
+    while current_path.parent().is_some() {
+        let s = current_path.to_string_lossy();
+        if s.ends_with('\\') || s.ends_with('/') {
+            result_str.pop();
+            current_path = PathBuf::from(&result_str);
+        } else {
+            break;
+        }
     }
 
     Some(PathBuf::from(result_str))
@@ -168,11 +187,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_norm_case_returns_path_for_nonexistent() {
-        // norm_case should return the original path if it doesn't exist
+    #[cfg(unix)]
+    fn test_norm_case_returns_path_for_nonexistent_unix() {
+        // On Unix, norm_case returns the path unchanged (noop)
         let nonexistent = PathBuf::from("/this/path/does/not/exist/anywhere");
         let result = norm_case(&nonexistent);
         assert_eq!(result, nonexistent);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_returns_absolute_for_nonexistent_windows() {
+        // On Windows, norm_case returns an absolute path even for non-existent paths
+        // (falls back to absolute_path when GetLongPathNameW fails)
+        let nonexistent = PathBuf::from("C:\\this\\path\\does\\not\\exist\\anywhere");
+        let result = norm_case(&nonexistent);
+        assert!(result.is_absolute(), "Result should be absolute path");
+        // The path should be preserved (just made absolute if it wasn't)
+        assert!(
+            result
+                .to_string_lossy()
+                .to_lowercase()
+                .contains("does\\not\\exist"),
+            "Path components should be preserved"
+        );
     }
 
     #[test]
@@ -336,6 +374,19 @@ mod tests {
         assert!(
             result.to_string_lossy().contains('\\'),
             "Should have backslashes, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_preserves_unc_prefix() {
+        // If the original path has a UNC prefix, it should be preserved
+        let unc_path = PathBuf::from(r"\\?\C:\Windows");
+        let result = norm_case(&unc_path);
+        assert!(
+            result.to_string_lossy().starts_with(r"\\?\"),
+            "Should preserve UNC prefix when present in original, got: {:?}",
             result
         );
     }
