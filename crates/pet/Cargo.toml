@@ -11,6 +11,9 @@ pet-windows-registry = { path = "../pet-windows-registry" }
 [target.'cfg(target_os = "windows")'.dependencies]
 msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
 
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
+
 [target.'cfg(unix)'.dependencies]
 pet-homebrew = { path = "../pet-homebrew" }
 
