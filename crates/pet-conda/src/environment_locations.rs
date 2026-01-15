@@ -197,6 +197,23 @@ pub fn get_environments(conda_dir: &Path) -> Vec<PathBuf> {
         }
     } else if is_conda_env(conda_dir) {
         envs.push(conda_dir.to_path_buf());
+        // If this is a conda environment under an `envs` folder, check if the grandparent
+        // is the conda install directory (base env) and include it as well.
+        // E.g. if conda_dir is `/opt/homebrew/Caskroom/miniforge/base/envs/test`,
+        // then the grandparent `/opt/homebrew/Caskroom/miniforge/base` is the base env.
+        // This ensures the base conda environment is discovered when only child envs are
+        // listed in environments.txt (see https://github.com/microsoft/python-environment-tools/issues/236)
+        if let Some(parent) = conda_dir.parent() {
+            if parent.file_name().map(|n| n == "envs").unwrap_or(false) {
+                if let Some(grandparent) = parent.parent() {
+                    if is_conda_install(grandparent) && !envs.contains(&grandparent.to_path_buf()) {
+                        // Recursively get environments from the conda install directory
+                        // This will add the base env and any other sibling envs
+                        envs.append(&mut get_environments(grandparent));
+                    }
+                }
+            }
+        }
     } else if conda_dir.join("envs").exists() {
         // This could be a directory where conda environments are stored.
         // I.e. its not necessarily the root conda install directory.
