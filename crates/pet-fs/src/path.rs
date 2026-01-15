@@ -83,9 +83,7 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
 
     // Strip trailing path separators to match canonicalize behavior
     // (but keep the root like "C:\")
-    while result_str.len() > 3
-        && (result_str.ends_with('\\') || result_str.ends_with('/'))
-    {
+    while result_str.len() > 3 && (result_str.ends_with('\\') || result_str.ends_with('/')) {
         result_str.pop();
     }
 
