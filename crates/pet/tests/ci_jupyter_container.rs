@@ -99,13 +99,7 @@ fn verify_python_in_jupyter_contaner() {
         ..Default::default()
     };
 
-    for env in [
-        conda,
-        current_python,
-        usr_bin_python,
-    ]
-    .iter()
-    {
+    for env in [conda, current_python, usr_bin_python].iter() {
         let python_env = environments
             .iter()
             .find(|e| e.executable == env.executable)
