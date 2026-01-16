@@ -171,11 +171,7 @@ fn create_unknown_env(
     // that redirect to the real Python installation.
     let mut symlinks = resolved_env.symlinks.clone().unwrap_or_default();
     if let Some(additional_symlinks) = find_symlinks(&resolved_env.executable) {
-        for symlink in additional_symlinks {
-            if !symlinks.contains(&symlink) {
-                symlinks.push(symlink);
-            }
-        }
+        symlinks.extend(additional_symlinks);
     }
     symlinks.sort();
     symlinks.dedup();
