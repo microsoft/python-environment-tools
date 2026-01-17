@@ -165,10 +165,19 @@ fn create_unknown_env(
     resolved_env: ResolvedPythonEnv,
     fallback_category: Option<PythonEnvironmentKind>,
 ) -> PythonEnvironment {
-    // Find all the python exes in the same bin directory.
+    // Combine symlinks from resolved_env (which includes the original executable path
+    // and the resolved path) with any additional symlinks found in the bin directory.
+    // This is important on Windows where scoop and similar tools use shim executables
+    // that redirect to the real Python installation.
+    let mut symlinks = resolved_env.symlinks.clone().unwrap_or_default();
+    if let Some(additional_symlinks) = find_symlinks(&resolved_env.executable) {
+        symlinks.extend(additional_symlinks);
+    }
+    symlinks.sort();
+    symlinks.dedup();
 
     PythonEnvironmentBuilder::new(fallback_category)
-        .symlinks(find_symlinks(&resolved_env.executable))
+        .symlinks(Some(symlinks))
         .executable(Some(resolved_env.executable))
         .prefix(Some(resolved_env.prefix))
         .arch(Some(if resolved_env.is64_bit {
