@@ -14,7 +14,11 @@ use std::{
 
 use crate::env::ResolvedPythonEnv;
 
-type FilePathWithMTimeCTime = (PathBuf, SystemTime, SystemTime);
+/// Represents a file path with its modification time and optional creation time.
+/// Creation time (ctime) is optional because many Linux filesystems (ext4, etc.)
+/// don't support file creation time, causing metadata.created() to return Err.
+/// See: https://github.com/microsoft/python-environment-tools/issues/223
+type FilePathWithMTimeCTime = (PathBuf, SystemTime, Option<SystemTime>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +28,9 @@ struct CacheEntry {
 }
 
 pub fn generate_cache_file(cache_directory: &Path, executable: &PathBuf) -> PathBuf {
-    cache_directory.join(format!("{}.3.json", generate_hash(executable)))
+    // Version 4: Changed ctime from required to optional for Linux compatibility
+    // See: https://github.com/microsoft/python-environment-tools/issues/223
+    cache_directory.join(format!("{}.4.json", generate_hash(executable)))
 }
 
 pub fn delete_cache_file(cache_directory: &Path, executable: &PathBuf) {
@@ -61,8 +67,13 @@ pub fn get_cache_from_file(
     // Check if any of the exes have changed since we last cached them.
     let cache_is_valid = cache.symlinks.iter().all(|symlink| {
         if let Ok(metadata) = symlink.0.metadata() {
-            metadata.modified().ok() == Some(symlink.1)
-                && metadata.created().ok() == Some(symlink.2)
+            let mtime_valid = metadata.modified().ok() == Some(symlink.1);
+            // Only check ctime if we have it stored (may be None on Linux)
+            let ctime_valid = match symlink.2 {
+                Some(stored_ctime) => metadata.created().ok() == Some(stored_ctime),
+                None => true, // Can't check ctime if we don't have it
+            };
+            mtime_valid && ctime_valid
         } else {
             // File may have been deleted.
             false

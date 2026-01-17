@@ -98,7 +98,11 @@ impl CacheImpl {
     }
 }
 
-type FilePathWithMTimeCTime = (PathBuf, SystemTime, SystemTime);
+/// Represents a file path with its modification time and optional creation time.
+/// Creation time (ctime) is optional because many Linux filesystems (ext4, etc.)
+/// don't support file creation time, causing metadata.created() to return Err.
+/// See: https://github.com/microsoft/python-environment-tools/issues/223
+type FilePathWithMTimeCTime = (PathBuf, SystemTime, Option<SystemTime>);
 
 struct CacheEntryImpl {
     cache_directory: Option<PathBuf>,
@@ -120,9 +124,13 @@ impl CacheEntryImpl {
         // Check if any of the exes have changed since we last cached this.
         for symlink_info in self.symlinks.lock().unwrap().iter() {
             if let Ok(metadata) = symlink_info.0.metadata() {
-                if metadata.modified().ok() != Some(symlink_info.1)
-                    || metadata.created().ok() != Some(symlink_info.2)
-                {
+                let mtime_changed = metadata.modified().ok() != Some(symlink_info.1);
+                // Only check ctime if we have it stored (may be None on Linux)
+                let ctime_changed = match symlink_info.2 {
+                    Some(stored_ctime) => metadata.created().ok() != Some(stored_ctime),
+                    None => false, // Can't check ctime if we don't have it
+                };
+                if mtime_changed || ctime_changed {
                     trace!(
                         "Symlink {:?} has changed since we last cached it. original mtime & ctime {:?}, {:?}, current mtime & ctime {:?}, {:?}",
                         symlink_info.0,
@@ -168,10 +176,10 @@ impl CacheEntry for CacheEntryImpl {
         let mut symlinks = vec![];
         for symlink in environment.symlinks.clone().unwrap_or_default().iter() {
             if let Ok(metadata) = symlink.metadata() {
-                // We only care if we have the information
-                if let (Some(modified), Some(created)) =
-                    (metadata.modified().ok(), metadata.created().ok())
-                {
+                // We require mtime, but ctime is optional (not available on all Linux filesystems)
+                // See: https://github.com/microsoft/python-environment-tools/issues/223
+                if let Ok(modified) = metadata.modified() {
+                    let created = metadata.created().ok(); // May be None on Linux
                     symlinks.push((symlink.clone(), modified, created));
                 }
             }
