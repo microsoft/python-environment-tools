@@ -35,10 +35,10 @@ lazy_static! {
         .expect("Error generating RegEx for poetry environment name pattern");
 }
 
-/// Check if a path looks like a Poetry environment by examining the directory structure
-/// Poetry environments typically have names like: {name}-{hash}-py{version}
-/// and are located in cache directories or as .venv in project directories
-fn is_poetry_environment(path: &Path) -> bool {
+/// Check if a path looks like a Poetry environment in the cache directory
+/// Poetry cache environments have names like: {name}-{hash}-py{version}
+/// and are located in cache directories containing "pypoetry/virtualenvs"
+fn is_poetry_cache_environment(path: &Path) -> bool {
     // Check if the environment is in a directory that looks like Poetry's virtualenvs cache
     // Common patterns:
     // - Linux: ~/.cache/pypoetry/virtualenvs/
@@ -55,6 +55,56 @@ fn is_poetry_environment(path: &Path) -> bool {
             // The hash is 8 characters of base64url encoding
             if POETRY_ENV_NAME_PATTERN.is_match(dir_name) {
                 return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a .venv directory is an in-project Poetry environment
+/// This is for the case when virtualenvs.in-project = true is set.
+/// We check if the parent directory has Poetry configuration files.
+fn is_in_project_poetry_environment(path: &Path) -> bool {
+    // Check if this is a .venv directory
+    let dir_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    if dir_name != ".venv" {
+        return false;
+    }
+
+    // Check if the parent directory has Poetry configuration
+    if let Some(parent) = path.parent() {
+        // Check for poetry.toml - a local Poetry configuration file
+        // Its presence indicates this project uses Poetry
+        let poetry_toml = parent.join("poetry.toml");
+        if poetry_toml.is_file() {
+            trace!(
+                "Found in-project Poetry environment: {:?} with poetry.toml at {:?}",
+                path,
+                poetry_toml
+            );
+            return true;
+        }
+
+        // Check if pyproject.toml contains Poetry configuration
+        let pyproject_toml = parent.join("pyproject.toml");
+        if pyproject_toml.is_file() {
+            if let Ok(contents) = std::fs::read_to_string(&pyproject_toml) {
+                // Look for [tool.poetry] or poetry as build backend
+                if contents.contains("[tool.poetry]")
+                    || contents.contains("poetry.core.masonry.api")
+                    || contents.contains("poetry-core")
+                {
+                    trace!(
+                        "Found in-project Poetry environment: {:?} with pyproject.toml at {:?}",
+                        path,
+                        pyproject_toml
+                    );
+                    return true;
+                }
             }
         }
     }
@@ -203,15 +253,27 @@ impl Locator for Poetry {
         // This handles cases where the environment wasn't discovered during find()
         // (e.g., workspace directories not configured, or pyproject.toml not found)
         if let Some(prefix) = &env.prefix {
-            if is_poetry_environment(prefix) {
+            if is_poetry_cache_environment(prefix) {
                 trace!(
-                    "Identified Poetry environment by path pattern: {:?}",
+                    "Identified Poetry environment by cache path pattern: {:?}",
                     prefix
                 );
                 return environment::create_poetry_env(
                     prefix,
                     prefix.clone(), // We don't have the project directory, use prefix
                     None,           // No manager available in this fallback case
+                );
+            }
+
+            // Check for in-project .venv Poetry environment
+            if is_in_project_poetry_environment(prefix) {
+                trace!("Identified in-project Poetry environment: {:?}", prefix);
+                // For in-project .venv, the project directory is the parent
+                let project_dir = prefix.parent().unwrap_or(prefix).to_path_buf();
+                return environment::create_poetry_env(
+                    prefix,
+                    project_dir,
+                    None, // No manager available in this fallback case
                 );
             }
         }
