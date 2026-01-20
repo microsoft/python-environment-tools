@@ -67,7 +67,10 @@ fn is_poetry_cache_environment(path: &Path) -> bool {
 /// We check if the parent directory has a pyproject.toml with Poetry configuration.
 fn is_in_project_poetry_environment(path: &Path) -> bool {
     // Check if this is a .venv directory
-    let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let dir_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
     if dir_name != ".venv" {
         return false;
     }
@@ -252,10 +255,7 @@ impl Locator for Poetry {
 
             // Check for in-project .venv Poetry environment
             if is_in_project_poetry_environment(prefix) {
-                trace!(
-                    "Identified in-project Poetry environment: {:?}",
-                    prefix
-                );
+                trace!("Identified in-project Poetry environment: {:?}", prefix);
                 // For in-project .venv, the project directory is the parent
                 let project_dir = prefix.parent().unwrap_or(prefix).to_path_buf();
                 return environment::create_poetry_env(
