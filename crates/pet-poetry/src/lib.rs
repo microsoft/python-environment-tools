@@ -64,7 +64,7 @@ fn is_poetry_cache_environment(path: &Path) -> bool {
 
 /// Check if a .venv directory is an in-project Poetry environment
 /// This is for the case when virtualenvs.in-project = true is set.
-/// We check if the parent directory has a pyproject.toml with Poetry configuration.
+/// We check if the parent directory has Poetry configuration files.
 fn is_in_project_poetry_environment(path: &Path) -> bool {
     // Check if this is a .venv directory
     let dir_name = path
@@ -75,16 +75,28 @@ fn is_in_project_poetry_environment(path: &Path) -> bool {
         return false;
     }
 
-    // Check if the parent directory has a pyproject.toml with Poetry configuration
+    // Check if the parent directory has Poetry configuration
     if let Some(parent) = path.parent() {
+        // Check for poetry.toml - a local Poetry configuration file
+        // Its presence indicates this project uses Poetry
+        let poetry_toml = parent.join("poetry.toml");
+        if poetry_toml.is_file() {
+            trace!(
+                "Found in-project Poetry environment: {:?} with poetry.toml at {:?}",
+                path,
+                poetry_toml
+            );
+            return true;
+        }
+
+        // Check if pyproject.toml contains Poetry configuration
         let pyproject_toml = parent.join("pyproject.toml");
         if pyproject_toml.is_file() {
-            // Check if pyproject.toml contains Poetry configuration
             if let Ok(contents) = std::fs::read_to_string(&pyproject_toml) {
-                // Look for [tool.poetry] or [project] with poetry as build backend
+                // Look for [tool.poetry] or poetry as build backend
                 if contents.contains("[tool.poetry]")
-                    || (contents.contains("poetry.core.masonry.api")
-                        || contents.contains("poetry-core"))
+                    || contents.contains("poetry.core.masonry.api")
+                    || contents.contains("poetry-core")
                 {
                     trace!(
                         "Found in-project Poetry environment: {:?} with pyproject.toml at {:?}",

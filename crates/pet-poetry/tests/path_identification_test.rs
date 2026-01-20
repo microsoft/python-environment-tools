@@ -12,8 +12,9 @@
 //! The fix adds fallback path-based detection that checks:
 //! 1. If the environment path matches Poetry's cache naming pattern
 //!    ({name}-{8-char-hash}-py{version}) in "pypoetry/virtualenvs"
-//! 2. If the environment is an in-project .venv with a pyproject.toml
-//!    containing Poetry configuration
+//! 2. If the environment is an in-project .venv with Poetry configuration:
+//!    - poetry.toml exists in the parent directory, OR
+//!    - pyproject.toml contains [tool.poetry] or poetry-core build backend
 
 use std::fs;
 use std::path::PathBuf;
@@ -50,8 +51,15 @@ mod tests {
             return false;
         }
 
-        // Check if the parent directory has a pyproject.toml with Poetry configuration
+        // Check if the parent directory has Poetry configuration
         if let Some(parent) = path.parent() {
+            // Check for poetry.toml - a local Poetry configuration file
+            let poetry_toml = parent.join("poetry.toml");
+            if poetry_toml.is_file() {
+                return true;
+            }
+
+            // Check if pyproject.toml contains Poetry configuration
             let pyproject_toml = parent.join("pyproject.toml");
             if pyproject_toml.is_file() {
                 if let Ok(contents) = std::fs::read_to_string(&pyproject_toml) {
@@ -217,16 +225,48 @@ build-backend = "setuptools.build_meta"
     }
 
     #[test]
-    fn test_in_project_env_no_pyproject_rejected() {
+    fn test_in_project_env_no_poetry_config_rejected() {
         let temp_dir = tempfile::tempdir().unwrap();
         let project_dir = temp_dir.path();
         let venv_dir = project_dir.join(".venv");
 
-        // Create .venv directory without pyproject.toml
+        // Create .venv directory without any Poetry configuration files
         fs::create_dir(&venv_dir).unwrap();
 
         // Test that the .venv is NOT recognized as a Poetry environment
         assert!(!test_in_project_poetry_env(&venv_dir));
+    }
+
+    #[test]
+    fn test_in_project_poetry_env_with_poetry_toml() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project_dir = temp_dir.path();
+        let venv_dir = project_dir.join(".venv");
+
+        // Create .venv directory
+        fs::create_dir(&venv_dir).unwrap();
+
+        // Create poetry.toml with in-project setting (no pyproject.toml with Poetry config)
+        let poetry_toml_content = r#"
+[virtualenvs]
+in-project = true
+"#;
+        fs::write(project_dir.join("poetry.toml"), poetry_toml_content).unwrap();
+
+        // Create minimal pyproject.toml without Poetry-specific config
+        let pyproject_content = r#"
+[project]
+name = "my-project"
+version = "0.1.0"
+
+[build-system]
+requires = ["setuptools>=45"]
+build-backend = "setuptools.build_meta"
+"#;
+        fs::write(project_dir.join("pyproject.toml"), pyproject_content).unwrap();
+
+        // Test that the .venv is recognized as a Poetry environment due to poetry.toml
+        assert!(test_in_project_poetry_env(&venv_dir));
     }
 
     #[test]
