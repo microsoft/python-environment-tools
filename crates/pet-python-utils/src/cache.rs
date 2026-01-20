@@ -161,10 +161,11 @@ impl CacheEntry for CacheEntryImpl {
         }
 
         if let Some(ref cache_directory) = self.cache_directory {
-            let (env, symlinks) = get_cache_from_file(cache_directory, &self.executable)?;
+            let (env, mut symlinks) = get_cache_from_file(cache_directory, &self.executable)?;
             self.envoronment.lock().unwrap().replace(env.clone());
-            self.symlinks.lock().unwrap().clear();
-            self.symlinks.lock().unwrap().append(&mut symlinks.clone());
+            let mut locked_symlinks = self.symlinks.lock().unwrap();
+            locked_symlinks.clear();
+            locked_symlinks.append(&mut symlinks);
             Some(env)
         } else {
             None
@@ -188,8 +189,11 @@ impl CacheEntry for CacheEntryImpl {
         symlinks.sort();
         symlinks.dedup();
 
-        self.symlinks.lock().unwrap().clear();
-        self.symlinks.lock().unwrap().append(&mut symlinks.clone());
+        {
+            let mut locked_symlinks = self.symlinks.lock().unwrap();
+            locked_symlinks.clear();
+            locked_symlinks.append(&mut symlinks.clone());
+        }
         self.envoronment
             .lock()
             .unwrap()
