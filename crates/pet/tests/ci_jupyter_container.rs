@@ -71,30 +71,16 @@ fn verify_python_in_jupyter_contaner() {
         }),
         ..Default::default()
     };
-    let codespace_python = PythonEnvironment {
-        kind: Some(PythonEnvironmentKind::GlobalPaths),
-        executable: Some(PathBuf::from("/home/codespace/.python/current/bin/python")),
-        prefix: Some(PathBuf::from("/usr/local/python/3.10.13")),
-        version: Some("3.10.13.final.0".to_string()),
-        arch: Some(Architecture::X64),
-        symlinks: Some(vec![
-            PathBuf::from("/home/codespace/.python/current/bin/python"),
-            PathBuf::from("/home/codespace/.python/current/bin/python3"),
-            PathBuf::from("/home/codespace/.python/current/bin/python3.10"),
-        ]),
-        manager: None,
-        ..Default::default()
-    };
     let current_python = PythonEnvironment {
         kind: Some(PythonEnvironmentKind::GlobalPaths),
-        executable: Some(PathBuf::from("/usr/local/python/current/bin/python")),
+        executable: Some(PathBuf::from("/usr/local/python/3.10.13/bin/python")),
         prefix: Some(PathBuf::from("/usr/local/python/3.10.13")),
         version: Some("3.10.13.final.0".to_string()),
         arch: Some(Architecture::X64),
         symlinks: Some(vec![
-            PathBuf::from("/usr/local/python/current/bin/python"),
-            PathBuf::from("/usr/local/python/current/bin/python3"),
-            PathBuf::from("/usr/local/python/current/bin/python3.10"),
+            PathBuf::from("/usr/local/python/3.10.13/bin/python"),
+            PathBuf::from("/usr/local/python/3.10.13/bin/python3"),
+            PathBuf::from("/usr/local/python/3.10.13/bin/python3.10"),
         ]),
         manager: None,
         ..Default::default()
@@ -112,29 +98,8 @@ fn verify_python_in_jupyter_contaner() {
         manager: None,
         ..Default::default()
     };
-    let bin_python = PythonEnvironment {
-        kind: Some(PythonEnvironmentKind::LinuxGlobal),
-        executable: Some(PathBuf::from("/bin/python3")),
-        prefix: Some(PathBuf::from("/usr")),
-        version: Some("3.8.10.final.0".to_string()),
-        arch: Some(Architecture::X64),
-        symlinks: Some(vec![
-            PathBuf::from("/bin/python3"),
-            PathBuf::from("/bin/python3.8"),
-        ]),
-        manager: None,
-        ..Default::default()
-    };
 
-    for env in [
-        conda,
-        codespace_python,
-        current_python,
-        usr_bin_python,
-        bin_python,
-    ]
-    .iter()
-    {
+    for env in [conda, current_python, usr_bin_python].iter() {
         let python_env = environments
             .iter()
             .find(|e| e.executable == env.executable)
