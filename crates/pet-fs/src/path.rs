@@ -30,9 +30,11 @@ pub fn strip_trailing_separator<P: AsRef<Path>>(path: P) -> PathBuf {
 
     #[cfg(windows)]
     {
-        // On Windows, preserve root paths like "C:\"
+        // On Windows, preserve root paths (e.g. "C:\", "\\server\", "\\?\C:\")
         let mut result = path_str.to_string();
-        while result.len() > 3 && (result.ends_with('\\') || result.ends_with('/')) {
+        while (result.ends_with('\\') || result.ends_with('/'))
+            && Path::new(&result).parent().is_some()
+        {
             result.pop();
         }
         PathBuf::from(result)
@@ -352,6 +354,31 @@ mod tests {
         );
         // Root path should be preserved
         assert_eq!(strip_trailing_separator("C:\\"), PathBuf::from("C:\\"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_strip_trailing_separator_windows_unc_paths() {
+        // UNC path with trailing separator - should strip it
+        assert_eq!(
+            strip_trailing_separator("\\\\server\\share\\folder\\"),
+            PathBuf::from("\\\\server\\share\\folder")
+        );
+        // UNC root path should be preserved
+        assert_eq!(
+            strip_trailing_separator("\\\\server\\share\\"),
+            PathBuf::from("\\\\server\\share\\")
+        );
+        // Extended-length path root should be preserved
+        assert_eq!(
+            strip_trailing_separator("\\\\?\\C:\\"),
+            PathBuf::from("\\\\?\\C:\\")
+        );
+        // Extended-length path with subfolder - should strip trailing separator
+        assert_eq!(
+            strip_trailing_separator("\\\\?\\C:\\Users\\"),
+            PathBuf::from("\\\\?\\C:\\Users")
+        );
     }
 
     // ==================== norm_case tests ====================
