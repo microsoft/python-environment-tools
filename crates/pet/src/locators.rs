@@ -105,10 +105,7 @@ pub fn identify_python_environment_using_locators(
         "Identifying Python environment using locators: {:?}",
         executable
     );
-    if let Some(env) = locators.iter().fold(
-        None,
-        |e, loc| if e.is_some() { e } else { loc.try_from(env) },
-    ) {
+    if let Some(env) = locators.iter().find_map(|loc| loc.try_from(env)) {
         return Some(env);
     }
     trace!(
@@ -121,12 +118,7 @@ pub fn identify_python_environment_using_locators(
     // We try to get the interpreter info, hoping that the real exe returned might be identifiable.
     if let Some(resolved_env) = ResolvedPythonEnv::from(&executable) {
         let env = resolved_env.to_python_env();
-        if let Some(env) =
-            locators.iter().fold(
-                None,
-                |e, loc| if e.is_some() { e } else { loc.try_from(&env) },
-            )
-        {
+        if let Some(env) = locators.iter().find_map(|loc| loc.try_from(&env)) {
             trace!("Env ({:?}) in Path resolved as {:?}", executable, env.kind);
             // TODO: Telemetry point.
             // As we had to spawn earlier.
