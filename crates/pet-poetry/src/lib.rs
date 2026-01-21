@@ -17,7 +17,7 @@ use pet_virtualenv::is_virtualenv;
 use regex::Regex;
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, RwLock},
 };
 use telemetry::report_missing_envs;
 
@@ -121,37 +121,40 @@ pub trait PoetryLocator: Send + Sync {
 }
 
 pub struct Poetry {
-    pub workspace_directories: Arc<Mutex<Vec<PathBuf>>>,
+    pub workspace_directories: Arc<RwLock<Vec<PathBuf>>>,
     pub env_vars: EnvVariables,
-    pub poetry_executable: Arc<Mutex<Option<PathBuf>>>,
-    search_result: Arc<Mutex<Option<LocatorResult>>>,
+    pub poetry_executable: Arc<RwLock<Option<PathBuf>>>,
+    search_result: Arc<RwLock<Option<LocatorResult>>>,
 }
 
 impl Poetry {
     pub fn new(environment: &dyn Environment) -> Self {
         Poetry {
-            search_result: Arc::new(Mutex::new(None)),
-            workspace_directories: Arc::new(Mutex::new(vec![])),
+            search_result: Arc::new(RwLock::new(None)),
+            workspace_directories: Arc::new(RwLock::new(vec![])),
             env_vars: EnvVariables::from(environment),
-            poetry_executable: Arc::new(Mutex::new(None)),
+            poetry_executable: Arc::new(RwLock::new(None)),
         }
     }
     fn clear(&self) {
-        self.poetry_executable.lock().unwrap().take();
-        self.search_result.lock().unwrap().take();
+        self.poetry_executable.write().unwrap().take();
+        self.search_result.write().unwrap().take();
     }
     pub fn from(environment: &dyn Environment) -> Poetry {
         Poetry::new(environment)
     }
     fn find_with_cache(&self) -> Option<LocatorResult> {
-        let mut search_result = self.search_result.lock().unwrap();
-        if let Some(result) = search_result.clone() {
-            return Some(result);
+        // First check if we have cached results
+        {
+            let search_result = self.search_result.read().unwrap();
+            if let Some(result) = search_result.clone() {
+                return Some(result);
+            }
         }
 
         // First find the manager
         let manager = manager::PoetryManager::find(
-            self.poetry_executable.lock().unwrap().clone(),
+            self.poetry_executable.read().unwrap().clone(),
             &self.env_vars,
         );
         trace!("Poetry Manager {:?}", manager);
@@ -163,12 +166,12 @@ impl Poetry {
             result.managers.push(manager.to_manager());
         }
 
-        let workspace_dirs = self.workspace_directories.lock().unwrap().clone();
+        let workspace_dirs = self.workspace_directories.read().unwrap().clone();
         let envs = list_environments(&self.env_vars, &workspace_dirs, manager).unwrap_or_default();
         result.environments.extend(envs.clone());
 
         // Having a value in the search result means that we have already searched for environments
-        search_result.replace(result.clone());
+        self.search_result.write().unwrap().replace(result.clone());
 
         if result.managers.is_empty() && result.environments.is_empty() {
             None
@@ -188,14 +191,14 @@ impl PoetryLocator for Poetry {
         let manager = PoetryManager::find(poetry_executable.clone(), &self.env_vars)?;
         let poetry_executable = manager.executable.clone();
 
-        let workspace_dirs = self.workspace_directories.lock().unwrap().clone();
+        let workspace_dirs = self.workspace_directories.read().unwrap().clone();
         let environments_using_spawn = environment_locations_spawn::list_environments(
             &poetry_executable,
             &workspace_dirs,
             &manager,
         );
 
-        let result = self.search_result.lock().unwrap().clone();
+        let result = self.search_result.read().unwrap().clone();
         let _ = report_missing_envs(
             reporter,
             &poetry_executable,
@@ -216,16 +219,14 @@ impl Locator for Poetry {
     }
     fn configure(&self, config: &Configuration) {
         if let Some(workspace_directories) = &config.workspace_directories {
-            self.workspace_directories.lock().unwrap().clear();
+            let mut ws_dirs = self.workspace_directories.write().unwrap();
+            ws_dirs.clear();
             if !workspace_directories.is_empty() {
-                self.workspace_directories
-                    .lock()
-                    .unwrap()
-                    .extend(workspace_directories.clone());
+                ws_dirs.extend(workspace_directories.clone());
             }
         }
         if let Some(exe) = &config.poetry_executable {
-            self.poetry_executable.lock().unwrap().replace(exe.clone());
+            self.poetry_executable.write().unwrap().replace(exe.clone());
         }
     }
 

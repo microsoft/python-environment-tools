@@ -14,7 +14,7 @@ use pet_core::reporter::Reporter;
 use pet_core::LocatorKind;
 use pet_core::{os_environment::Environment, Locator};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
     path.to_str().unwrap_or_default().to_string().to_lowercase()[1..]
@@ -24,30 +24,33 @@ pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
 pub struct WindowsStore {
     pub env_vars: EnvVariables,
     #[allow(dead_code)]
-    environments: Arc<Mutex<Option<Vec<PythonEnvironment>>>>,
+    environments: Arc<RwLock<Option<Vec<PythonEnvironment>>>>,
 }
 
 impl WindowsStore {
     pub fn from(environment: &dyn Environment) -> WindowsStore {
         WindowsStore {
             env_vars: EnvVariables::from(environment),
-            environments: Arc::new(Mutex::new(None)),
+            environments: Arc::new(RwLock::new(None)),
         }
     }
     #[cfg(windows)]
     fn find_with_cache(&self) -> Option<Vec<PythonEnvironment>> {
-        let mut environments = self.environments.lock().unwrap();
-        if let Some(environments) = environments.clone() {
-            return Some(environments);
+        // First check if we have cached results
+        {
+            let environments = self.environments.read().unwrap();
+            if let Some(environments) = environments.clone() {
+                return Some(environments);
+            }
         }
 
         let envs = list_store_pythons(&self.env_vars).unwrap_or_default();
-        environments.replace(envs.clone());
+        self.environments.write().unwrap().replace(envs.clone());
         Some(envs)
     }
     #[cfg(windows)]
     fn clear(&self) {
-        self.environments.lock().unwrap().take();
+        self.environments.write().unwrap().take();
     }
 }
 
