@@ -9,6 +9,7 @@ use crate::{
 use log::trace;
 use pet_fs::path::{expand_path, norm_case};
 use pet_python_utils::platform_dirs::Platformdirs;
+use rayon::prelude::*;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -43,19 +44,11 @@ pub fn get_conda_environment_paths(
     env_paths.dedup();
     // For each env, check if we have a conda install directory in them and
     // & then iterate through the list of envs in the envs directory.
-    // let env_paths = vec![];
-    let mut threads = vec![];
-    for path in env_paths.iter().filter(|f| f.exists()) {
-        let path = path.clone();
-        threads.push(thread::spawn(move || get_environments(&path)));
-    }
-
-    let mut result = vec![];
-    for thread in threads {
-        if let Ok(envs) = thread.join() {
-            result.extend(envs);
-        }
-    }
+    let mut result: Vec<PathBuf> = env_paths
+        .par_iter()
+        .filter(|f| f.exists())
+        .flat_map(|path| get_environments(path))
+        .collect();
 
     result.sort();
     result.dedup();

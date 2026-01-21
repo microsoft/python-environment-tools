@@ -4,6 +4,7 @@
 use lazy_static::lazy_static;
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::executable::find_executables;
+use rayon::prelude::*;
 use regex::Regex;
 use std::{
     fs,
@@ -30,32 +31,26 @@ pub fn get_known_symlinks(
     // Go through all the exes in all of the above bin directories and verify we have a list of all of them.
     // They too could be symlinks, e.g. we could have `/opt/homebrew/bin/python3` & also `/opt/homebrew/bin/python`
     // And possible they are all symlnks to the same exe.
-    let threads = symlinks
-        .iter()
-        .map(|symlink| {
-            let symlink = symlink.clone();
-            let known_symlinks = symlinks.clone();
-            std::thread::spawn(move || {
-                if let Some(bin) = symlink.parent() {
-                    let mut symlinks = vec![];
-                    for possible_symlink in find_executables(bin) {
-                        if let Some(symlink) = resolve_symlink(&possible_symlink) {
-                            if known_symlinks.contains(&symlink) {
-                                symlinks.push(possible_symlink);
-                            }
+    let known_symlinks = symlinks.clone();
+    let other_symlinks: Vec<PathBuf> = symlinks
+        .par_iter()
+        .flat_map(|symlink| {
+            if let Some(bin) = symlink.parent() {
+                find_executables(bin)
+                    .into_iter()
+                    .filter(|possible_symlink| {
+                        if let Some(resolved) = resolve_symlink(possible_symlink) {
+                            known_symlinks.contains(&resolved)
+                        } else {
+                            false
                         }
-                    }
-                    symlinks
-                } else {
-                    vec![]
-                }
-            })
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![]
+            }
         })
-        .collect::<Vec<_>>();
-    let other_symlinks = threads
-        .into_iter()
-        .flat_map(|t| t.join().unwrap())
-        .collect::<Vec<_>>();
+        .collect();
     symlinks.extend(other_symlinks);
 
     symlinks.sort();
