@@ -125,7 +125,7 @@ pub fn find_and_report_envs(
                     global_env_search_paths
                 );
                 find_python_environments(
-                    global_env_search_paths.clone(),
+                    &global_env_search_paths,
                     reporter,
                     locators,
                     false,
@@ -139,14 +139,17 @@ pub fn find_and_report_envs(
                 .insert("Path", start.elapsed());
         });
         // Step 3: Search in some global locations for virtual envs.
-        let environment_directories_search = environment_directories.clone();
-        s.spawn(|| {
+        // Convert to Arc<[PathBuf]> for O(1) cloning in thread spawns
+        let environment_directories: Arc<[PathBuf]> = environment_directories.into();
+        let environment_directories_for_step3 = environment_directories.clone();
+        let summary_for_step3 = summary.clone();
+        s.spawn(move || {
             let start = std::time::Instant::now();
             if search_global {
                 let mut possible_environments = vec![];
 
                 // These are directories that contain environments, hence enumerate these directories.
-                for directory in environment_directories_search {
+                for directory in environment_directories_for_step3.iter() {
                     if let Ok(reader) = fs::read_dir(directory) {
                         possible_environments.append(
                             &mut reader
@@ -177,14 +180,14 @@ pub fn find_and_report_envs(
                 );
 
                 find_python_environments(
-                    search_paths,
+                    &search_paths,
                     reporter,
                     locators,
                     false,
                     &global_env_search_paths,
                 );
             }
-            summary
+            summary_for_step3
                 .lock()
                 .unwrap()
                 .breakdown
@@ -197,7 +200,8 @@ pub fn find_and_report_envs(
         // This list of folders generally map to workspace folders
         // & users can have a lot of workspace folders and can have a large number fo files/directories
         // that could the discovery.
-        s.spawn(|| {
+        let summary_for_step4 = summary.clone();
+        s.spawn(move || {
             let start = std::time::Instant::now();
             thread::scope(|s| {
                 // Find environments in the workspace folders.
@@ -206,8 +210,9 @@ pub fn find_and_report_envs(
                         "Searching for environments in workspace folders: {:?}",
                         workspace_directories
                     );
-                    let global_env_search_paths: Vec<PathBuf> =
-                        get_search_paths_from_env_variables(environment);
+                    // Convert to Arc<[PathBuf]> for O(1) cloning in thread spawns
+                    let global_env_search_paths: Arc<[PathBuf]> =
+                        get_search_paths_from_env_variables(environment).into();
                     for workspace_folder in workspace_directories {
                         let global_env_search_paths = global_env_search_paths.clone();
                         let environment_directories = environment_directories.clone();
@@ -236,7 +241,7 @@ pub fn find_and_report_envs(
                 }
             });
 
-            summary
+            summary_for_step4
                 .lock()
                 .unwrap()
                 .breakdown
@@ -277,7 +282,7 @@ pub fn find_python_environments_in_workspace_folder_recursive(
 
     // Possible this is an environment.
     find_python_environments_in_paths_with_locators(
-        paths_to_search_first.clone(),
+        &paths_to_search_first,
         locators,
         reporter,
         true,
@@ -309,13 +314,13 @@ pub fn find_python_environments_in_workspace_folder_recursive(
             })
             .filter(|p| !paths_to_search_first.contains(p))
         {
-            find_python_environments(vec![folder], reporter, locators, true, &[]);
+            find_python_environments(&[folder], reporter, locators, true, &[]);
         }
     }
 }
 
 fn find_python_environments(
-    paths: Vec<PathBuf>,
+    paths: &[PathBuf],
     reporter: &dyn Reporter,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     is_workspace_folder: bool,
@@ -327,9 +332,10 @@ fn find_python_environments(
     thread::scope(|s| {
         for item in paths {
             let locators = locators.clone();
+            let item = item.clone();
             s.spawn(move || {
                 find_python_environments_in_paths_with_locators(
-                    vec![item],
+                    &[item],
                     &locators,
                     reporter,
                     is_workspace_folder,
@@ -341,7 +347,7 @@ fn find_python_environments(
 }
 
 fn find_python_environments_in_paths_with_locators(
-    paths: Vec<PathBuf>,
+    paths: &[PathBuf],
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     reporter: &dyn Reporter,
     is_workspace_folder: bool,
@@ -356,7 +362,7 @@ fn find_python_environments_in_paths_with_locators(
 
             // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
             // Hence do not just look for files in a bin directory of the path.
-            if let Some(executable) = find_executable(&path) {
+            if let Some(executable) = find_executable(path) {
                 vec![executable]
             } else {
                 vec![]
@@ -364,7 +370,7 @@ fn find_python_environments_in_paths_with_locators(
         } else {
             // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
             // Hence do not just look for files in a bin directory of the path.
-            find_executables(path)
+            find_executables(path.clone())
                 .into_iter()
                 .filter(|p| {
                     // Exclude python2 on macOS
