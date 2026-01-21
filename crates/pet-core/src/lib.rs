@@ -88,6 +88,8 @@ pub trait Locator: Send + Sync {
     /// impl Locator for MyLocator {
     ///     fn configure(&self, config: &Configuration) {
     ///         if let Some(dirs) = &config.workspace_directories {
+    ///             // Using unwrap() is acceptable here as mutex poisoning indicates
+    ///             // a panic in another thread, which is unrecoverable in this context.
     ///             *self.workspace_dirs.lock().unwrap() = dirs.clone();
     ///         }
     ///     }
