@@ -171,9 +171,8 @@ impl Poetry {
         let envs = list_environments(&self.env_vars, &workspace_dirs, manager).unwrap_or_default();
         result.environments.extend(envs.clone());
 
-        // Having a value in the search result means that we have already searched for environments
-        // We need to explicitly compute and cache since get_or_compute doesn't fit here
-        let _ = self.search_result.get_or_compute(|| result.clone());
+        // Cache the result (even if empty, to avoid recomputing)
+        self.search_result.set(result.clone());
 
         if result.managers.is_empty() && result.environments.is_empty() {
             None

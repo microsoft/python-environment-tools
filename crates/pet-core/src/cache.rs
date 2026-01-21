@@ -119,6 +119,11 @@ impl<V: Clone> CachedValue<V> {
         self.value.read().unwrap().clone()
     }
 
+    /// Sets the cached value.
+    pub fn set(&self, value: V) {
+        *self.value.write().unwrap() = Some(value);
+    }
+
     /// Returns the cached value if present, otherwise computes it using the
     /// provided function, caches it, and returns it.
     pub fn get_or_compute<F>(&self, f: F) -> V
@@ -271,5 +276,21 @@ mod tests {
         // After clear, should recompute
         let result = cached.get_or_compute(|| 100);
         assert_eq!(result, 100);
+    }
+
+    #[test]
+    fn test_cached_value_set() {
+        let cached: CachedValue<i32> = CachedValue::new();
+
+        // Initially empty
+        assert_eq!(cached.get(), None);
+
+        // Set a value
+        cached.set(42);
+        assert_eq!(cached.get(), Some(42));
+
+        // Set overwrites existing value
+        cached.set(100);
+        assert_eq!(cached.get(), Some(100));
     }
 }
