@@ -100,7 +100,7 @@ pub fn find_and_report_envs(
                             );
                             summary
                                 .lock()
-                                .unwrap()
+                                .expect("summary mutex poisoned")
                                 .locators
                                 .insert(locator.get_kind(), start.elapsed());
                         });
@@ -109,7 +109,7 @@ pub fn find_and_report_envs(
             }
             summary
                 .lock()
-                .unwrap()
+                .expect("summary mutex poisoned")
                 .breakdown
                 .insert("Locators", start.elapsed());
         });
@@ -134,7 +134,7 @@ pub fn find_and_report_envs(
             }
             summary
                 .lock()
-                .unwrap()
+                .expect("summary mutex poisoned")
                 .breakdown
                 .insert("Path", start.elapsed());
         });
@@ -186,7 +186,7 @@ pub fn find_and_report_envs(
             }
             summary
                 .lock()
-                .unwrap()
+                .expect("summary mutex poisoned")
                 .breakdown
                 .insert("GlobalVirtualEnvs", start.elapsed());
         });
@@ -238,12 +238,12 @@ pub fn find_and_report_envs(
 
             summary
                 .lock()
-                .unwrap()
+                .expect("summary mutex poisoned")
                 .breakdown
                 .insert("Workspaces", start.elapsed());
         });
     });
-    summary.lock().unwrap().total = start.elapsed();
+    summary.lock().expect("summary mutex poisoned").total = start.elapsed();
 
     summary
 }

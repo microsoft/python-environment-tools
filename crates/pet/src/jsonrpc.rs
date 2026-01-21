@@ -107,7 +107,10 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
         Ok(configure_options) => {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
-                let mut cfg = context.configuration.write().unwrap();
+                let mut cfg = context
+                    .configuration
+                    .write()
+                    .expect("configuration write lock poisoned");
                 cfg.workspace_directories = configure_options.workspace_directories;
                 cfg.conda_executable = configure_options.conda_executable;
                 cfg.environment_directories = configure_options.environment_directories;
@@ -120,7 +123,11 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                 }
                 trace!("Configuring locators: {:?}", cfg);
                 drop(cfg);
-                let config = context.configuration.read().unwrap().clone();
+                let config = context
+                    .configuration
+                    .read()
+                    .expect("configuration read lock poisoned")
+                    .clone();
                 for locator in context.locators.iter() {
                     locator.configure(&config);
                 }
@@ -173,9 +180,13 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 // Ensure we can have only one refresh at a time.
-                let lock = REFRESH_LOCK.lock().unwrap();
+                let lock = REFRESH_LOCK.lock().expect("REFRESH_LOCK mutex poisoned");
 
-                let mut config = context.configuration.read().unwrap().clone();
+                let mut config = context
+                    .configuration
+                    .read()
+                    .expect("configuration read lock poisoned")
+                    .clone();
                 let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter(
                     refresh_options.search_kind,
                 ))));
@@ -229,7 +240,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     context.os_environment.deref(),
                     search_scope,
                 );
-                let summary = summary.lock().unwrap();
+                let summary = summary.lock().expect("summary mutex poisoned");
                 for locator in summary.locators.iter() {
                     info!("Locator {:?} took {:?}", locator.0, locator.1);
                 }
@@ -269,7 +280,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     let conda_executable = context
                         .configuration
                         .read()
-                        .unwrap()
+                        .expect("configuration read lock poisoned")
                         .conda_executable
                         .clone();
                     let reporter_ref = reporter.clone();
@@ -287,7 +298,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     let poetry_executable = context
                         .configuration
                         .read()
-                        .unwrap()
+                        .expect("configuration read lock poisoned")
                         .poetry_executable
                         .clone();
                     let reporter_ref = reporter.clone();
@@ -405,7 +416,7 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                         context
                             .configuration
                             .read()
-                            .unwrap()
+                            .expect("configuration read lock poisoned")
                             .clone()
                             .environment_directories
                             .as_deref()
@@ -413,7 +424,11 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                     );
                 }
 
-                let envs = collect_reporter.environments.lock().unwrap().clone();
+                let envs = collect_reporter
+                    .environments
+                    .lock()
+                    .expect("environments mutex poisoned")
+                    .clone();
                 if envs.is_empty() {
                     send_reply(id, None::<Vec<PythonEnvironment>>);
                 } else {

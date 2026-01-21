@@ -36,7 +36,10 @@ impl WindowsStore {
     }
     #[cfg(windows)]
     fn find_with_cache(&self) -> Option<Vec<PythonEnvironment>> {
-        let mut environments = self.environments.lock().unwrap();
+        let mut environments = self
+            .environments
+            .lock()
+            .expect("environments mutex poisoned");
         if let Some(environments) = environments.clone() {
             return Some(environments);
         }
@@ -47,7 +50,10 @@ impl WindowsStore {
     }
     #[cfg(windows)]
     fn clear(&self) {
-        self.environments.lock().unwrap().take();
+        self.environments
+            .lock()
+            .expect("environments mutex poisoned")
+            .take();
     }
 }
 
