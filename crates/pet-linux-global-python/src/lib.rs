@@ -2,15 +2,16 @@
 // Licensed under the MIT License.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::Arc,
     thread,
 };
 
 use pet_core::{
     arch::Architecture,
+    cache::LocatorCache,
     env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
@@ -21,15 +22,13 @@ use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executables};
 use pet_virtualenv::is_virtualenv;
 
 pub struct LinuxGlobalPython {
-    reported_executables: Arc<RwLock<HashMap<PathBuf, PythonEnvironment>>>,
+    reported_executables: Arc<LocatorCache<PathBuf, PythonEnvironment>>,
 }
 
 impl LinuxGlobalPython {
     pub fn new() -> LinuxGlobalPython {
         LinuxGlobalPython {
-            reported_executables: Arc::new(RwLock::new(
-                HashMap::<PathBuf, PythonEnvironment>::new(),
-            )),
+            reported_executables: Arc::new(LocatorCache::new()),
         }
     }
 
@@ -93,18 +92,14 @@ impl Locator for LinuxGlobalPython {
             return None;
         }
 
-        self.reported_executables
-            .read()
-            .unwrap()
-            .get(&executable)
-            .cloned()
+        self.reported_executables.get(&executable)
     }
 
     fn find(&self, reporter: &dyn Reporter) {
         if std::env::consts::OS == "macos" || std::env::consts::OS == "windows" {
             return;
         }
-        self.reported_executables.write().unwrap().clear();
+        self.reported_executables.clear();
         self.find_cached(Some(reporter))
     }
 }
@@ -112,18 +107,17 @@ impl Locator for LinuxGlobalPython {
 fn find_and_report_global_pythons_in(
     bin: &Path,
     reporter: Option<&dyn Reporter>,
-    reported_executables: &Arc<RwLock<HashMap<PathBuf, PythonEnvironment>>>,
+    reported_executables: &Arc<LocatorCache<PathBuf, PythonEnvironment>>,
 ) {
     let python_executables = find_executables(bin);
 
     for exe in python_executables.clone().iter() {
-        if reported_executables.read().unwrap().contains_key(exe) {
+        if reported_executables.contains_key(exe) {
             continue;
         }
         if let Some(resolved) = ResolvedPythonEnv::from(exe) {
             if let Some(env) = get_python_in_bin(&resolved.to_python_env(), resolved.is64_bit) {
                 resolved.add_to_cache(env.clone());
-                let mut reported_executables = reported_executables.write().unwrap();
                 // env.symlinks = Some([symlinks, env.symlinks.clone().unwrap_or_default()].concat());
                 if let Some(symlinks) = &env.symlinks {
                     for symlink in symlinks {
