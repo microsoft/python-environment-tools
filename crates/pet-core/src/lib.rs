@@ -62,8 +62,40 @@ pub trait Locator: Send + Sync {
     /// Returns the name of the locator.
     fn get_kind(&self) -> LocatorKind;
     /// Configures the locator with the given configuration.
-    /// Override this method if you need to have some custom configuration.
-    /// E.g. storing some of the configuration information in the locator.
+    ///
+    /// Override this method if you need to store configuration in the locator.
+    ///
+    /// # Why `&self` instead of `&mut self`?
+    ///
+    /// Locators are shared across threads via `Arc<dyn Locator>` and may be
+    /// configured while other operations are in progress. Using `&self` allows
+    /// concurrent access without requiring the caller to hold an exclusive lock
+    /// on the entire locator.
+    ///
+    /// Implementations that need to store configuration should use interior
+    /// mutability (e.g., `Mutex<T>` or `RwLock<T>`) for the mutable fields only.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::sync::Mutex;
+    /// use std::path::PathBuf;
+    ///
+    /// struct MyLocator {
+    ///     workspace_dirs: Mutex<Vec<PathBuf>>,
+    /// }
+    ///
+    /// impl Locator for MyLocator {
+    ///     fn configure(&self, config: &Configuration) {
+    ///         if let Some(dirs) = &config.workspace_directories {
+    ///             // Using unwrap() is acceptable here as mutex poisoning indicates
+    ///             // a panic in another thread, which is unrecoverable in this context.
+    ///             *self.workspace_dirs.lock().unwrap() = dirs.clone();
+    ///         }
+    ///     }
+    ///     // ... other required methods
+    /// }
+    /// ```
     fn configure(&self, _config: &Configuration) {
         //
     }
