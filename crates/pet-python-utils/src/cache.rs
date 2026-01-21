@@ -60,13 +60,21 @@ impl CacheImpl {
     }
 
     fn get_cache_directory(&self) -> Option<PathBuf> {
-        self.cache_dir.lock().unwrap().clone()
+        self.cache_dir
+            .lock()
+            .expect("cache_dir mutex poisoned")
+            .clone()
     }
 
     /// Once a cache directory has been set, you cannot change it.
     /// No point supporting such a scenario.
     fn set_cache_directory(&self, cache_dir: PathBuf) {
-        if let Some(cache_dir) = self.cache_dir.lock().unwrap().clone() {
+        if let Some(cache_dir) = self
+            .cache_dir
+            .lock()
+            .expect("cache_dir mutex poisoned")
+            .clone()
+        {
             warn!(
                 "Cache directory has already been set to {:?}. Cannot change it now.",
                 cache_dir
@@ -74,20 +82,37 @@ impl CacheImpl {
             return;
         }
         trace!("Setting cache directory to {:?}", cache_dir);
-        self.cache_dir.lock().unwrap().replace(cache_dir);
+        self.cache_dir
+            .lock()
+            .expect("cache_dir mutex poisoned")
+            .replace(cache_dir);
     }
     fn clear(&self) -> io::Result<()> {
         trace!("Clearing cache");
-        self.locks.lock().unwrap().clear();
-        if let Some(cache_directory) = self.cache_dir.lock().unwrap().clone() {
+        self.locks.lock().expect("locks mutex poisoned").clear();
+        if let Some(cache_directory) = self
+            .cache_dir
+            .lock()
+            .expect("cache_dir mutex poisoned")
+            .clone()
+        {
             std::fs::remove_dir_all(cache_directory)
         } else {
             Ok(())
         }
     }
     fn create_cache(&self, executable: PathBuf) -> LockableCacheEntry {
-        let cache_directory = self.cache_dir.lock().unwrap().clone();
-        match self.locks.lock().unwrap().entry(executable.clone()) {
+        let cache_directory = self
+            .cache_dir
+            .lock()
+            .expect("cache_dir mutex poisoned")
+            .clone();
+        match self
+            .locks
+            .lock()
+            .expect("locks mutex poisoned")
+            .entry(executable.clone())
+        {
             Entry::Occupied(lock) => lock.get().clone(),
             Entry::Vacant(lock) => {
                 let cache = Box::new(CacheEntryImpl::create(cache_directory.clone(), executable))
@@ -122,7 +147,12 @@ impl CacheEntryImpl {
     }
     pub fn verify_in_memory_cache(&self) {
         // Check if any of the exes have changed since we last cached this.
-        for symlink_info in self.symlinks.lock().unwrap().iter() {
+        for symlink_info in self
+            .symlinks
+            .lock()
+            .expect("symlinks mutex poisoned")
+            .iter()
+        {
             if let Ok(metadata) = symlink_info.0.metadata() {
                 let mtime_changed = metadata.modified().ok() != Some(symlink_info.1);
                 // Only check ctime if we have it stored (may be None on Linux)
@@ -139,7 +169,10 @@ impl CacheEntryImpl {
                         metadata.modified().ok(),
                         metadata.created().ok()
                     );
-                    self.envoronment.lock().unwrap().take();
+                    self.envoronment
+                        .lock()
+                        .expect("envoronment mutex poisoned")
+                        .take();
                     if let Some(cache_directory) = &self.cache_directory {
                         delete_cache_file(cache_directory, &self.executable);
                     }
@@ -155,15 +188,23 @@ impl CacheEntry for CacheEntryImpl {
 
         // New scope to drop lock immediately after we have the value.
         {
-            if let Some(env) = self.envoronment.lock().unwrap().clone() {
+            if let Some(env) = self
+                .envoronment
+                .lock()
+                .expect("envoronment mutex poisoned")
+                .clone()
+            {
                 return Some(env);
             }
         }
 
         if let Some(ref cache_directory) = self.cache_directory {
             let (env, mut symlinks) = get_cache_from_file(cache_directory, &self.executable)?;
-            self.envoronment.lock().unwrap().replace(env.clone());
-            let mut locked_symlinks = self.symlinks.lock().unwrap();
+            self.envoronment
+                .lock()
+                .expect("envoronment mutex poisoned")
+                .replace(env.clone());
+            let mut locked_symlinks = self.symlinks.lock().expect("symlinks mutex poisoned");
             locked_symlinks.clear();
             locked_symlinks.append(&mut symlinks);
             Some(env)
@@ -190,13 +231,13 @@ impl CacheEntry for CacheEntryImpl {
         symlinks.dedup();
 
         {
-            let mut locked_symlinks = self.symlinks.lock().unwrap();
+            let mut locked_symlinks = self.symlinks.lock().expect("symlinks mutex poisoned");
             locked_symlinks.clear();
             locked_symlinks.append(&mut symlinks.clone());
         }
         self.envoronment
             .lock()
-            .unwrap()
+            .expect("envoronment mutex poisoned")
             .replace(environment.clone());
 
         trace!("Caching interpreter info for {:?}", self.executable);
@@ -213,7 +254,7 @@ impl CacheEntry for CacheEntryImpl {
         let known_symlinks: HashSet<PathBuf> = self
             .symlinks
             .lock()
-            .unwrap()
+            .expect("symlinks mutex poisoned")
             .clone()
             .iter()
             .map(|x| x.0.clone())

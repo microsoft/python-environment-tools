@@ -173,7 +173,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 // Ensure we can have only one refresh at a time.
-                let lock = REFRESH_LOCK.lock().unwrap();
+                let lock = REFRESH_LOCK.lock().expect("REFRESH_LOCK mutex poisoned");
 
                 let mut config = context.configuration.read().unwrap().clone();
                 let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter(
@@ -229,7 +229,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     context.os_environment.deref(),
                     search_scope,
                 );
-                let summary = summary.lock().unwrap();
+                let summary = summary.lock().expect("summary mutex poisoned");
                 for locator in summary.locators.iter() {
                     info!("Locator {:?} took {:?}", locator.0, locator.1);
                 }
@@ -413,7 +413,11 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                     );
                 }
 
-                let envs = collect_reporter.environments.lock().unwrap().clone();
+                let envs = collect_reporter
+                    .environments
+                    .lock()
+                    .expect("environments mutex poisoned")
+                    .clone();
                 if envs.is_empty() {
                     send_reply(id, None::<Vec<PythonEnvironment>>);
                 } else {
