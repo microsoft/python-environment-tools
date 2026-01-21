@@ -7,6 +7,7 @@ use lazy_static::lazy_static;
 use log::trace;
 use manager::PoetryManager;
 use pet_core::{
+    cache::CachedValue,
     env::PythonEnv,
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
@@ -124,13 +125,13 @@ pub struct Poetry {
     pub workspace_directories: Arc<Mutex<Vec<PathBuf>>>,
     pub env_vars: EnvVariables,
     pub poetry_executable: Arc<Mutex<Option<PathBuf>>>,
-    search_result: Arc<Mutex<Option<LocatorResult>>>,
+    search_result: CachedValue<LocatorResult>,
 }
 
 impl Poetry {
     pub fn new(environment: &dyn Environment) -> Self {
         Poetry {
-            search_result: Arc::new(Mutex::new(None)),
+            search_result: CachedValue::new(),
             workspace_directories: Arc::new(Mutex::new(vec![])),
             env_vars: EnvVariables::from(environment),
             poetry_executable: Arc::new(Mutex::new(None)),
@@ -138,14 +139,17 @@ impl Poetry {
     }
     fn clear(&self) {
         self.poetry_executable.lock().unwrap().take();
-        self.search_result.lock().unwrap().take();
+        self.search_result.clear();
     }
     pub fn from(environment: &dyn Environment) -> Poetry {
         Poetry::new(environment)
     }
     fn find_with_cache(&self) -> Option<LocatorResult> {
-        let mut search_result = self.search_result.lock().unwrap();
-        if let Some(result) = search_result.clone() {
+        // Check if we have a cached result
+        if let Some(result) = self.search_result.get() {
+            if result.managers.is_empty() && result.environments.is_empty() {
+                return None;
+            }
             return Some(result);
         }
 
@@ -168,7 +172,8 @@ impl Poetry {
         result.environments.extend(envs.clone());
 
         // Having a value in the search result means that we have already searched for environments
-        search_result.replace(result.clone());
+        // We need to explicitly compute and cache since get_or_compute doesn't fit here
+        let _ = self.search_result.get_or_compute(|| result.clone());
 
         if result.managers.is_empty() && result.environments.is_empty() {
             None
@@ -195,7 +200,7 @@ impl PoetryLocator for Poetry {
             &manager,
         );
 
-        let result = self.search_result.lock().unwrap().clone();
+        let result = self.search_result.get();
         let _ = report_missing_envs(
             reporter,
             &poetry_executable,

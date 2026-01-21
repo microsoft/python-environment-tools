@@ -8,13 +8,13 @@ mod environments;
 use crate::env_variables::EnvVariables;
 #[cfg(windows)]
 use environments::list_store_pythons;
+use pet_core::cache::EnvironmentListCache;
 use pet_core::env::PythonEnv;
 use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_core::reporter::Reporter;
 use pet_core::LocatorKind;
 use pet_core::{os_environment::Environment, Locator};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
     path.to_str().unwrap_or_default().to_string().to_lowercase()[1..]
@@ -23,31 +23,26 @@ pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
 
 pub struct WindowsStore {
     pub env_vars: EnvVariables,
-    #[allow(dead_code)]
-    environments: Arc<Mutex<Option<Vec<PythonEnvironment>>>>,
+    #[allow(dead_code)] // Used only on Windows
+    environments: EnvironmentListCache,
 }
 
 impl WindowsStore {
     pub fn from(environment: &dyn Environment) -> WindowsStore {
         WindowsStore {
             env_vars: EnvVariables::from(environment),
-            environments: Arc::new(Mutex::new(None)),
+            environments: EnvironmentListCache::new(),
         }
     }
     #[cfg(windows)]
-    fn find_with_cache(&self) -> Option<Vec<PythonEnvironment>> {
-        let mut environments = self.environments.lock().unwrap();
-        if let Some(environments) = environments.clone() {
-            return Some(environments);
-        }
-
-        let envs = list_store_pythons(&self.env_vars).unwrap_or_default();
-        environments.replace(envs.clone());
-        Some(envs)
+    fn find_with_cache(&self) -> Vec<PythonEnvironment> {
+        self.environments.get_or_compute(|| {
+            list_store_pythons(&self.env_vars).unwrap_or_default()
+        })
     }
     #[cfg(windows)]
     fn clear(&self) {
-        self.environments.lock().unwrap().take();
+        self.environments.clear();
     }
 }
 
@@ -76,25 +71,24 @@ impl Locator for WindowsStore {
             .into_iter()
             .chain(env.symlinks.clone().unwrap_or_default())
             .collect::<Vec<PathBuf>>();
-        if let Some(environments) = self.find_with_cache() {
-            for found_env in environments {
-                if let Some(symlinks) = &found_env.symlinks {
-                    // Check if we have found this exe.
-                    if list_of_possible_exes
-                        .iter()
-                        .any(|exe| symlinks.contains(exe))
-                    {
-                        // Its possible the env discovery was not aware of the symlink
-                        // E.g. if we are asked to resolve `../WindowsApp/python.exe`
-                        // We will have no idea, hence this will get spawned, and then exe
-                        // might be something like `../WindowsApp/PythonSoftwareFoundation.Python.3.10...`
-                        // However the env found by the locator will almost never contain python.exe nor python3.exe
-                        // See README.md
-                        // As a result, we need to add those symlinks here.
-                        let builder = PythonEnvironmentBuilder::from_environment(found_env.clone())
-                            .symlinks(env.symlinks.clone());
-                        return Some(builder.build());
-                    }
+        let environments = self.find_with_cache();
+        for found_env in environments {
+            if let Some(symlinks) = &found_env.symlinks {
+                // Check if we have found this exe.
+                if list_of_possible_exes
+                    .iter()
+                    .any(|exe| symlinks.contains(exe))
+                {
+                    // Its possible the env discovery was not aware of the symlink
+                    // E.g. if we are asked to resolve `../WindowsApp/python.exe`
+                    // We will have no idea, hence this will get spawned, and then exe
+                    // might be something like `../WindowsApp/PythonSoftwareFoundation.Python.3.10...`
+                    // However the env found by the locator will almost never contain python.exe nor python3.exe
+                    // See README.md
+                    // As a result, we need to add those symlinks here.
+                    let builder = PythonEnvironmentBuilder::from_environment(found_env.clone())
+                        .symlinks(env.symlinks.clone());
+                    return Some(builder.build());
                 }
             }
         }
@@ -109,11 +103,10 @@ impl Locator for WindowsStore {
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
         self.clear();
-        if let Some(environments) = self.find_with_cache() {
-            environments
-                .iter()
-                .for_each(|e| reporter.report_environment(e))
-        }
+        let environments = self.find_with_cache();
+        environments
+            .iter()
+            .for_each(|e| reporter.report_environment(e))
     }
 
     #[cfg(unix)]
