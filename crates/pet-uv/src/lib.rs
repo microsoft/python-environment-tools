@@ -82,7 +82,10 @@ impl Locator for Uv {
 
     fn configure(&self, config: &Configuration) {
         if let Some(workspace_directories) = config.workspace_directories.as_ref() {
-            let mut ws = self.workspace_directories.lock().unwrap();
+            let mut ws = self
+                .workspace_directories
+                .lock()
+                .expect("workspace_directories mutex poisoned");
             ws.clear();
             ws.extend(workspace_directories.iter().cloned());
         }
@@ -137,7 +140,11 @@ impl Locator for Uv {
 
     fn find(&self, reporter: &dyn Reporter) {
         // look through workspace directories for uv-managed projects and any of their workspaces
-        let workspaces = self.workspace_directories.lock().unwrap().clone();
+        let workspaces = self
+            .workspace_directories
+            .lock()
+            .expect("workspace_directories mutex poisoned")
+            .clone();
         for workspace in workspaces {
             // TODO: maybe check for workspace in parent folders?
             for env in list_envs_in_directory(&workspace) {
