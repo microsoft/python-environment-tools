@@ -14,6 +14,7 @@ extends:
   template: azure-pipelines/rust-package/pipeline.yml@templates
   parameters:
     binaryName: "pet"
+    opusName: "Python Environment Tools"
     signing: true
     apiScanPublishSymbols: true
     apiScanSoftwareVersion: 2024 # major version of `pet` for internal reporting
