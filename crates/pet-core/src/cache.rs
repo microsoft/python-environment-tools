@@ -293,4 +293,77 @@ mod tests {
         cached.set(100);
         assert_eq!(cached.get(), Some(100));
     }
+
+    #[test]
+    fn test_cache_concurrent_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let cache = Arc::new(LocatorCache::<i32, i32>::new());
+        let num_threads = 10;
+        let operations_per_thread = 100;
+
+        // Spawn multiple threads that concurrently read and write
+        let handles: Vec<_> = (0..num_threads)
+            .map(|thread_id| {
+                let cache = Arc::clone(&cache);
+                thread::spawn(move || {
+                    for i in 0..operations_per_thread {
+                        let key = (thread_id * operations_per_thread + i) % 50;
+                        // Mix of reads and writes
+                        if i % 2 == 0 {
+                            cache.insert(key, thread_id * 1000 + i);
+                        } else {
+                            let _ = cache.get(&key);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify the cache is still functional after concurrent access
+        cache.insert(999, 999);
+        assert_eq!(cache.get(&999), Some(999));
+    }
+
+    #[test]
+    fn test_cached_value_concurrent_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let cached = Arc::new(CachedValue::<i32>::new());
+        let num_threads = 10;
+
+        // Spawn multiple threads that concurrently try to compute/set values
+        let handles: Vec<_> = (0..num_threads)
+            .map(|thread_id| {
+                let cached = Arc::clone(&cached);
+                thread::spawn(move || {
+                    for i in 0..100 {
+                        if i % 3 == 0 {
+                            cached.set(thread_id * 1000 + i);
+                        } else if i % 3 == 1 {
+                            let _ = cached.get();
+                        } else {
+                            let _ = cached.get_or_compute(|| thread_id * 1000 + i);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().expect("Thread panicked");
+        }
+
+        // Verify the cached value is still accessible after concurrent access
+        cached.set(12345);
+        assert_eq!(cached.get(), Some(12345));
+    }
 }
