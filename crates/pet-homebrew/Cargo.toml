@@ -18,3 +18,4 @@ lazy_static = "1.4.0"
 pet-core = { path = "../pet-core" }
 log = "0.4.21"
 regex = "1.10.4"
+rayon = "1.11.0"

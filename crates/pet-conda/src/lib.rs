@@ -18,6 +18,7 @@ use pet_core::{
     Locator, LocatorKind,
 };
 use pet_fs::path::norm_case;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -380,24 +381,8 @@ fn get_conda_environments(
     paths: &Vec<PathBuf>,
     manager: &Option<CondaManager>,
 ) -> Vec<CondaEnvironment> {
-    let mut threads = vec![];
-    for path in paths {
-        let path = path.clone();
-        let mgr = manager.clone();
-        threads.push(thread::spawn(move || {
-            if let Some(env) = get_conda_environment_info(&path, &mgr) {
-                vec![env]
-            } else {
-                vec![]
-            }
-        }));
-    }
-
-    let mut envs: Vec<CondaEnvironment> = vec![];
-    for thread in threads {
-        if let Ok(mut result) = thread.join() {
-            envs.append(&mut result);
-        }
-    }
-    envs
+    paths
+        .par_iter()
+        .filter_map(|path| get_conda_environment_info(path, manager))
+        .collect()
 }

@@ -19,6 +19,7 @@ regex = "1.10.4"
 pet-reporter = { path = "../pet-reporter" }
 env_logger = "0.10.2"
 yaml-rust2 = "0.8.1"
+rayon = "1.11.0"
 
 [features]
 ci = []
