@@ -370,7 +370,7 @@ fn find_python_environments_in_paths_with_locators(
         } else {
             // Paths like /Library/Frameworks/Python.framework/Versions/3.10/bin can end up in the current PATH variable.
             // Hence do not just look for files in a bin directory of the path.
-            find_executables(path.clone())
+            find_executables(path)
                 .into_iter()
                 .filter(|p| {
                     // Exclude python2 on macOS
