@@ -44,11 +44,23 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
         self.cache.write().unwrap().insert(key, value)
     }
 
+    /// Inserts multiple key-value pairs into the cache atomically.
+    ///
+    /// This method acquires a single write lock for all insertions, which is more
+    /// efficient than calling `insert` multiple times when inserting many entries.
+    pub fn insert_many(&self, entries: impl IntoIterator<Item = (K, V)>) {
+        let mut cache = self.cache.write().unwrap();
+        for (key, value) in entries {
+            cache.insert(key, value);
+        }
+    }
+
     /// Returns a cloned value for the given key if it exists, otherwise computes
     /// and inserts the value using the provided closure.
     ///
     /// This method first checks with a read lock, then upgrades to a write lock
     /// if the value needs to be computed and inserted.
+    #[must_use]
     pub fn get_or_insert_with<F>(&self, key: K, f: F) -> Option<V>
     where
         F: FnOnce() -> Option<V>,
@@ -178,5 +190,23 @@ mod tests {
         let mut values = cache.values();
         values.sort();
         assert_eq!(values, vec![42, 100]);
+    }
+
+    #[test]
+    fn test_cache_insert_many() {
+        let cache: LocatorCache<String, i32> = LocatorCache::new();
+
+        let entries = vec![
+            ("key1".to_string(), 42),
+            ("key2".to_string(), 100),
+            ("key3".to_string(), 200),
+        ];
+
+        cache.insert_many(entries);
+
+        assert_eq!(cache.len(), 3);
+        assert_eq!(cache.get(&"key1".to_string()), Some(42));
+        assert_eq!(cache.get(&"key2".to_string()), Some(100));
+        assert_eq!(cache.get(&"key3".to_string()), Some(200));
     }
 }

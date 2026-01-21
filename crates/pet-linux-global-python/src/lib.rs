@@ -118,15 +118,19 @@ fn find_and_report_global_pythons_in(
         if let Some(resolved) = ResolvedPythonEnv::from(exe) {
             if let Some(env) = get_python_in_bin(&resolved.to_python_env(), resolved.is64_bit) {
                 resolved.add_to_cache(env.clone());
-                // env.symlinks = Some([symlinks, env.symlinks.clone().unwrap_or_default()].concat());
+
+                // Collect all entries to insert atomically
+                let mut entries = Vec::new();
                 if let Some(symlinks) = &env.symlinks {
                     for symlink in symlinks {
-                        reported_executables.insert(symlink.clone(), env.clone());
+                        entries.push((symlink.clone(), env.clone()));
                     }
                 }
                 if let Some(exe) = env.executable.clone() {
-                    reported_executables.insert(exe, env.clone());
+                    entries.push((exe, env.clone()));
                 }
+                reported_executables.insert_many(entries);
+
                 if let Some(reporter) = reporter {
                     reporter.report_environment(&env);
                 }
