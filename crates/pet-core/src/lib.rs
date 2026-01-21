@@ -9,6 +9,7 @@ use python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use reporter::Reporter;
 
 pub mod arch;
+pub mod cache;
 pub mod env;
 pub mod manager;
 pub mod os_environment;
