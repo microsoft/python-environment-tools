@@ -7,9 +7,7 @@
   "[toml]": {
     "editor.defaultFormatter": "tamasfe.even-better-toml"
   },
-  "git.branchProtection": [
-    "main",
-    "release/*"
-  ],
-  "git.branchProtectionPrompt": "alwaysCommitToNewBranch"
+  "git.branchProtection": ["main", "release/*"],
+  "git.branchProtectionPrompt": "alwaysCommitToNewBranch",
+  "git.branchRandomName.enable": true
 }
