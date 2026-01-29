@@ -45,8 +45,11 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
 
 pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
     let mut env_path = env_path.as_ref().to_path_buf();
-    // Never find exes in `.pyenv/shims/` folder, they are not valid exes
-    if env_path.ends_with(".pyenv/shims") {
+    // Never find exes in pyenv shims folder, they are not valid exes.
+    // Pyenv can be installed at custom locations (e.g., ~/.pl/pyenv via PYENV_ROOT),
+    // not just ~/.pyenv, so we check for any path ending with "shims" that has a
+    // parent directory containing "pyenv".
+    if is_pyenv_shims_dir(&env_path) {
         return vec![];
     }
     let mut python_executables = vec![];
@@ -118,6 +121,29 @@ fn is_python_executable_name(exe: &Path) -> bool {
     } else {
         UNIX_EXE.is_match(&name)
     }
+}
+
+/// Checks if the given path is a pyenv shims directory.
+/// Pyenv shims are not valid Python executables - they are wrapper scripts that
+/// redirect to the actual Python installation based on pyenv configuration.
+/// Pyenv can be installed at custom locations via PYENV_ROOT (e.g., ~/.pl/pyenv),
+/// not just the default ~/.pyenv location.
+fn is_pyenv_shims_dir(path: &Path) -> bool {
+    // Must end with "shims"
+    if !path.ends_with("shims") {
+        return false;
+    }
+
+    // Check if parent directory name contains "pyenv" (case-insensitive)
+    // This handles: ~/.pyenv/shims, ~/.pl/pyenv/shims, /opt/pyenv/shims, etc.
+    if let Some(parent) = path.parent() {
+        if let Some(parent_name) = parent.file_name() {
+            if let Some(name_str) = parent_name.to_str() {
+                return name_str.to_lowercase().contains("pyenv");
+            }
+        }
+    }
+    false
 }
 
 pub fn should_search_for_environments_in_path<P: AsRef<Path>>(path: &P) -> bool {
@@ -240,6 +266,44 @@ mod tests {
         #[cfg(windows)]
         assert!(!is_python_executable_name(
             PathBuf::from("pythonw3.exe").as_path()
+        ));
+    }
+
+    #[test]
+    fn test_is_pyenv_shims_dir() {
+        // Standard pyenv location
+        assert!(is_pyenv_shims_dir(
+            PathBuf::from("/home/user/.pyenv/shims").as_path()
+        ));
+
+        // Custom pyenv location (issue #238)
+        assert!(is_pyenv_shims_dir(
+            PathBuf::from("/home/user/.pl/pyenv/shims").as_path()
+        ));
+
+        // Other custom locations
+        assert!(is_pyenv_shims_dir(
+            PathBuf::from("/opt/pyenv/shims").as_path()
+        ));
+        assert!(is_pyenv_shims_dir(
+            PathBuf::from("/usr/local/pyenv/shims").as_path()
+        ));
+
+        // pyenv-win style (parent contains "pyenv")
+        assert!(is_pyenv_shims_dir(
+            PathBuf::from("/home/user/.pyenv/pyenv-win/shims").as_path()
+        ));
+
+        // Not pyenv shims (should return false)
+        assert!(!is_pyenv_shims_dir(
+            PathBuf::from("/home/user/.pyenv/versions/3.10.0/bin").as_path()
+        ));
+        assert!(!is_pyenv_shims_dir(PathBuf::from("/usr/bin").as_path()));
+        assert!(!is_pyenv_shims_dir(
+            PathBuf::from("/home/user/shims").as_path()
+        )); // "shims" but parent is not pyenv
+        assert!(!is_pyenv_shims_dir(
+            PathBuf::from("/home/user/project/shims").as_path()
         ));
     }
 }
