@@ -1,0 +1,167 @@
+name: Coverage Baseline
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Coverage Baseline
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set Python to PATH
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Add Conda to PATH (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
+          echo "PATH=$path" >> $env:GITHUB_ENV
+
+      - name: Add Conda to PATH (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Check Conda version
+        run: conda info --all
+
+      - name: Create Conda Environments
+        run: |
+          conda create -n test-env1 python=3.12 -y
+          conda create -n test-env-no-python -y
+          conda create -p ./prefix-envs/.conda1 python=3.12 -y
+          conda create -p ./prefix-envs/.conda-nopy -y
+
+      - name: Install pipenv
+        run: pip install pipenv
+
+      - name: Check pipenv version
+        run: pipenv --version
+
+      - name: Create a Pipenv Environment
+        run: pipenv install
+
+      - name: Install virtualenvwrapper (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          pip install virtualenvwrapper
+          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+          mkdir -p $HOME/.virtualenvs
+          source virtualenvwrapper.sh
+          mkvirtualenv venv_wrapper_env1
+        shell: bash
+
+      - name: Install virtualenvwrapper-win (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          pip install virtualenvwrapper-win
+          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install pyenv (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          choco install pyenv-win -y
+          echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
+          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install pyenv and pyenv-virtualenv (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          curl https://pyenv.run | bash
+          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+          echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Check Pyenv version
+        run: pyenv --version
+        shell: bash
+
+      - name: Install Pyenv Python(s) (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          pyenv install --list
+          pyenv install 3.13:latest 3.12:latest 3.9:latest
+        shell: bash
+
+      - name: Install Pyenv Python(s) (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          pyenv install --list
+          pyenv install 3.10.5 3.8.10
+        shell: bash
+
+      - name: Create pyenv-virtualenv envs (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          eval "$(pyenv virtualenv-init -)"
+          pyenv virtualenv 3.12 pyenv-virtualenv-env1
+        shell: bash
+
+      - name: Create .venv
+        run: python -m venv .venv
+        shell: bash
+
+      - name: Create .venv2
+        run: python -m venv .venv2
+        shell: bash
+
+      - name: Install Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          run-install: false
+
+      - name: Create Pixi environments
+        run: |
+          pixi init
+          pixi add python
+          pixi add --feature dev python
+          pixi project environment add --feature dev dev
+          pixi install --environment dev
+        shell: bash
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cargo Fetch
+        run: cargo fetch
+        shell: bash
+
+      - name: Run Tests with Coverage
+        run: cargo llvm-cov --features ci --lcov --output-path lcov.info -- --nocapture --test-threads=1
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: trace
+        shell: bash
+
+      - name: Upload Coverage Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-baseline-${{ matrix.os }}
+          path: lcov.info
+          retention-days: 90
