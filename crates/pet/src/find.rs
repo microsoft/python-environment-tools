@@ -248,7 +248,7 @@ pub fn find_and_report_envs(
                 .insert("Workspaces", start.elapsed());
         });
     });
-    summary.lock().unwrap().total = start.elapsed();
+    summary.lock().expect("summary mutex poisoned").total = start.elapsed();
 
     summary
 }

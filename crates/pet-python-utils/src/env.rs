@@ -56,7 +56,7 @@ impl ResolvedPythonEnv {
             && environment.arch == arch
         {
             let cache = create_cache(self.executable.clone());
-            let entry = cache.lock().unwrap();
+            let entry = cache.lock().expect("cache mutex poisoned");
             entry.track_symlinks(symlinks)
         } else {
             error!(
@@ -75,7 +75,7 @@ impl ResolvedPythonEnv {
         // cache: &dyn Cache,
     ) -> Option<Self> {
         let cache = create_cache(executable.to_path_buf());
-        let entry = cache.lock().unwrap();
+        let entry = cache.lock().expect("cache mutex poisoned");
         if let Some(env) = entry.get() {
             Some(env)
         } else if let Some(env) = get_interpreter_details(executable) {

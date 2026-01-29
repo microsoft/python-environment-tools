@@ -47,7 +47,12 @@ impl Environment for EnvironmentApi {
         get_env_var(key)
     }
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        if self.global_search_locations.lock().unwrap().is_empty() {
+        if self
+            .global_search_locations
+            .lock()
+            .expect("global_search_locations mutex poisoned")
+            .is_empty()
+        {
             let mut paths =
                 env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .filter(|p| p.exists())
@@ -55,10 +60,13 @@ impl Environment for EnvironmentApi {
             trace!("Env PATH: {:?}", paths);
             self.global_search_locations
                 .lock()
-                .unwrap()
+                .expect("global_search_locations mutex poisoned")
                 .append(&mut paths);
         }
-        self.global_search_locations.lock().unwrap().clone()
+        self.global_search_locations
+            .lock()
+            .expect("global_search_locations mutex poisoned")
+            .clone()
     }
 }
 
@@ -74,7 +82,12 @@ impl Environment for EnvironmentApi {
         get_env_var(key)
     }
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        if self.global_search_locations.lock().unwrap().is_empty() {
+        if self
+            .global_search_locations
+            .lock()
+            .expect("global_search_locations mutex poisoned")
+            .is_empty()
+        {
             let mut paths =
                 env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .collect::<Vec<PathBuf>>();
@@ -126,10 +139,13 @@ impl Environment for EnvironmentApi {
 
             self.global_search_locations
                 .lock()
-                .unwrap()
+                .expect("global_search_locations mutex poisoned")
                 .append(&mut paths);
         }
-        self.global_search_locations.lock().unwrap().clone()
+        self.global_search_locations
+            .lock()
+            .expect("global_search_locations mutex poisoned")
+            .clone()
     }
 }
 

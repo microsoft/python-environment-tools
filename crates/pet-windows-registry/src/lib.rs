@@ -31,7 +31,10 @@ impl WindowsRegistry {
     }
     #[cfg(windows)]
     fn find_with_cache(&self, reporter: Option<&dyn Reporter>) -> Option<LocatorResult> {
-        let mut result = self.search_result.lock().unwrap();
+        let mut result = self
+            .search_result
+            .lock()
+            .expect("search_result mutex poisoned");
         if let Some(result) = result.clone() {
             return Some(result);
         }
@@ -43,7 +46,10 @@ impl WindowsRegistry {
     }
     #[cfg(windows)]
     fn clear(&self) {
-        let mut search_result = self.search_result.lock().unwrap();
+        let mut search_result = self
+            .search_result
+            .lock()
+            .expect("search_result mutex poisoned");
         search_result.take();
     }
 }

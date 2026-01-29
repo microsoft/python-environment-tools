@@ -48,12 +48,18 @@ impl PyEnv {
         }
     }
     fn clear(&self) {
-        self.manager.lock().unwrap().take();
-        self.versions_dir.lock().unwrap().take();
+        self.manager.lock().expect("manager mutex poisoned").take();
+        self.versions_dir
+            .lock()
+            .expect("versions_dir mutex poisoned")
+            .take();
     }
     fn get_manager_versions_dir(&self) -> (Option<EnvManager>, Option<PathBuf>) {
-        let mut managers = self.manager.lock().unwrap();
-        let mut versions = self.versions_dir.lock().unwrap();
+        let mut managers = self.manager.lock().expect("manager mutex poisoned");
+        let mut versions = self
+            .versions_dir
+            .lock()
+            .expect("versions_dir mutex poisoned");
         if managers.is_none() || versions.is_none() {
             let pyenv_info = PyEnvInfo::from(&self.env_vars);
             trace!("PyEnv Info {:?}", pyenv_info);
