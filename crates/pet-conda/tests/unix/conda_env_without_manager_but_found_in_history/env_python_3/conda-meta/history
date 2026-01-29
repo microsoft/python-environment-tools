@@ -1,8 +1,8 @@
 ==> 2024-02-28 23:05:07 <==
-# cmd: /home/kanadig/GIT/projects/python-environment-tools/crates/pet-conda/tests/unix/conda_env_without_manager_but_found_in_history/some_other_location/conda_install/bin/conda create -n conda1
+# cmd: /home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/conda_env_without_manager_but_found_in_history/some_other_location/conda_install/bin/conda create -n conda1
 # conda version: 23.11.0
 ==> 2024-02-28 23:08:59 <==
-# cmd: /home/kanadig/GIT/projects/python-environment-tools/crates/pet-conda/tests/unix/conda_env_without_manager_but_found_in_history/some_other_location/conda_install/bin/conda install -c conda-forge --name conda1 ipykernel -y
+# cmd: /home/runner/work/python-environment-tools/python-environment-tools/crates/pet-conda/tests/unix/conda_env_without_manager_but_found_in_history/some_other_location/conda_install/bin/conda install -c conda-forge --name conda1 ipykernel -y
 # conda version: 23.11.0
 +conda-forge/noarch::appnope-0.1.4-pyhd8ed1ab_0
 +conda-forge/noarch::asttokens-2.4.1-pyhd8ed1ab_0
