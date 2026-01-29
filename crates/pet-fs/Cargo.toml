@@ -9,4 +9,5 @@ msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }
 
 [dependencies]
+glob = "0.3.1"
 log = "0.4.21"
