@@ -11,6 +11,7 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: write
 
 jobs:
   coverage:
@@ -180,85 +181,144 @@ jobs:
           path: baseline-coverage
 
       - name: Install lcov (Linux)
-        if: startsWith(matrix.os, 'ubuntu') && steps.download-baseline.outcome == 'success'
+        if: startsWith(matrix.os, 'ubuntu')
         run: sudo apt-get update && sudo apt-get install -y lcov
 
       - name: Install lcov (Windows)
-        if: startsWith(matrix.os, 'windows') && steps.download-baseline.outcome == 'success'
+        if: startsWith(matrix.os, 'windows')
         run: choco install lcov -y
         shell: bash
 
-      - name: Compare Coverage (Linux)
-        if: startsWith(matrix.os, 'ubuntu') && steps.download-baseline.outcome == 'success'
+      - name: Generate Coverage Report (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        id: coverage-linux
         run: |
-          echo "## Coverage Comparison for ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          # Extract PR coverage
+          PR_LINES=$(lcov --summary lcov.info 2>&1 | grep "lines" | sed 's/.*: //' | sed 's/%.*//' | tr -d ' ')
+          PR_FUNCTIONS=$(lcov --summary lcov.info 2>&1 | grep "functions" | sed 's/.*: //' | sed 's/%.*//' | tr -d ' ')
 
-          # Extract line coverage from baseline
+          # Extract baseline coverage (default to 0 if not available)
           if [ -f baseline-coverage/lcov.info ]; then
-            BASELINE_LINES=$(lcov --summary baseline-coverage/lcov.info 2>&1 | grep "lines" | sed 's/.*: //' | sed 's/%.*//')
-            BASELINE_FUNCTIONS=$(lcov --summary baseline-coverage/lcov.info 2>&1 | grep "functions" | sed 's/.*: //' | sed 's/%.*//')
-            echo "**Baseline Coverage:**" >> $GITHUB_STEP_SUMMARY
-            echo "- Lines: ${BASELINE_LINES}%" >> $GITHUB_STEP_SUMMARY
-            echo "- Functions: ${BASELINE_FUNCTIONS}%" >> $GITHUB_STEP_SUMMARY
+            BASELINE_LINES=$(lcov --summary baseline-coverage/lcov.info 2>&1 | grep "lines" | sed 's/.*: //' | sed 's/%.*//' | tr -d ' ')
+            BASELINE_FUNCTIONS=$(lcov --summary baseline-coverage/lcov.info 2>&1 | grep "functions" | sed 's/.*: //' | sed 's/%.*//' | tr -d ' ')
           else
-            echo "No baseline coverage found" >> $GITHUB_STEP_SUMMARY
+            BASELINE_LINES="0"
+            BASELINE_FUNCTIONS="0"
           fi
 
-          # Extract line coverage from PR
-          PR_LINES=$(lcov --summary lcov.info 2>&1 | grep "lines" | sed 's/.*: //' | sed 's/%.*//')
-          PR_FUNCTIONS=$(lcov --summary lcov.info 2>&1 | grep "functions" | sed 's/.*: //' | sed 's/%.*//')
+          # Calculate diff
+          LINE_DIFF=$(echo "$PR_LINES - $BASELINE_LINES" | bc)
+          FUNC_DIFF=$(echo "$PR_FUNCTIONS - $BASELINE_FUNCTIONS" | bc)
+
+          # Determine delta indicator
+          if (( $(echo "$LINE_DIFF > 0" | bc -l) )); then
+            DELTA_INDICATOR=":white_check_mark:"
+          elif (( $(echo "$LINE_DIFF < 0" | bc -l) )); then
+            DELTA_INDICATOR=":x:"
+          else
+            DELTA_INDICATOR=":heavy_minus_sign:"
+          fi
+
+          # Set outputs
+          echo "pr_lines=$PR_LINES" >> $GITHUB_OUTPUT
+          echo "baseline_lines=$BASELINE_LINES" >> $GITHUB_OUTPUT
+          echo "line_diff=$LINE_DIFF" >> $GITHUB_OUTPUT
+          echo "delta_indicator=$DELTA_INDICATOR" >> $GITHUB_OUTPUT
+
+          # Write step summary
+          echo "## Test Coverage Report (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**PR Coverage:**" >> $GITHUB_STEP_SUMMARY
-          echo "- Lines: ${PR_LINES}%" >> $GITHUB_STEP_SUMMARY
-          echo "- Functions: ${PR_FUNCTIONS}%" >> $GITHUB_STEP_SUMMARY
-
-          # Calculate diff if baseline exists
-          if [ -f baseline-coverage/lcov.info ] && [ -n "$BASELINE_LINES" ]; then
-            LINE_DIFF=$(echo "$PR_LINES - $BASELINE_LINES" | bc)
-            FUNC_DIFF=$(echo "$PR_FUNCTIONS - $BASELINE_FUNCTIONS" | bc)
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Coverage Change:**" >> $GITHUB_STEP_SUMMARY
-            echo "- Lines: ${LINE_DIFF}%" >> $GITHUB_STEP_SUMMARY
-            echo "- Functions: ${FUNC_DIFF}%" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Current Coverage | ${PR_LINES}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Base Branch Coverage | ${BASELINE_LINES}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Delta | ${LINE_DIFF}% ${DELTA_INDICATOR} |" >> $GITHUB_STEP_SUMMARY
         shell: bash
 
-      - name: Compare Coverage (Windows)
-        if: startsWith(matrix.os, 'windows') && steps.download-baseline.outcome == 'success'
+      - name: Generate Coverage Report (Windows)
+        if: startsWith(matrix.os, 'windows')
+        id: coverage-windows
         run: |
-          echo "## Coverage Comparison for ${{ matrix.os }}" >> $env:GITHUB_STEP_SUMMARY
-          echo "" >> $env:GITHUB_STEP_SUMMARY
+          # Extract PR coverage
+          $prContent = Get-Content -Path "lcov.info" -Raw
+          $prLinesFound = ($prContent | Select-String -Pattern "LF:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
+          $prLinesHit = ($prContent | Select-String -Pattern "LH:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
+          if ($prLinesFound -gt 0) {
+            $prPct = [math]::Round(($prLinesHit / $prLinesFound) * 100, 2)
+          } else {
+            $prPct = 0
+          }
 
-          # Extract coverage info using PowerShell
+          # Extract baseline coverage (default to 0 if not available)
           if (Test-Path "baseline-coverage/lcov.info") {
             $baselineContent = Get-Content -Path "baseline-coverage/lcov.info" -Raw
             $baselineLinesFound = ($baselineContent | Select-String -Pattern "LF:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
             $baselineLinesHit = ($baselineContent | Select-String -Pattern "LH:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
             if ($baselineLinesFound -gt 0) {
               $baselinePct = [math]::Round(($baselineLinesHit / $baselineLinesFound) * 100, 2)
-              echo "**Baseline Coverage:** ${baselinePct}% lines" >> $env:GITHUB_STEP_SUMMARY
+            } else {
+              $baselinePct = 0
             }
+          } else {
+            $baselinePct = 0
           }
 
-          $prContent = Get-Content -Path "lcov.info" -Raw
-          $prLinesFound = ($prContent | Select-String -Pattern "LF:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
-          $prLinesHit = ($prContent | Select-String -Pattern "LH:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
-          if ($prLinesFound -gt 0) {
-            $prPct = [math]::Round(($prLinesHit / $prLinesFound) * 100, 2)
-            echo "**PR Coverage:** ${prPct}% lines" >> $env:GITHUB_STEP_SUMMARY
+          $diff = [math]::Round($prPct - $baselinePct, 2)
+
+          if ($diff -gt 0) {
+            $deltaIndicator = ":white_check_mark:"
+          } elseif ($diff -lt 0) {
+            $deltaIndicator = ":x:"
+          } else {
+            $deltaIndicator = ":heavy_minus_sign:"
           }
 
-          if ($baselinePct -and $prPct) {
-            $diff = [math]::Round($prPct - $baselinePct, 2)
-            echo "**Coverage Change:** ${diff}%" >> $env:GITHUB_STEP_SUMMARY
-          }
+          # Set outputs
+          echo "pr_lines=$prPct" >> $env:GITHUB_OUTPUT
+          echo "baseline_lines=$baselinePct" >> $env:GITHUB_OUTPUT
+          echo "line_diff=$diff" >> $env:GITHUB_OUTPUT
+          echo "delta_indicator=$deltaIndicator" >> $env:GITHUB_OUTPUT
+
+          # Write step summary
+          echo "## Test Coverage Report (${{ matrix.os }})" >> $env:GITHUB_STEP_SUMMARY
+          echo "" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $env:GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Current Coverage | ${prPct}% |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Base Branch Coverage | ${baselinePct}% |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Delta | ${diff}% ${deltaIndicator} |" >> $env:GITHUB_STEP_SUMMARY
         shell: pwsh
 
-      - name: No Baseline Available
-        if: steps.download-baseline.outcome != 'success'
-        run: |
-          echo "## Coverage Report for ${{ matrix.os }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "No baseline coverage available for comparison. This is expected for new repositories or when coverage-baseline workflow hasn't run yet on main branch." >> $GITHUB_STEP_SUMMARY
-        shell: bash
+      - name: Post Coverage Comment (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-linux
+          message: |
+            ## Test Coverage Report (Linux)
+
+            | Metric | Value |
+            |--------|-------|
+            | Current Coverage | ${{ steps.coverage-linux.outputs.pr_lines }}% |
+            | Base Branch Coverage | ${{ steps.coverage-linux.outputs.baseline_lines }}% |
+            | Delta | ${{ steps.coverage-linux.outputs.line_diff }}% ${{ steps.coverage-linux.outputs.delta_indicator }} |
+
+            ---
+            ${{ steps.coverage-linux.outputs.line_diff > 0 && 'Coverage increased! Great work!' || (steps.coverage-linux.outputs.line_diff < 0 && 'Coverage decreased. Please add tests for new code.' || 'Coverage unchanged.') }}
+
+      - name: Post Coverage Comment (Windows)
+        if: startsWith(matrix.os, 'windows')
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-windows
+          message: |
+            ## Test Coverage Report (Windows)
+
+            | Metric | Value |
+            |--------|-------|
+            | Current Coverage | ${{ steps.coverage-windows.outputs.pr_lines }}% |
+            | Base Branch Coverage | ${{ steps.coverage-windows.outputs.baseline_lines }}% |
+            | Delta | ${{ steps.coverage-windows.outputs.line_diff }}% ${{ steps.coverage-windows.outputs.delta_indicator }} |
+
+            ---
+            ${{ steps.coverage-windows.outputs.line_diff > 0 && 'Coverage increased! Great work!' || (steps.coverage-windows.outputs.line_diff < 0 && 'Coverage decreased. Please add tests for new code.' || 'Coverage unchanged.') }}
