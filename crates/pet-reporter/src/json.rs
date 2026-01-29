@@ -21,6 +21,12 @@ pub struct JsonReporter {
     environments: Arc<Mutex<Vec<PythonEnvironment>>>,
 }
 
+impl Default for JsonReporter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JsonReporter {
     pub fn new() -> Self {
         JsonReporter {

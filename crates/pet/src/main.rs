@@ -37,6 +37,7 @@ enum Commands {
         cache_directory: Option<PathBuf>,
 
         /// Display verbose output (defaults to warnings).
+        /// Note: Has no effect when --json is used, as logging is disabled to avoid polluting JSON output.
         #[arg(short, long)]
         verbose: bool,
 
