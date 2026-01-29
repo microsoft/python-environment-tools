@@ -186,3 +186,150 @@ fn parse_prompt(line: &str) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_parse_version_standard() {
+        let line = "version = 3.11.4";
+        let result = parse_version(line, &VERSION);
+        assert!(result.is_some());
+        let (ver, major, minor) = result.unwrap();
+        assert_eq!(ver, "3.11.4");
+        assert_eq!(major, 3);
+        assert_eq!(minor, 11);
+    }
+
+    #[test]
+    fn test_parse_version_info() {
+        let line = "version_info = 3.12.0.final";
+        let result = parse_version(line, &VERSION_INFO);
+        assert!(result.is_some());
+        let (ver, major, minor) = result.unwrap();
+        assert_eq!(ver, "3.12.0.final");
+        assert_eq!(major, 3);
+        assert_eq!(minor, 12);
+    }
+
+    #[test]
+    fn test_parse_version_no_match() {
+        let line = "home = /usr/bin/python";
+        let result = parse_version(line, &VERSION);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_prompt_double_quotes() {
+        let line = r#"prompt = "my-env""#;
+        let result = parse_prompt(line);
+        assert_eq!(result, Some("my-env".to_string()));
+    }
+
+    #[test]
+    fn test_parse_prompt_single_quotes() {
+        let line = "prompt = 'my-env'";
+        let result = parse_prompt(line);
+        assert_eq!(result, Some("my-env".to_string()));
+    }
+
+    #[test]
+    fn test_parse_prompt_no_quotes() {
+        let line = "prompt = my-venv";
+        let result = parse_prompt(line);
+        assert_eq!(result, Some("my-venv".to_string()));
+    }
+
+    #[test]
+    fn test_parse_prompt_with_spaces() {
+        let line = "prompt   =   my-venv  ";
+        let result = parse_prompt(line);
+        assert_eq!(result, Some("my-venv".to_string()));
+    }
+
+    #[test]
+    fn test_parse_prompt_empty_value() {
+        let line = "prompt = ";
+        let result = parse_prompt(line);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_prompt_not_prompt_line() {
+        let line = "home = /usr/bin/python";
+        let result = parse_prompt(line);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_pyvenv_cfg_find_in_directory() {
+        let dir = tempdir().unwrap();
+        let cfg_path = dir.path().join("pyvenv.cfg");
+        let mut file = fs::File::create(&cfg_path).unwrap();
+        writeln!(file, "version = 3.11.4").unwrap();
+        writeln!(file, "prompt = test-env").unwrap();
+
+        let result = PyVenvCfg::find(dir.path());
+        assert!(result.is_some());
+        let cfg = result.unwrap();
+        assert_eq!(cfg.version, "3.11.4");
+        assert_eq!(cfg.version_major, 3);
+        assert_eq!(cfg.version_minor, 11);
+        assert_eq!(cfg.prompt, Some("test-env".to_string()));
+    }
+
+    #[test]
+    fn test_pyvenv_cfg_find_from_bin() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let cfg_path = dir.path().join("pyvenv.cfg");
+        let mut file = fs::File::create(&cfg_path).unwrap();
+        writeln!(file, "version = 3.10.0").unwrap();
+
+        let result = PyVenvCfg::find(&bin_dir);
+        assert!(result.is_some());
+        let cfg = result.unwrap();
+        assert_eq!(cfg.version, "3.10.0");
+        assert_eq!(cfg.version_major, 3);
+        assert_eq!(cfg.version_minor, 10);
+    }
+
+    #[test]
+    fn test_pyvenv_cfg_not_found() {
+        let dir = tempdir().unwrap();
+        let result = PyVenvCfg::find(dir.path());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_pyvenv_cfg_missing_version() {
+        let dir = tempdir().unwrap();
+        let cfg_path = dir.path().join("pyvenv.cfg");
+        let mut file = fs::File::create(&cfg_path).unwrap();
+        writeln!(file, "home = /usr/bin/python").unwrap();
+        writeln!(file, "prompt = my-env").unwrap();
+
+        let result = PyVenvCfg::find(dir.path());
+        assert!(result.is_none()); // Version is required
+    }
+
+    #[test]
+    fn test_pyvenv_cfg_version_info_format() {
+        let dir = tempdir().unwrap();
+        let cfg_path = dir.path().join("pyvenv.cfg");
+        let mut file = fs::File::create(&cfg_path).unwrap();
+        writeln!(file, "version_info = 3.12.1.final.0").unwrap();
+
+        let result = PyVenvCfg::find(dir.path());
+        assert!(result.is_some());
+        let cfg = result.unwrap();
+        assert_eq!(cfg.version, "3.12.1.final.0");
+        assert_eq!(cfg.version_major, 3);
+        assert_eq!(cfg.version_minor, 12);
+    }
+}
