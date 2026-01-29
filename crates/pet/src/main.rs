@@ -53,6 +53,10 @@ enum Commands {
         /// Will not search in the workspace directories.
         #[arg(short, long, conflicts_with = "workspace")]
         kind: Option<PythonEnvironmentKind>,
+
+        /// Output results in JSON format.
+        #[arg(short, long)]
+        json: bool,
     },
     /// Resolves & reports the details of the the environment to the standard output.
     Resolve {
@@ -83,6 +87,7 @@ fn main() {
         workspace: false,
         cache_directory: None,
         kind: None,
+        json: false,
     }) {
         Commands::Find {
             list,
@@ -92,6 +97,7 @@ fn main() {
             workspace,
             cache_directory,
             kind,
+            json,
         } => {
             let mut workspace_only = workspace;
             if search_paths.clone().is_some()
@@ -113,6 +119,7 @@ fn main() {
                 workspace_only,
                 cache_directory,
                 kind,
+                json,
             });
         }
         Commands::Resolve {

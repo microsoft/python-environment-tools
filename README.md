@@ -68,6 +68,11 @@ PET can be run directly from the command line to discover all Python environment
   pet find --list --verbose
   ```
 
+- **Find all environments and output as JSON**:
+  ```bash
+  pet find --json
+  ```
+
 - **Search only in workspace/project directories**:
   ```bash
   pet find --list --workspace

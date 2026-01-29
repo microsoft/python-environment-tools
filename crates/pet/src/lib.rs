@@ -32,14 +32,18 @@ pub struct FindOptions {
     pub workspace_only: bool,
     pub cache_directory: Option<PathBuf>,
     pub kind: Option<PythonEnvironmentKind>,
+    pub json: bool,
 }
 
 pub fn find_and_report_envs_stdio(options: FindOptions) {
-    stdio::initialize_logger(if options.verbose {
-        log::LevelFilter::Trace
-    } else {
-        log::LevelFilter::Warn
-    });
+    // Don't initialize logger if JSON output is requested to avoid polluting JSON
+    if !options.json {
+        stdio::initialize_logger(if options.verbose {
+            log::LevelFilter::Trace
+        } else {
+            log::LevelFilter::Warn
+        });
+    }
     let now = SystemTime::now();
     let config = create_config(&options);
     let search_scope = if options.workspace_only {
@@ -70,8 +74,11 @@ pub fn find_and_report_envs_stdio(options: FindOptions) {
         search_scope,
     );
 
-    println!("Completed in {}ms", now.elapsed().unwrap().as_millis())
+    if !options.json {
+        println!("Completed in {}ms", now.elapsed().unwrap().as_millis())
+    }
 }
+
 
 fn create_config(options: &FindOptions) -> Configuration {
     let mut config = Configuration::default();
@@ -120,77 +127,94 @@ fn find_envs(
         Some(SearchScope::Global(kind)) => Some(kind),
         _ => None,
     };
-    let stdio_reporter = Arc::new(stdio::create_reporter(options.print_list, kind));
-    let reporter = CacheReporter::new(stdio_reporter.clone());
 
-    let summary = find_and_report_envs(&reporter, config, locators, environment, search_scope);
-    if options.report_missing {
-        // By now all conda envs have been found
-        // Spawn conda
-        // & see if we can find more environments by spawning conda.
-        let _ = conda_locator.find_and_report_missing_envs(&reporter, None);
-        let _ = poetry_locator.find_and_report_missing_envs(&reporter, None);
-    }
+    if options.json {
+        // Use JSON reporter
+        let json_reporter = Arc::new(pet_reporter::json::create_reporter());
+        let reporter = CacheReporter::new(json_reporter.clone());
 
-    if options.print_summary {
-        let summary = summary.lock().unwrap();
-        if !summary.locators.is_empty() {
-            println!();
-            println!("Breakdown by each locator:");
-            println!("--------------------------");
-            for locator in summary.locators.iter() {
-                println!("{:<20} : {:?}", format!("{:?}", locator.0), locator.1);
-            }
-            println!()
+        let _ = find_and_report_envs(&reporter, config, locators, environment, search_scope);
+        if options.report_missing {
+            let _ = conda_locator.find_and_report_missing_envs(&reporter, None);
+            let _ = poetry_locator.find_and_report_missing_envs(&reporter, None);
         }
 
-        if !summary.breakdown.is_empty() {
-            println!("Breakdown for finding Environments:");
-            println!("-----------------------------------");
-            for item in summary.breakdown.iter() {
-                println!("{:<20} : {:?}", item.0, item.1);
-            }
-            println!();
+        // Output JSON
+        json_reporter.output_json();
+    } else {
+        // Use stdio reporter
+        let stdio_reporter = Arc::new(stdio::create_reporter(options.print_list, kind));
+        let reporter = CacheReporter::new(stdio_reporter.clone());
+
+        let summary = find_and_report_envs(&reporter, config, locators, environment, search_scope);
+        if options.report_missing {
+            // By now all conda envs have been found
+            // Spawn conda
+            // & see if we can find more environments by spawning conda.
+            let _ = conda_locator.find_and_report_missing_envs(&reporter, None);
+            let _ = poetry_locator.find_and_report_missing_envs(&reporter, None);
         }
 
-        let summary = stdio_reporter.get_summary();
-        if !summary.managers.is_empty() {
-            println!("Managers:");
-            println!("---------");
-            for (k, v) in summary
-                .managers
-                .clone()
-                .into_iter()
-                .map(|(k, v)| (format!("{k:?}"), v))
-                .collect::<BTreeMap<String, u16>>()
-            {
-                println!("{k:<20} : {v:?}");
+        if options.print_summary {
+            let summary = summary.lock().unwrap();
+            if !summary.locators.is_empty() {
+                println!();
+                println!("Breakdown by each locator:");
+                println!("--------------------------");
+                for locator in summary.locators.iter() {
+                    println!("{:<20} : {:?}", format!("{:?}", locator.0), locator.1);
+                }
+                println!()
             }
-            println!()
-        }
-        if !summary.environments.is_empty() {
-            let total = summary
-                .environments
-                .clone()
-                .iter()
-                .fold(0, |total, b| total + b.1);
-            println!("Environments ({total}):");
-            println!("------------------");
-            for (k, v) in summary
-                .environments
-                .clone()
-                .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k.map(|v| format!("{v:?}")).unwrap_or("Unknown".to_string()),
-                        v,
-                    )
-                })
-                .collect::<BTreeMap<String, u16>>()
-            {
-                println!("{k:<20} : {v:?}");
+
+            if !summary.breakdown.is_empty() {
+                println!("Breakdown for finding Environments:");
+                println!("-----------------------------------");
+                for item in summary.breakdown.iter() {
+                    println!("{:<20} : {:?}", item.0, item.1);
+                }
+                println!();
             }
-            println!()
+
+            let summary = stdio_reporter.get_summary();
+            if !summary.managers.is_empty() {
+                println!("Managers:");
+                println!("---------");
+                for (k, v) in summary
+                    .managers
+                    .clone()
+                    .into_iter()
+                    .map(|(k, v)| (format!("{k:?}"), v))
+                    .collect::<BTreeMap<String, u16>>()
+                {
+                    println!("{k:<20} : {v:?}");
+                }
+                println!()
+            }
+            if !summary.environments.is_empty() {
+                let total = summary
+                    .environments
+                    .clone()
+                    .iter()
+                    .fold(0, |total, b| total + b.1);
+                println!("Environments ({total}):");
+                println!("------------------");
+                for (k, v) in summary
+                    .environments
+                    .clone()
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (
+                            k.map(|v| format!("{v:?}")).unwrap_or("Unknown".to_string()),
+                            v,
+                        )
+                    })
+                    .collect::<BTreeMap<String, u16>>()
+                {
+                    println!("{k:<20} : {v:?}");
+                }
+                println!()
+            }
         }
     }
 }
