@@ -21,6 +21,7 @@ use pet_core::{
     Configuration, Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
+use pet_fs::glob::expand_glob_patterns;
 use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
@@ -92,11 +93,13 @@ pub fn start_jsonrpc_server() {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigureOptions {
     /// These are paths like workspace folders, where we can look for environments.
+    /// Glob patterns are supported (e.g., "/home/user/projects/*").
     pub workspace_directories: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
     pub poetry_executable: Option<PathBuf>,
     /// Custom locations where environments can be found. Generally global locations where virtualenvs & the like can be found.
     /// Workspace directories should not be included into this list.
+    /// Glob patterns are supported (e.g., "/home/user/envs/*").
     pub environment_directories: Option<Vec<PathBuf>>,
     /// Directory to cache the Python environment details.
     pub cache_directory: Option<PathBuf>,
@@ -108,9 +111,22 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 let mut cfg = context.configuration.write().unwrap();
-                cfg.workspace_directories = configure_options.workspace_directories;
+                // Expand glob patterns in workspace_directories
+                cfg.workspace_directories = configure_options.workspace_directories.map(|dirs| {
+                    expand_glob_patterns(&dirs)
+                        .into_iter()
+                        .filter(|p| p.is_dir())
+                        .collect()
+                });
                 cfg.conda_executable = configure_options.conda_executable;
-                cfg.environment_directories = configure_options.environment_directories;
+                // Expand glob patterns in environment_directories
+                cfg.environment_directories =
+                    configure_options.environment_directories.map(|dirs| {
+                        expand_glob_patterns(&dirs)
+                            .into_iter()
+                            .filter(|p| p.is_dir())
+                            .collect()
+                    });
                 cfg.poetry_executable = configure_options.poetry_executable;
                 // We will not support changing the cache directories once set.
                 // No point, supporting such a use case.
@@ -142,6 +158,7 @@ pub struct RefreshOptions {
     /// If provided, then limit the search paths to these.
     /// Note: Search paths can also include Python exes or Python env folders.
     /// Traditionally, search paths are workspace folders.
+    /// Glob patterns are supported (e.g., "/home/user/*/venv", "**/.venv").
     pub search_paths: Option<Vec<PathBuf>>,
 }
 
@@ -187,16 +204,23 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                     // Always clear this, as we will either serach in specified folder or a specific kind in global locations.
                     config.workspace_directories = None;
                     if let Some(search_paths) = refresh_options.search_paths {
+                        // Expand any glob patterns in the search paths
+                        let expanded_paths = expand_glob_patterns(&search_paths);
+                        trace!(
+                            "Expanded {} search paths to {} paths",
+                            search_paths.len(),
+                            expanded_paths.len()
+                        );
                         // These workspace folders are only for this refresh.
                         config.workspace_directories = Some(
-                            search_paths
+                            expanded_paths
                                 .iter()
                                 .filter(|p| p.is_dir())
                                 .cloned()
                                 .collect(),
                         );
                         config.executables = Some(
-                            search_paths
+                            expanded_paths
                                 .iter()
                                 .filter(|p| p.is_file())
                                 .cloned()
