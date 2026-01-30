@@ -4,5 +4,6 @@
 pub mod cache;
 pub mod collect;
 pub mod environment;
+pub mod json;
 pub mod jsonrpc;
 pub mod stdio;
