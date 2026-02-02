@@ -1,0 +1,161 @@
+name: Performance Tests
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release*
+      - release/*
+      - release-*
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      compare_baseline:
+        description: "Compare against baseline metrics"
+        required: false
+        default: "true"
+
+jobs:
+  performance:
+    name: E2E Performance Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set Python to PATH
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Add Conda to PATH (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
+          echo "PATH=$path" >> $env:GITHUB_ENV
+
+      - name: Add Conda to PATH (Ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install Conda + add to PATH (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
+            curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
+          else
+            curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+          fi
+          bash ~/miniconda.sh -b -p ~/miniconda
+          echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
+          echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Create test Conda environment
+        run: conda create -n perf-test-env python=3.12 -y
+
+      - name: Create test venv
+        run: python -m venv .venv
+        shell: bash
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cargo Fetch
+        run: cargo fetch
+        shell: bash
+
+      - name: Build Release
+        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Run Performance Tests
+        run: cargo test --release --features ci-perf --target ${{ matrix.target }} -- --nocapture --test-threads=1 2>&1 | tee perf-output.txt
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: warn
+        shell: bash
+
+      - name: Extract Performance Metrics
+        id: metrics
+        run: |
+          # Extract JSON metrics from test output
+          if grep -q "JSON metrics:" perf-output.txt; then
+            # Extract lines after "JSON metrics:" until the closing brace
+            sed -n '/JSON metrics:/,/^}/p' perf-output.txt | tail -n +2 > metrics.json
+            
+            # Parse key metrics
+            SERVER_STARTUP=$(jq -r '.server_startup_ms // "N/A"' metrics.json)
+            FULL_REFRESH=$(jq -r '.full_refresh_ms // "N/A"' metrics.json)
+            ENV_COUNT=$(jq -r '.environments_count // "N/A"' metrics.json)
+            
+            echo "server_startup_ms=$SERVER_STARTUP" >> $GITHUB_OUTPUT
+            echo "full_refresh_ms=$FULL_REFRESH" >> $GITHUB_OUTPUT
+            echo "environments_count=$ENV_COUNT" >> $GITHUB_OUTPUT
+            
+            echo "### Performance Metrics (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Server Startup | ${SERVER_STARTUP}ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| Full Refresh | ${FULL_REFRESH}ms |" >> $GITHUB_STEP_SUMMARY
+            echo "| Environments Found | ${ENV_COUNT} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No JSON metrics found in output"
+          fi
+        shell: bash
+
+      - name: Upload Performance Results
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results-${{ matrix.os }}-${{ matrix.target }}
+          path: |
+            perf-output.txt
+            metrics.json
+          if-no-files-found: ignore
+
+  summary:
+    name: Performance Summary
+    needs: performance
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: perf-results
+
+      - name: Generate Summary Report
+        run: |
+          echo "# Performance Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Server Startup | Full Refresh | Environments |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|----------------|--------------|--------------|" >> $GITHUB_STEP_SUMMARY
+
+          for dir in perf-results/*/; do
+            if [ -f "${dir}metrics.json" ]; then
+              platform=$(basename "$dir" | sed 's/perf-results-//')
+              startup=$(jq -r '.server_startup_ms // "N/A"' "${dir}metrics.json")
+              refresh=$(jq -r '.full_refresh_ms // "N/A"' "${dir}metrics.json")
+              envs=$(jq -r '.environments_count // "N/A"' "${dir}metrics.json")
+              echo "| $platform | ${startup}ms | ${refresh}ms | $envs |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+        shell: bash
