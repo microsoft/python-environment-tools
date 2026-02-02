@@ -124,7 +124,7 @@ jobs:
           PR_STARTUP=$(jq -r '.server_startup_ms // 0' metrics.json)
           PR_REFRESH=$(jq -r '.full_refresh_ms // 0' metrics.json)
           PR_ENVS=$(jq -r '.environments_count // 0' metrics.json)
-          
+
           # Extract baseline metrics (default to 0 if not available)
           if [ -f baseline-perf/metrics.json ]; then
             BASELINE_STARTUP=$(jq -r '.server_startup_ms // 0' baseline-perf/metrics.json)
@@ -135,24 +135,24 @@ jobs:
             BASELINE_REFRESH=0
             BASELINE_ENVS=0
           fi
-          
+
           # Calculate diff (positive means slowdown, negative means speedup)
           STARTUP_DIFF=$(echo "$PR_STARTUP - $BASELINE_STARTUP" | bc)
           REFRESH_DIFF=$(echo "$PR_REFRESH - $BASELINE_REFRESH" | bc)
-          
+
           # Calculate percentage change
           if [ "$BASELINE_STARTUP" != "0" ]; then
             STARTUP_PCT=$(echo "scale=1; ($STARTUP_DIFF / $BASELINE_STARTUP) * 100" | bc)
           else
             STARTUP_PCT="N/A"
           fi
-          
+
           if [ "$BASELINE_REFRESH" != "0" ]; then
             REFRESH_PCT=$(echo "scale=1; ($REFRESH_DIFF / $BASELINE_REFRESH) * 100" | bc)
           else
             REFRESH_PCT="N/A"
           fi
-          
+
           # Determine delta indicators (for perf, negative is good = faster)
           if (( $(echo "$REFRESH_DIFF < -100" | bc -l) )); then
             DELTA_INDICATOR=":rocket:"
@@ -165,7 +165,7 @@ jobs:
           else
             DELTA_INDICATOR=":heavy_minus_sign:"
           fi
-          
+
           # Set outputs
           echo "pr_startup=$PR_STARTUP" >> $GITHUB_OUTPUT
           echo "pr_refresh=$PR_REFRESH" >> $GITHUB_OUTPUT
@@ -176,7 +176,7 @@ jobs:
           echo "startup_pct=$STARTUP_PCT" >> $GITHUB_OUTPUT
           echo "refresh_pct=$REFRESH_PCT" >> $GITHUB_OUTPUT
           echo "delta_indicator=$DELTA_INDICATOR" >> $GITHUB_OUTPUT
-          
+
           # Write step summary
           echo "## Performance Report (Linux)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -196,7 +196,7 @@ jobs:
           $prStartup = $prMetrics.server_startup_ms
           $prRefresh = $prMetrics.full_refresh_ms
           $prEnvs = $prMetrics.environments_count
-          
+
           # Extract baseline metrics (default to 0 if not available)
           if (Test-Path "baseline-perf/metrics.json") {
             $baselineMetrics = Get-Content -Path "baseline-perf/metrics.json" -Raw | ConvertFrom-Json
@@ -208,24 +208,24 @@ jobs:
             $baselineRefresh = 0
             $baselineEnvs = 0
           }
-          
+
           # Calculate diff
           $startupDiff = $prStartup - $baselineStartup
           $refreshDiff = $prRefresh - $baselineRefresh
-          
+
           # Calculate percentage change
           if ($baselineStartup -gt 0) {
             $startupPct = [math]::Round(($startupDiff / $baselineStartup) * 100, 1)
           } else {
             $startupPct = "N/A"
           }
-          
+
           if ($baselineRefresh -gt 0) {
             $refreshPct = [math]::Round(($refreshDiff / $baselineRefresh) * 100, 1)
           } else {
             $refreshPct = "N/A"
           }
-          
+
           # Determine delta indicator
           if ($refreshDiff -lt -100) {
             $deltaIndicator = ":rocket:"
@@ -238,7 +238,7 @@ jobs:
           } else {
             $deltaIndicator = ":heavy_minus_sign:"
           }
-          
+
           # Set outputs
           echo "pr_startup=$prStartup" >> $env:GITHUB_OUTPUT
           echo "pr_refresh=$prRefresh" >> $env:GITHUB_OUTPUT
@@ -249,7 +249,7 @@ jobs:
           echo "startup_pct=$startupPct" >> $env:GITHUB_OUTPUT
           echo "refresh_pct=$refreshPct" >> $env:GITHUB_OUTPUT
           echo "delta_indicator=$deltaIndicator" >> $env:GITHUB_OUTPUT
-          
+
           # Write step summary
           echo "## Performance Report (Windows)" >> $env:GITHUB_STEP_SUMMARY
           echo "" >> $env:GITHUB_STEP_SUMMARY
@@ -268,7 +268,7 @@ jobs:
           PR_STARTUP=$(jq -r '.server_startup_ms // 0' metrics.json)
           PR_REFRESH=$(jq -r '.full_refresh_ms // 0' metrics.json)
           PR_ENVS=$(jq -r '.environments_count // 0' metrics.json)
-          
+
           # Extract baseline metrics (default to 0 if not available)
           if [ -f baseline-perf/metrics.json ]; then
             BASELINE_STARTUP=$(jq -r '.server_startup_ms // 0' baseline-perf/metrics.json)
@@ -279,11 +279,11 @@ jobs:
             BASELINE_REFRESH=0
             BASELINE_ENVS=0
           fi
-          
+
           # Calculate diff
           STARTUP_DIFF=$((PR_STARTUP - BASELINE_STARTUP))
           REFRESH_DIFF=$((PR_REFRESH - BASELINE_REFRESH))
-          
+
           # Set outputs
           echo "pr_startup=$PR_STARTUP" >> $GITHUB_OUTPUT
           echo "pr_refresh=$PR_REFRESH" >> $GITHUB_OUTPUT
@@ -291,7 +291,7 @@ jobs:
           echo "baseline_refresh=$BASELINE_REFRESH" >> $GITHUB_OUTPUT
           echo "startup_diff=$STARTUP_DIFF" >> $GITHUB_OUTPUT
           echo "refresh_diff=$REFRESH_DIFF" >> $GITHUB_OUTPUT
-          
+
           # Write step summary
           echo "## Performance Report (macOS)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -309,16 +309,16 @@ jobs:
           header: perf-linux
           message: |
             ## Performance Report (Linux) ${{ steps.perf-linux.outputs.delta_indicator }}
-            
+
             | Metric | PR | Baseline | Delta | Change |
             |--------|-----|----------|-------|--------|
             | Server Startup | ${{ steps.perf-linux.outputs.pr_startup }}ms | ${{ steps.perf-linux.outputs.baseline_startup }}ms | ${{ steps.perf-linux.outputs.startup_diff }}ms | ${{ steps.perf-linux.outputs.startup_pct }}% |
             | Full Refresh | ${{ steps.perf-linux.outputs.pr_refresh }}ms | ${{ steps.perf-linux.outputs.baseline_refresh }}ms | ${{ steps.perf-linux.outputs.refresh_diff }}ms | ${{ steps.perf-linux.outputs.refresh_pct }}% |
-            
+
             ---
             <details>
             <summary>Legend</summary>
-            
+
             - :rocket: Significant speedup (>100ms faster)
             - :white_check_mark: Faster than baseline
             - :heavy_minus_sign: No significant change
@@ -333,16 +333,16 @@ jobs:
           header: perf-windows
           message: |
             ## Performance Report (Windows) ${{ steps.perf-windows.outputs.delta_indicator }}
-            
+
             | Metric | PR | Baseline | Delta | Change |
             |--------|-----|----------|-------|--------|
             | Server Startup | ${{ steps.perf-windows.outputs.pr_startup }}ms | ${{ steps.perf-windows.outputs.baseline_startup }}ms | ${{ steps.perf-windows.outputs.startup_diff }}ms | ${{ steps.perf-windows.outputs.startup_pct }}% |
             | Full Refresh | ${{ steps.perf-windows.outputs.pr_refresh }}ms | ${{ steps.perf-windows.outputs.baseline_refresh }}ms | ${{ steps.perf-windows.outputs.refresh_diff }}ms | ${{ steps.perf-windows.outputs.refresh_pct }}% |
-            
+
             ---
             <details>
             <summary>Legend</summary>
-            
+
             - :rocket: Significant speedup (>100ms faster)
             - :white_check_mark: Faster than baseline
             - :heavy_minus_sign: No significant change
@@ -357,16 +357,16 @@ jobs:
           header: perf-macos
           message: |
             ## Performance Report (macOS)
-            
+
             | Metric | PR | Baseline | Delta |
             |--------|-----|----------|-------|
             | Server Startup | ${{ steps.perf-macos.outputs.pr_startup }}ms | ${{ steps.perf-macos.outputs.baseline_startup }}ms | ${{ steps.perf-macos.outputs.startup_diff }}ms |
             | Full Refresh | ${{ steps.perf-macos.outputs.pr_refresh }}ms | ${{ steps.perf-macos.outputs.baseline_refresh }}ms | ${{ steps.perf-macos.outputs.refresh_diff }}ms |
-            
+
             ---
             <details>
             <summary>Legend</summary>
-            
+
             - :rocket: Significant speedup (>100ms faster)
             - :white_check_mark: Faster than baseline
             - :heavy_minus_sign: No significant change
