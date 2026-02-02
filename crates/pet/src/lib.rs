@@ -17,10 +17,50 @@ use pet_reporter::{self, cache::CacheReporter, stdio};
 use resolve::resolve_environment;
 use std::path::PathBuf;
 use std::{collections::BTreeMap, env, sync::Arc, time::SystemTime};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub mod find;
 pub mod locators;
 pub mod resolve;
+
+/// Initialize tracing subscriber for performance profiling.
+/// Set RUST_LOG=info or RUST_LOG=pet=debug for more detailed traces.
+/// Set PET_TRACE_FORMAT=json for JSON output (useful for analysis tools).
+///
+/// Note: This replaces the env_logger initialization since tracing-subscriber
+/// provides a log compatibility layer via tracing-log.
+pub fn initialize_tracing(verbose: bool) {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+
+    INIT.call_once(|| {
+        let filter = if verbose {
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("pet=debug"))
+        } else {
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"))
+        };
+
+        let use_json = env::var("PET_TRACE_FORMAT")
+            .map(|v| v == "json")
+            .unwrap_or(false);
+
+        if use_json {
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(fmt::layer().json())
+                .init();
+        } else {
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(
+                    fmt::layer()
+                        .with_target(true)
+                        .with_timer(fmt::time::uptime()),
+                )
+                .init();
+        }
+    });
+}
 
 #[derive(Debug, Clone)]
 pub struct FindOptions {
@@ -35,11 +75,13 @@ pub struct FindOptions {
 }
 
 pub fn find_and_report_envs_stdio(options: FindOptions) {
-    stdio::initialize_logger(if options.verbose {
-        log::LevelFilter::Trace
-    } else {
-        log::LevelFilter::Warn
-    });
+    // Initialize tracing for performance profiling (includes log compatibility)
+    initialize_tracing(options.verbose);
+
+    // Note: We don't call stdio::initialize_logger here anymore since
+    // tracing-subscriber provides log compatibility via tracing-log crate.
+    // stdio::initialize_logger would conflict with our tracing subscriber.
+
     let now = SystemTime::now();
     let config = create_config(&options);
     let search_scope = if options.workspace_only {
@@ -196,11 +238,12 @@ fn find_envs(
 }
 
 pub fn resolve_report_stdio(executable: PathBuf, verbose: bool, cache_directory: Option<PathBuf>) {
-    stdio::initialize_logger(if verbose {
-        log::LevelFilter::Trace
-    } else {
-        log::LevelFilter::Warn
-    });
+    // Initialize tracing for performance profiling (includes log compatibility)
+    initialize_tracing(verbose);
+
+    // Note: We don't call stdio::initialize_logger here anymore since
+    // tracing-subscriber provides log compatibility via tracing-log crate.
+
     let now = SystemTime::now();
 
     if let Some(cache_directory) = cache_directory.clone() {

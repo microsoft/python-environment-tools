@@ -1,0 +1,102 @@
+name: Performance Baseline
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    name: Performance Baseline
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set Python to PATH
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Add Conda to PATH (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
+          echo "PATH=$path" >> $env:GITHUB_ENV
+
+      - name: Add Conda to PATH (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install Conda + add to PATH (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+          bash ~/miniconda.sh -b -p ~/miniconda
+          echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
+          echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Create test Conda environment
+        run: conda create -n perf-test-env python=3.12 -y
+
+      - name: Create test venv
+        run: python -m venv .venv
+        shell: bash
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Cargo Fetch
+        run: cargo fetch
+        shell: bash
+
+      - name: Build Release
+        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
+
+      - name: Run Performance Tests
+        run: cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: warn
+        shell: bash
+
+      - name: Extract Performance Metrics
+        id: metrics
+        run: |
+          # Extract JSON metrics from test output
+          if grep -q "JSON metrics:" perf-output.txt; then
+            # Extract lines after "JSON metrics:" until the closing brace
+            sed -n '/JSON metrics:/,/^}/p' perf-output.txt | tail -n +2 > metrics.json
+            echo "Metrics extracted:"
+            cat metrics.json
+          else
+            echo '{"server_startup_ms": 0, "full_refresh_ms": 0, "environments_count": 0}' > metrics.json
+            echo "No metrics found, created empty metrics"
+          fi
+        shell: bash
+
+      - name: Upload Performance Baseline Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-baseline-${{ matrix.os }}
+          path: metrics.json
+          retention-days: 90

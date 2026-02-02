@@ -7,15 +7,12 @@ on:
       - release*
       - release/*
       - release-*
-  push:
-    branches:
-      - main
   workflow_dispatch:
-    inputs:
-      compare_baseline:
-        description: "Compare against baseline metrics"
-        required: false
-        default: "true"
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
 
 jobs:
   performance:
@@ -31,8 +28,6 @@ jobs:
             target: x86_64-unknown-linux-musl
           - os: macos-latest
             target: x86_64-apple-darwin
-          - os: macos-14
-            target: aarch64-apple-darwin
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,11 +51,7 @@ jobs:
       - name: Install Conda + add to PATH (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
-          if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
-            curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-arm64.sh
-          else
-            curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-          fi
+          curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
           bash ~/miniconda.sh -b -p ~/miniconda
           echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
           echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
@@ -88,7 +79,7 @@ jobs:
         shell: bash
 
       - name: Run Performance Tests
-        run: cargo test --release --features ci-perf --target ${{ matrix.target }} -- --nocapture --test-threads=1 2>&1 | tee perf-output.txt
+        run: cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: warn
@@ -101,61 +92,284 @@ jobs:
           if grep -q "JSON metrics:" perf-output.txt; then
             # Extract lines after "JSON metrics:" until the closing brace
             sed -n '/JSON metrics:/,/^}/p' perf-output.txt | tail -n +2 > metrics.json
-            
-            # Parse key metrics
-            SERVER_STARTUP=$(jq -r '.server_startup_ms // "N/A"' metrics.json)
-            FULL_REFRESH=$(jq -r '.full_refresh_ms // "N/A"' metrics.json)
-            ENV_COUNT=$(jq -r '.environments_count // "N/A"' metrics.json)
-            
-            echo "server_startup_ms=$SERVER_STARTUP" >> $GITHUB_OUTPUT
-            echo "full_refresh_ms=$FULL_REFRESH" >> $GITHUB_OUTPUT
-            echo "environments_count=$ENV_COUNT" >> $GITHUB_OUTPUT
-            
-            echo "### Performance Metrics (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
-            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Server Startup | ${SERVER_STARTUP}ms |" >> $GITHUB_STEP_SUMMARY
-            echo "| Full Refresh | ${FULL_REFRESH}ms |" >> $GITHUB_STEP_SUMMARY
-            echo "| Environments Found | ${ENV_COUNT} |" >> $GITHUB_STEP_SUMMARY
+            echo "Metrics extracted:"
+            cat metrics.json
           else
-            echo "No JSON metrics found in output"
+            echo '{"server_startup_ms": 0, "full_refresh_ms": 0, "environments_count": 0}' > metrics.json
+            echo "No metrics found, created empty metrics"
           fi
         shell: bash
 
-      - name: Upload Performance Results
+      - name: Upload PR Performance Results
         uses: actions/upload-artifact@v4
         with:
-          name: perf-results-${{ matrix.os }}-${{ matrix.target }}
-          path: |
-            perf-output.txt
-            metrics.json
-          if-no-files-found: ignore
+          name: perf-pr-${{ matrix.os }}
+          path: metrics.json
 
-  summary:
-    name: Performance Summary
-    needs: performance
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Download Baseline Performance
+        uses: dawidd6/action-download-artifact@v6
+        id: download-baseline
+        continue-on-error: true
         with:
-          path: perf-results
+          workflow: perf-baseline.yml
+          branch: main
+          name: perf-baseline-${{ matrix.os }}
+          path: baseline-perf
 
-      - name: Generate Summary Report
+      - name: Generate Performance Report (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        id: perf-linux
         run: |
-          echo "# Performance Test Results" >> $GITHUB_STEP_SUMMARY
+          # Extract PR metrics
+          PR_STARTUP=$(jq -r '.server_startup_ms // 0' metrics.json)
+          PR_REFRESH=$(jq -r '.full_refresh_ms // 0' metrics.json)
+          PR_ENVS=$(jq -r '.environments_count // 0' metrics.json)
+          
+          # Extract baseline metrics (default to 0 if not available)
+          if [ -f baseline-perf/metrics.json ]; then
+            BASELINE_STARTUP=$(jq -r '.server_startup_ms // 0' baseline-perf/metrics.json)
+            BASELINE_REFRESH=$(jq -r '.full_refresh_ms // 0' baseline-perf/metrics.json)
+            BASELINE_ENVS=$(jq -r '.environments_count // 0' baseline-perf/metrics.json)
+          else
+            BASELINE_STARTUP=0
+            BASELINE_REFRESH=0
+            BASELINE_ENVS=0
+          fi
+          
+          # Calculate diff (positive means slowdown, negative means speedup)
+          STARTUP_DIFF=$(echo "$PR_STARTUP - $BASELINE_STARTUP" | bc)
+          REFRESH_DIFF=$(echo "$PR_REFRESH - $BASELINE_REFRESH" | bc)
+          
+          # Calculate percentage change
+          if [ "$BASELINE_STARTUP" != "0" ]; then
+            STARTUP_PCT=$(echo "scale=1; ($STARTUP_DIFF / $BASELINE_STARTUP) * 100" | bc)
+          else
+            STARTUP_PCT="N/A"
+          fi
+          
+          if [ "$BASELINE_REFRESH" != "0" ]; then
+            REFRESH_PCT=$(echo "scale=1; ($REFRESH_DIFF / $BASELINE_REFRESH) * 100" | bc)
+          else
+            REFRESH_PCT="N/A"
+          fi
+          
+          # Determine delta indicators (for perf, negative is good = faster)
+          if (( $(echo "$REFRESH_DIFF < -100" | bc -l) )); then
+            DELTA_INDICATOR=":rocket:"
+          elif (( $(echo "$REFRESH_DIFF < 0" | bc -l) )); then
+            DELTA_INDICATOR=":white_check_mark:"
+          elif (( $(echo "$REFRESH_DIFF > 500" | bc -l) )); then
+            DELTA_INDICATOR=":warning:"
+          elif (( $(echo "$REFRESH_DIFF > 100" | bc -l) )); then
+            DELTA_INDICATOR=":small_red_triangle:"
+          else
+            DELTA_INDICATOR=":heavy_minus_sign:"
+          fi
+          
+          # Set outputs
+          echo "pr_startup=$PR_STARTUP" >> $GITHUB_OUTPUT
+          echo "pr_refresh=$PR_REFRESH" >> $GITHUB_OUTPUT
+          echo "baseline_startup=$BASELINE_STARTUP" >> $GITHUB_OUTPUT
+          echo "baseline_refresh=$BASELINE_REFRESH" >> $GITHUB_OUTPUT
+          echo "startup_diff=$STARTUP_DIFF" >> $GITHUB_OUTPUT
+          echo "refresh_diff=$REFRESH_DIFF" >> $GITHUB_OUTPUT
+          echo "startup_pct=$STARTUP_PCT" >> $GITHUB_OUTPUT
+          echo "refresh_pct=$REFRESH_PCT" >> $GITHUB_OUTPUT
+          echo "delta_indicator=$DELTA_INDICATOR" >> $GITHUB_OUTPUT
+          
+          # Write step summary
+          echo "## Performance Report (Linux)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Platform | Server Startup | Full Refresh | Environments |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|----------------|--------------|--------------|" >> $GITHUB_STEP_SUMMARY
-
-          for dir in perf-results/*/; do
-            if [ -f "${dir}metrics.json" ]; then
-              platform=$(basename "$dir" | sed 's/perf-results-//')
-              startup=$(jq -r '.server_startup_ms // "N/A"' "${dir}metrics.json")
-              refresh=$(jq -r '.full_refresh_ms // "N/A"' "${dir}metrics.json")
-              envs=$(jq -r '.environments_count // "N/A"' "${dir}metrics.json")
-              echo "| $platform | ${startup}ms | ${refresh}ms | $envs |" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
+          echo "| Metric | PR | Baseline | Delta | Change |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Server Startup | ${PR_STARTUP}ms | ${BASELINE_STARTUP}ms | ${STARTUP_DIFF}ms | ${STARTUP_PCT}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Full Refresh | ${PR_REFRESH}ms | ${BASELINE_REFRESH}ms | ${REFRESH_DIFF}ms | ${REFRESH_PCT}% ${DELTA_INDICATOR} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environments | ${PR_ENVS} | ${BASELINE_ENVS} | - | - |" >> $GITHUB_STEP_SUMMARY
         shell: bash
+
+      - name: Generate Performance Report (Windows)
+        if: startsWith(matrix.os, 'windows')
+        id: perf-windows
+        run: |
+          # Extract PR metrics
+          $prMetrics = Get-Content -Path "metrics.json" -Raw | ConvertFrom-Json
+          $prStartup = $prMetrics.server_startup_ms
+          $prRefresh = $prMetrics.full_refresh_ms
+          $prEnvs = $prMetrics.environments_count
+          
+          # Extract baseline metrics (default to 0 if not available)
+          if (Test-Path "baseline-perf/metrics.json") {
+            $baselineMetrics = Get-Content -Path "baseline-perf/metrics.json" -Raw | ConvertFrom-Json
+            $baselineStartup = $baselineMetrics.server_startup_ms
+            $baselineRefresh = $baselineMetrics.full_refresh_ms
+            $baselineEnvs = $baselineMetrics.environments_count
+          } else {
+            $baselineStartup = 0
+            $baselineRefresh = 0
+            $baselineEnvs = 0
+          }
+          
+          # Calculate diff
+          $startupDiff = $prStartup - $baselineStartup
+          $refreshDiff = $prRefresh - $baselineRefresh
+          
+          # Calculate percentage change
+          if ($baselineStartup -gt 0) {
+            $startupPct = [math]::Round(($startupDiff / $baselineStartup) * 100, 1)
+          } else {
+            $startupPct = "N/A"
+          }
+          
+          if ($baselineRefresh -gt 0) {
+            $refreshPct = [math]::Round(($refreshDiff / $baselineRefresh) * 100, 1)
+          } else {
+            $refreshPct = "N/A"
+          }
+          
+          # Determine delta indicator
+          if ($refreshDiff -lt -100) {
+            $deltaIndicator = ":rocket:"
+          } elseif ($refreshDiff -lt 0) {
+            $deltaIndicator = ":white_check_mark:"
+          } elseif ($refreshDiff -gt 500) {
+            $deltaIndicator = ":warning:"
+          } elseif ($refreshDiff -gt 100) {
+            $deltaIndicator = ":small_red_triangle:"
+          } else {
+            $deltaIndicator = ":heavy_minus_sign:"
+          }
+          
+          # Set outputs
+          echo "pr_startup=$prStartup" >> $env:GITHUB_OUTPUT
+          echo "pr_refresh=$prRefresh" >> $env:GITHUB_OUTPUT
+          echo "baseline_startup=$baselineStartup" >> $env:GITHUB_OUTPUT
+          echo "baseline_refresh=$baselineRefresh" >> $env:GITHUB_OUTPUT
+          echo "startup_diff=$startupDiff" >> $env:GITHUB_OUTPUT
+          echo "refresh_diff=$refreshDiff" >> $env:GITHUB_OUTPUT
+          echo "startup_pct=$startupPct" >> $env:GITHUB_OUTPUT
+          echo "refresh_pct=$refreshPct" >> $env:GITHUB_OUTPUT
+          echo "delta_indicator=$deltaIndicator" >> $env:GITHUB_OUTPUT
+          
+          # Write step summary
+          echo "## Performance Report (Windows)" >> $env:GITHUB_STEP_SUMMARY
+          echo "" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Metric | PR | Baseline | Delta | Change |" >> $env:GITHUB_STEP_SUMMARY
+          echo "|--------|-----|----------|-------|--------|" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Server Startup | ${prStartup}ms | ${baselineStartup}ms | ${startupDiff}ms | ${startupPct}% |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Full Refresh | ${prRefresh}ms | ${baselineRefresh}ms | ${refreshDiff}ms | ${refreshPct}% ${deltaIndicator} |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Environments | ${prEnvs} | ${baselineEnvs} | - | - |" >> $env:GITHUB_STEP_SUMMARY
+        shell: pwsh
+
+      - name: Generate Performance Report (macOS)
+        if: startsWith(matrix.os, 'macos')
+        id: perf-macos
+        run: |
+          # Extract PR metrics
+          PR_STARTUP=$(jq -r '.server_startup_ms // 0' metrics.json)
+          PR_REFRESH=$(jq -r '.full_refresh_ms // 0' metrics.json)
+          PR_ENVS=$(jq -r '.environments_count // 0' metrics.json)
+          
+          # Extract baseline metrics (default to 0 if not available)
+          if [ -f baseline-perf/metrics.json ]; then
+            BASELINE_STARTUP=$(jq -r '.server_startup_ms // 0' baseline-perf/metrics.json)
+            BASELINE_REFRESH=$(jq -r '.full_refresh_ms // 0' baseline-perf/metrics.json)
+            BASELINE_ENVS=$(jq -r '.environments_count // 0' baseline-perf/metrics.json)
+          else
+            BASELINE_STARTUP=0
+            BASELINE_REFRESH=0
+            BASELINE_ENVS=0
+          fi
+          
+          # Calculate diff
+          STARTUP_DIFF=$((PR_STARTUP - BASELINE_STARTUP))
+          REFRESH_DIFF=$((PR_REFRESH - BASELINE_REFRESH))
+          
+          # Set outputs
+          echo "pr_startup=$PR_STARTUP" >> $GITHUB_OUTPUT
+          echo "pr_refresh=$PR_REFRESH" >> $GITHUB_OUTPUT
+          echo "baseline_startup=$BASELINE_STARTUP" >> $GITHUB_OUTPUT
+          echo "baseline_refresh=$BASELINE_REFRESH" >> $GITHUB_OUTPUT
+          echo "startup_diff=$STARTUP_DIFF" >> $GITHUB_OUTPUT
+          echo "refresh_diff=$REFRESH_DIFF" >> $GITHUB_OUTPUT
+          
+          # Write step summary
+          echo "## Performance Report (macOS)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | PR | Baseline | Delta |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-----|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Server Startup | ${PR_STARTUP}ms | ${BASELINE_STARTUP}ms | ${STARTUP_DIFF}ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| Full Refresh | ${PR_REFRESH}ms | ${BASELINE_REFRESH}ms | ${REFRESH_DIFF}ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environments | ${PR_ENVS} | ${BASELINE_ENVS} | - |" >> $GITHUB_STEP_SUMMARY
+        shell: bash
+
+      - name: Post Performance Comment (Linux)
+        if: startsWith(matrix.os, 'ubuntu') && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: perf-linux
+          message: |
+            ## Performance Report (Linux) ${{ steps.perf-linux.outputs.delta_indicator }}
+            
+            | Metric | PR | Baseline | Delta | Change |
+            |--------|-----|----------|-------|--------|
+            | Server Startup | ${{ steps.perf-linux.outputs.pr_startup }}ms | ${{ steps.perf-linux.outputs.baseline_startup }}ms | ${{ steps.perf-linux.outputs.startup_diff }}ms | ${{ steps.perf-linux.outputs.startup_pct }}% |
+            | Full Refresh | ${{ steps.perf-linux.outputs.pr_refresh }}ms | ${{ steps.perf-linux.outputs.baseline_refresh }}ms | ${{ steps.perf-linux.outputs.refresh_diff }}ms | ${{ steps.perf-linux.outputs.refresh_pct }}% |
+            
+            ---
+            <details>
+            <summary>Legend</summary>
+            
+            - :rocket: Significant speedup (>100ms faster)
+            - :white_check_mark: Faster than baseline
+            - :heavy_minus_sign: No significant change
+            - :small_red_triangle: Slower than baseline (>100ms)
+            - :warning: Significant slowdown (>500ms)
+            </details>
+
+      - name: Post Performance Comment (Windows)
+        if: startsWith(matrix.os, 'windows') && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: perf-windows
+          message: |
+            ## Performance Report (Windows) ${{ steps.perf-windows.outputs.delta_indicator }}
+            
+            | Metric | PR | Baseline | Delta | Change |
+            |--------|-----|----------|-------|--------|
+            | Server Startup | ${{ steps.perf-windows.outputs.pr_startup }}ms | ${{ steps.perf-windows.outputs.baseline_startup }}ms | ${{ steps.perf-windows.outputs.startup_diff }}ms | ${{ steps.perf-windows.outputs.startup_pct }}% |
+            | Full Refresh | ${{ steps.perf-windows.outputs.pr_refresh }}ms | ${{ steps.perf-windows.outputs.baseline_refresh }}ms | ${{ steps.perf-windows.outputs.refresh_diff }}ms | ${{ steps.perf-windows.outputs.refresh_pct }}% |
+            
+            ---
+            <details>
+            <summary>Legend</summary>
+            
+            - :rocket: Significant speedup (>100ms faster)
+            - :white_check_mark: Faster than baseline
+            - :heavy_minus_sign: No significant change
+            - :small_red_triangle: Slower than baseline (>100ms)
+            - :warning: Significant slowdown (>500ms)
+            </details>
+
+      - name: Post Performance Comment (macOS)
+        if: startsWith(matrix.os, 'macos') && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: perf-macos
+          message: |
+            ## Performance Report (macOS)
+            
+            | Metric | PR | Baseline | Delta |
+            |--------|-----|----------|-------|
+            | Server Startup | ${{ steps.perf-macos.outputs.pr_startup }}ms | ${{ steps.perf-macos.outputs.baseline_startup }}ms | ${{ steps.perf-macos.outputs.startup_diff }}ms |
+            | Full Refresh | ${{ steps.perf-macos.outputs.pr_refresh }}ms | ${{ steps.perf-macos.outputs.baseline_refresh }}ms | ${{ steps.perf-macos.outputs.refresh_diff }}ms |
+            
+            ---
+            <details>
+            <summary>Legend</summary>
+            
+            - :rocket: Significant speedup (>100ms faster)
+            - :white_check_mark: Faster than baseline
+            - :heavy_minus_sign: No significant change
+            - :small_red_triangle: Slower than baseline (>100ms)
+            - :warning: Significant slowdown (>500ms)
+            </details>
