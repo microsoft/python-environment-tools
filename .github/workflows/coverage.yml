@@ -1,0 +1,324 @@
+name: Coverage
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release*
+      - release/*
+      - release-*
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set Python to PATH
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Add Conda to PATH (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
+          echo "PATH=$path" >> $env:GITHUB_ENV
+
+      - name: Add Conda to PATH (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Check Conda version
+        run: conda info --all
+
+      - name: Create Conda Environments
+        run: |
+          conda create -n test-env1 python=3.12 -y
+          conda create -n test-env-no-python -y
+          conda create -p ./prefix-envs/.conda1 python=3.12 -y
+          conda create -p ./prefix-envs/.conda-nopy -y
+
+      - name: Install pipenv
+        run: pip install pipenv
+
+      - name: Check pipenv version
+        run: pipenv --version
+
+      - name: Create a Pipenv Environment
+        run: pipenv install
+
+      - name: Install virtualenvwrapper (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          pip install virtualenvwrapper
+          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+          mkdir -p $HOME/.virtualenvs
+          source virtualenvwrapper.sh
+          mkvirtualenv venv_wrapper_env1
+        shell: bash
+
+      - name: Install virtualenvwrapper-win (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          pip install virtualenvwrapper-win
+          echo "WORKON_HOME=$HOME/.virtualenvs" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install pyenv (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          choco install pyenv-win -y
+          echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
+          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install pyenv and pyenv-virtualenv (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          curl https://pyenv.run | bash
+          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
+          echo "PATH=$HOME/.pyenv/bin:$PATH" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Check Pyenv version
+        run: pyenv --version
+        shell: bash
+
+      - name: Install Pyenv Python(s) (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          pyenv install --list
+          pyenv install 3.13:latest 3.12:latest 3.9:latest
+        shell: bash
+
+      - name: Install Pyenv Python(s) (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: |
+          pyenv install --list
+          pyenv install 3.10.5 3.8.10
+        shell: bash
+
+      - name: Create pyenv-virtualenv envs (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          eval "$(pyenv virtualenv-init -)"
+          pyenv virtualenv 3.12 pyenv-virtualenv-env1
+        shell: bash
+
+      - name: Create .venv
+        run: python -m venv .venv
+        shell: bash
+
+      - name: Create .venv2
+        run: python -m venv .venv2
+        shell: bash
+
+      - name: Install Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          run-install: false
+
+      - name: Create Pixi environments
+        run: |
+          pixi init
+          pixi add python
+          pixi add --feature dev python
+          pixi project environment add --feature dev dev
+          pixi install --environment dev
+        shell: bash
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Cargo Fetch
+        run: cargo fetch
+        shell: bash
+
+      - name: Run Tests with Coverage
+        run: cargo llvm-cov --features ci --lcov --output-path lcov.info -- --nocapture --test-threads=1
+        env:
+          RUST_BACKTRACE: 1
+          RUST_LOG: trace
+        shell: bash
+
+      - name: Upload PR Coverage Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-pr-${{ matrix.os }}
+          path: lcov.info
+
+      - name: Download Baseline Coverage
+        uses: dawidd6/action-download-artifact@v6
+        id: download-baseline
+        continue-on-error: true
+        with:
+          workflow: coverage-baseline.yml
+          branch: main
+          name: coverage-baseline-${{ matrix.os }}
+          path: baseline-coverage
+
+      - name: Install lcov (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get update && sudo apt-get install -y lcov
+
+      - name: Install lcov (Windows)
+        if: startsWith(matrix.os, 'windows')
+        run: choco install lcov -y
+        shell: bash
+
+      - name: Generate Coverage Report (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        id: coverage-linux
+        run: |
+          # Extract PR coverage
+          PR_LINES=$(lcov --summary lcov.info 2>&1 | grep "lines" | sed 's/.*: //' | sed 's/%.*//' | tr -d ' ')
+          PR_FUNCTIONS=$(lcov --summary lcov.info 2>&1 | grep "functions" | sed 's/.*: //' | sed 's/%.*//' | tr -d ' ')
+
+          # Extract baseline coverage (default to 0 if not available)
+          if [ -f baseline-coverage/lcov.info ]; then
+            BASELINE_LINES=$(lcov --summary baseline-coverage/lcov.info 2>&1 | grep "lines" | sed 's/.*: //' | sed 's/%.*//' | tr -d ' ')
+            BASELINE_FUNCTIONS=$(lcov --summary baseline-coverage/lcov.info 2>&1 | grep "functions" | sed 's/.*: //' | sed 's/%.*//' | tr -d ' ')
+          else
+            BASELINE_LINES="0"
+            BASELINE_FUNCTIONS="0"
+          fi
+
+          # Calculate diff
+          LINE_DIFF=$(echo "$PR_LINES - $BASELINE_LINES" | bc)
+          FUNC_DIFF=$(echo "$PR_FUNCTIONS - $BASELINE_FUNCTIONS" | bc)
+
+          # Determine delta indicator
+          if (( $(echo "$LINE_DIFF > 0" | bc -l) )); then
+            DELTA_INDICATOR=":white_check_mark:"
+          elif (( $(echo "$LINE_DIFF < 0" | bc -l) )); then
+            DELTA_INDICATOR=":x:"
+          else
+            DELTA_INDICATOR=":heavy_minus_sign:"
+          fi
+
+          # Set outputs
+          echo "pr_lines=$PR_LINES" >> $GITHUB_OUTPUT
+          echo "baseline_lines=$BASELINE_LINES" >> $GITHUB_OUTPUT
+          echo "line_diff=$LINE_DIFF" >> $GITHUB_OUTPUT
+          echo "delta_indicator=$DELTA_INDICATOR" >> $GITHUB_OUTPUT
+
+          # Write step summary
+          echo "## Test Coverage Report (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Current Coverage | ${PR_LINES}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Base Branch Coverage | ${BASELINE_LINES}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Delta | ${LINE_DIFF}% ${DELTA_INDICATOR} |" >> $GITHUB_STEP_SUMMARY
+        shell: bash
+
+      - name: Generate Coverage Report (Windows)
+        if: startsWith(matrix.os, 'windows')
+        id: coverage-windows
+        run: |
+          # Extract PR coverage
+          $prContent = Get-Content -Path "lcov.info" -Raw
+          $prLinesFound = ($prContent | Select-String -Pattern "LF:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
+          $prLinesHit = ($prContent | Select-String -Pattern "LH:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
+          if ($prLinesFound -gt 0) {
+            $prPct = [math]::Round(($prLinesHit / $prLinesFound) * 100, 2)
+          } else {
+            $prPct = 0
+          }
+
+          # Extract baseline coverage (default to 0 if not available)
+          if (Test-Path "baseline-coverage/lcov.info") {
+            $baselineContent = Get-Content -Path "baseline-coverage/lcov.info" -Raw
+            $baselineLinesFound = ($baselineContent | Select-String -Pattern "LF:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
+            $baselineLinesHit = ($baselineContent | Select-String -Pattern "LH:(\d+)" -AllMatches).Matches | ForEach-Object { [int]$_.Groups[1].Value } | Measure-Object -Sum | Select-Object -ExpandProperty Sum
+            if ($baselineLinesFound -gt 0) {
+              $baselinePct = [math]::Round(($baselineLinesHit / $baselineLinesFound) * 100, 2)
+            } else {
+              $baselinePct = 0
+            }
+          } else {
+            $baselinePct = 0
+          }
+
+          $diff = [math]::Round($prPct - $baselinePct, 2)
+
+          if ($diff -gt 0) {
+            $deltaIndicator = ":white_check_mark:"
+          } elseif ($diff -lt 0) {
+            $deltaIndicator = ":x:"
+          } else {
+            $deltaIndicator = ":heavy_minus_sign:"
+          }
+
+          # Set outputs
+          echo "pr_lines=$prPct" >> $env:GITHUB_OUTPUT
+          echo "baseline_lines=$baselinePct" >> $env:GITHUB_OUTPUT
+          echo "line_diff=$diff" >> $env:GITHUB_OUTPUT
+          echo "delta_indicator=$deltaIndicator" >> $env:GITHUB_OUTPUT
+
+          # Write step summary
+          echo "## Test Coverage Report (${{ matrix.os }})" >> $env:GITHUB_STEP_SUMMARY
+          echo "" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $env:GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Current Coverage | ${prPct}% |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Base Branch Coverage | ${baselinePct}% |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Delta | ${diff}% ${deltaIndicator} |" >> $env:GITHUB_STEP_SUMMARY
+        shell: pwsh
+
+      - name: Post Coverage Comment (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-linux
+          message: |
+            ## Test Coverage Report (Linux)
+
+            | Metric | Value |
+            |--------|-------|
+            | Current Coverage | ${{ steps.coverage-linux.outputs.pr_lines }}% |
+            | Base Branch Coverage | ${{ steps.coverage-linux.outputs.baseline_lines }}% |
+            | Delta | ${{ steps.coverage-linux.outputs.line_diff }}% ${{ steps.coverage-linux.outputs.delta_indicator }} |
+
+            ---
+            ${{ steps.coverage-linux.outputs.line_diff > 0 && 'Coverage increased! Great work!' || (steps.coverage-linux.outputs.line_diff < 0 && 'Coverage decreased. Please add tests for new code.' || 'Coverage unchanged.') }}
+
+      - name: Post Coverage Comment (Windows)
+        if: startsWith(matrix.os, 'windows')
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-windows
+          message: |
+            ## Test Coverage Report (Windows)
+
+            | Metric | Value |
+            |--------|-------|
+            | Current Coverage | ${{ steps.coverage-windows.outputs.pr_lines }}% |
+            | Base Branch Coverage | ${{ steps.coverage-windows.outputs.baseline_lines }}% |
+            | Delta | ${{ steps.coverage-windows.outputs.line_diff }}% ${{ steps.coverage-windows.outputs.delta_indicator }} |
+
+            ---
+            ${{ steps.coverage-windows.outputs.line_diff > 0 && 'Coverage increased! Great work!' || (steps.coverage-windows.outputs.line_diff < 0 && 'Coverage decreased. Please add tests for new code.' || 'Coverage unchanged.') }}
