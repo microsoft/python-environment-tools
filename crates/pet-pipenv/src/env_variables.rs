@@ -11,9 +11,13 @@ pub struct EnvVariables {
     #[allow(dead_code)]
     pub pipenv_max_depth: u16,
     pub pipenv_pipfile: String,
+    /// User's home directory
     pub home: Option<PathBuf>,
-    pub xdg_data_home: Option<String>,
+    /// Maps to env var `WORKON_HOME` - custom directory for virtual environments
     pub workon_home: Option<PathBuf>,
+    pub xdg_data_home: Option<String>,
+    /// Maps to env var `PATH`
+    pub path: Option<String>,
 }
 
 impl EnvVariables {
@@ -31,6 +35,7 @@ impl EnvVariables {
             workon_home: env
                 .get_env_var("WORKON_HOME".to_string())
                 .map(PathBuf::from),
+            path: env.get_env_var("PATH".to_string()),
         }
     }
 }
