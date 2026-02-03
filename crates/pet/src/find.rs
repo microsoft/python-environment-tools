@@ -22,6 +22,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::{sync::Arc, thread};
+use tracing::{info_span, instrument};
 
 use crate::locators::identify_python_environment_using_locators;
 
@@ -40,6 +41,7 @@ pub enum SearchScope {
     Workspace,
 }
 
+#[instrument(skip(reporter, configuration, locators, environment), fields(search_scope = ?search_scope))]
 pub fn find_and_report_envs(
     reporter: &dyn Reporter,
     configuration: Configuration,
@@ -72,6 +74,7 @@ pub fn find_and_report_envs(
         // 1. Find using known global locators.
         s.spawn(|| {
             // Find in all the finders
+            let _span = info_span!("locators_phase").entered();
             let start = std::time::Instant::now();
             if search_global {
                 thread::scope(|s| {
@@ -90,6 +93,8 @@ pub fn find_and_report_envs(
                         let locator = locator.clone();
                         let summary = summary.clone();
                         s.spawn(move || {
+                            let locator_name = format!("{:?}", locator.get_kind());
+                            let _span = info_span!("locator_find", locator = %locator_name).entered();
                             let start = std::time::Instant::now();
                             trace!("Searching using locator: {:?}", locator.get_kind());
                             locator.find(reporter);
@@ -115,6 +120,7 @@ pub fn find_and_report_envs(
         });
         // Step 2: Search in PATH variable
         s.spawn(|| {
+            let _span = info_span!("path_search_phase").entered();
             let start = std::time::Instant::now();
             if search_global {
                 let global_env_search_paths: Vec<PathBuf> =
@@ -144,6 +150,7 @@ pub fn find_and_report_envs(
         let environment_directories_for_step3 = environment_directories.clone();
         let summary_for_step3 = summary.clone();
         s.spawn(move || {
+            let _span = info_span!("global_virtualenvs_phase").entered();
             let start = std::time::Instant::now();
             if search_global {
                 let mut possible_environments = vec![];
@@ -202,6 +209,7 @@ pub fn find_and_report_envs(
         // that could the discovery.
         let summary_for_step4 = summary.clone();
         s.spawn(move || {
+            let _span = info_span!("workspace_search_phase").entered();
             let start = std::time::Instant::now();
             thread::scope(|s| {
                 // Find environments in the workspace folders.
@@ -253,6 +261,7 @@ pub fn find_and_report_envs(
     summary
 }
 
+#[instrument(skip(reporter, locators, global_env_search_paths, environment_directories), fields(workspace = %workspace_folder.display()))]
 pub fn find_python_environments_in_workspace_folder_recursive(
     workspace_folder: &PathBuf,
     reporter: &dyn Reporter,
@@ -391,6 +400,7 @@ fn find_python_environments_in_paths_with_locators(
     }
 }
 
+#[instrument(skip(locators, reporter, global_env_search_paths), fields(executable_count = executables.len()))]
 pub fn identify_python_executables_using_locators(
     executables: Vec<PathBuf>,
     locators: &Arc<Vec<Arc<dyn Locator>>>,

@@ -8,6 +8,7 @@ use crate::find::SearchScope;
 use crate::locators::create_locators;
 use lazy_static::lazy_static;
 use log::{error, info, trace};
+use pet::initialize_tracing;
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;
@@ -47,6 +48,7 @@ use std::{
     thread,
     time::SystemTime,
 };
+use tracing::info_span;
 
 lazy_static! {
     /// Used to ensure we can have only one refreh at a time.
@@ -64,7 +66,9 @@ pub struct Context {
 static MISSING_ENVS_REPORTED: AtomicBool = AtomicBool::new(false);
 
 pub fn start_jsonrpc_server() {
-    jsonrpc::initialize_logger(log::LevelFilter::Trace);
+    // Initialize tracing for performance profiling (controlled by RUST_LOG env var)
+    // Note: This includes log compatibility, so we don't call jsonrpc::initialize_logger
+    initialize_tracing(false);
 
     // These are globals for the the lifetime of the server.
     // Hence passed around as Arcs via the context.
@@ -189,6 +193,12 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
             });
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
+                let _span = info_span!("handle_refresh",
+                    search_kind = ?refresh_options.search_kind,
+                    has_search_paths = refresh_options.search_paths.is_some()
+                )
+                .entered();
+
                 // Ensure we can have only one refresh at a time.
                 let lock = REFRESH_LOCK.lock().unwrap();
 
