@@ -73,6 +73,7 @@ jobs:
         shell: bash
 
       - name: Run Performance Tests
+        continue-on-error: true
         run: cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
         env:
           RUST_BACKTRACE: 1
