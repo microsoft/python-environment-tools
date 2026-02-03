@@ -29,6 +29,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Post Coverage Started Comment (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-linux
+          message: |
+            ## Test Coverage Report (Linux)
+
+            :hourglass_flowing_sand: **Coverage analysis in progress...**
+
+            This comment will be updated with results when the analysis completes.
+
+      - name: Post Coverage Started Comment (Windows)
+        if: startsWith(matrix.os, 'windows')
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage-windows
+          message: |
+            ## Test Coverage Report (Windows)
+
+            :hourglass_flowing_sand: **Coverage analysis in progress...**
+
+            This comment will be updated with results when the analysis completes.
+
       - name: Set Python to PATH
         uses: actions/setup-python@v5
         with:
