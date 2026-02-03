@@ -51,7 +51,7 @@ fn gets_pyenv_manager_version_without_env_vars() {
             ".pyenv",
             "pyenv-win",
             "bin",
-            "pyenv.exe",
+            "pyenv.bat",
         ]),
         version: Some("3.5.0".to_string()),
         tool: EnvManagerType::Pyenv,
