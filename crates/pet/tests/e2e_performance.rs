@@ -321,23 +321,41 @@ fn get_pet_executable() -> PathBuf {
         .unwrap()
         .join("target");
 
-    // Prefer release build for performance tests
-    let release_exe = if cfg!(windows) {
-        target_dir.join("release").join("pet.exe")
-    } else {
-        target_dir.join("release").join("pet")
-    };
+    let exe_name = if cfg!(windows) { "pet.exe" } else { "pet" };
 
+    // When building with --target <triple>, cargo outputs to target/<triple>/release/
+    // Check for target-specific builds first (used in CI)
+    let target_triples = [
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-musl",
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+    ];
+
+    // Check target-specific release builds first
+    for triple in target_triples {
+        let target_release_exe = target_dir.join(triple).join("release").join(exe_name);
+        if target_release_exe.exists() {
+            return target_release_exe;
+        }
+    }
+
+    // Fall back to standard release build (no --target flag)
+    let release_exe = target_dir.join("release").join(exe_name);
     if release_exe.exists() {
         return release_exe;
     }
 
-    // Fall back to debug build
-    if cfg!(windows) {
-        target_dir.join("debug").join("pet.exe")
-    } else {
-        target_dir.join("debug").join("pet")
+    // Check target-specific debug builds
+    for triple in target_triples {
+        let target_debug_exe = target_dir.join(triple).join("debug").join(exe_name);
+        if target_debug_exe.exists() {
+            return target_debug_exe;
+        }
     }
+
+    // Fall back to standard debug build
+    target_dir.join("debug").join(exe_name)
 }
 
 /// Get a temporary cache directory for tests
