@@ -25,6 +25,7 @@ use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::{info_span, instrument};
 
 pub fn create_locators(
     conda_locator: Arc<Conda>,
@@ -95,6 +96,7 @@ pub fn create_locators(
 
 /// Identify the Python environment using the locators.
 /// search_path : Generally refers to original folder that was being searched when the env was found.
+#[instrument(skip(locators, global_env_search_paths), fields(executable = %env.executable.display()))]
 pub fn identify_python_environment_using_locators(
     env: &PythonEnv,
     locators: &[Arc<dyn Locator>],
@@ -105,9 +107,16 @@ pub fn identify_python_environment_using_locators(
         "Identifying Python environment using locators: {:?}",
         executable
     );
-    if let Some(env) = locators.iter().find_map(|loc| loc.try_from(env)) {
-        return Some(env);
+
+    // Try each locator and record which one matches
+    for loc in locators.iter() {
+        let locator_name = format!("{:?}", loc.get_kind());
+        let _span = info_span!("try_from_locator", locator = %locator_name).entered();
+        if let Some(env) = loc.try_from(env) {
+            return Some(env);
+        }
     }
+
     trace!(
         "Failed to identify Python environment using locators, now trying to resolve: {:?}",
         executable
@@ -116,6 +125,8 @@ pub fn identify_python_environment_using_locators(
     // Yikes, we have no idea what this is.
     // Lets get the actual interpreter info and try to figure this out.
     // We try to get the interpreter info, hoping that the real exe returned might be identifiable.
+    let _resolve_span =
+        info_span!("resolve_python_env", executable = %executable.display()).entered();
     if let Some(resolved_env) = ResolvedPythonEnv::from(&executable) {
         let env = resolved_env.to_python_env();
         if let Some(env) = locators.iter().find_map(|loc| loc.try_from(&env)) {

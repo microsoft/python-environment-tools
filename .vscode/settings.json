@@ -9,5 +9,8 @@
   },
   "git.branchProtection": ["main", "release/*"],
   "git.branchProtectionPrompt": "alwaysCommitToNewBranch",
-  "git.branchRandomName.enable": true
+  "git.branchRandomName.enable": true,
+  "chat.tools.terminal.autoApprove": {
+    "cargo test": true
+  }
 }
