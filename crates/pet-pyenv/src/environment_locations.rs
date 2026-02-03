@@ -20,7 +20,8 @@ pub fn get_home_pyenv_dir(env_vars: &EnvVariables) -> Option<PathBuf> {
 pub fn get_binary_from_known_paths(env_vars: &EnvVariables) -> Option<PathBuf> {
     for known_path in &env_vars.known_global_search_locations {
         let exe = if cfg!(windows) {
-            known_path.join("pyenv.exe")
+            // pyenv-win provides pyenv.bat, not pyenv.exe
+            known_path.join("pyenv.bat")
         } else {
             known_path.join("pyenv")
         };
