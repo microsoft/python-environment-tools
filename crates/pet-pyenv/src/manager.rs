@@ -85,7 +85,10 @@ fn get_pyenv_manager_version(
 ) -> Option<String> {
     // In windows, the version is stored in the `.pyenv/.version` file
 
-    let pyenv_dir = get_pyenv_dir(environment)?;
+    // Try env var path first, then fall back to home directory
+    let pyenv_dir = get_pyenv_dir(environment)
+        .or_else(|| get_home_pyenv_dir(environment)?.parent().map(PathBuf::from))?;
+
     let mut version_file = pyenv_dir.join(".version");
     if !version_file.exists() {
         // We might have got the path `~/.pyenv/pyenv-win`
