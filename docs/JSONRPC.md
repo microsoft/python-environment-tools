@@ -37,6 +37,8 @@ interface ConfigureParams {
    *
    * If not provided, then environments such as poetry, pipenv, and the like will not be reported.
    * This is because poetry, pipenv, and the like are project specific enviornents.
+   *
+   * Glob patterns are supported (e.g., "/home/user/projects/*", "**/.venv").
    */
   workspaceDirectories?: string[];
   /**
@@ -44,6 +46,8 @@ interface ConfigureParams {
    * This is useful when the virtual environments are stored in some custom locations.
    *
    * Useful for VS Code so users can configure where they store virtual environments.
+   *
+   * Glob patterns are supported (e.g., "/home/user/envs/*", "/home/user/*/venv").
    */
   environmentDirectories?: string[];
   /**
@@ -95,6 +99,17 @@ interface RefreshParams {
    * Limits the search to a specific set of paths.
    * searchPaths can either by directories or Python prefixes/executables or combination of both.
    * Ignores workspace folders passed in configuration request.
+   *
+   * Glob patterns are supported:
+   * - `*` matches any sequence of characters in a path component
+   * - `?` matches any single character
+   * - `**` matches any sequence of path components (recursive)
+   * - `[...]` matches any character inside the brackets
+   *
+   * Examples:
+   * - "/home/user/projects/*" - all directories under projects
+   * - "/home/user/**/venv" - all venv directories recursively
+   * - "/home/user/project[0-9]" - project0, project1, etc.
    */
   searchPaths?: string[];
 }
