@@ -32,6 +32,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Post In-Progress Comment (Linux)
+        if: startsWith(matrix.os, 'ubuntu') && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: perf-linux
+          message: |
+            ## Performance Report (Linux) :hourglass_flowing_sand:
+
+            Running performance tests... Results will appear here when complete.
+
+      - name: Post In-Progress Comment (Windows)
+        if: startsWith(matrix.os, 'windows') && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: perf-windows
+          message: |
+            ## Performance Report (Windows) :hourglass_flowing_sand:
+
+            Running performance tests... Results will appear here when complete.
+
+      - name: Post In-Progress Comment (macOS)
+        if: startsWith(matrix.os, 'macos') && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: perf-macos
+          message: |
+            ## Performance Report (macOS) :hourglass_flowing_sand:
+
+            Running performance tests... Results will appear here when complete.
+
       - name: Set Python to PATH
         uses: actions/setup-python@v5
         with:
