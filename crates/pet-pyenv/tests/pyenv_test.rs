@@ -4,6 +4,63 @@
 mod common;
 
 #[test]
+#[cfg(windows)]
+fn gets_pyenv_manager_version_without_env_vars() {
+    use crate::common::{create_test_environment, resolve_test_path};
+    use pet_conda::Conda;
+    use pet_core::{
+        manager::{EnvManager, EnvManagerType},
+        Locator,
+    };
+    use pet_pyenv::PyEnv;
+    use pet_reporter::{cache::CacheReporter, collect};
+    use std::{collections::HashMap, sync::Arc};
+
+    // Test that pyenv-win version detection works when PYENV/PYENV_ROOT env vars are not set
+    // by falling back to the home directory path (~/.pyenv/.version)
+    let home = resolve_test_path(&["windows", "pyenv_no_env_vars", "user_home"]);
+    let pyenv_bin = resolve_test_path(&[
+        "windows",
+        "pyenv_no_env_vars",
+        "user_home",
+        ".pyenv",
+        "pyenv-win",
+        "bin",
+    ]);
+
+    // Create environment WITHOUT pyenv/pyenv_root env vars, but provide the bin path
+    // via known_global_search_locations (simulates pyenv being on PATH)
+    let environment =
+        create_test_environment(HashMap::new(), Some(home.clone()), vec![pyenv_bin], None);
+
+    let conda = Arc::new(Conda::from(&environment));
+    let locator = PyEnv::from(&environment, conda);
+    let reporter = Arc::new(collect::create_reporter());
+    locator.find(&CacheReporter::new(reporter.clone()));
+
+    let managers = reporter.managers.lock().unwrap().clone();
+
+    // Should find the pyenv manager with version from ~/.pyenv/.version
+    assert_eq!(managers.len(), 1);
+
+    let expected_manager = EnvManager {
+        executable: resolve_test_path(&[
+            "windows",
+            "pyenv_no_env_vars",
+            "user_home",
+            ".pyenv",
+            "pyenv-win",
+            "bin",
+            "pyenv.exe",
+        ]),
+        version: Some("3.5.0".to_string()),
+        tool: EnvManagerType::Pyenv,
+    };
+    assert_eq!(expected_manager.version, managers[0].version);
+    assert_eq!(expected_manager.tool, managers[0].tool);
+}
+
+#[test]
 #[cfg(unix)]
 fn does_not_find_any_pyenv_envs() {
     use common::create_test_environment;
