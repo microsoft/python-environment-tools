@@ -57,7 +57,13 @@ interface ConfigureParams {
    */
   condaExecutable?: string;
   /**
-   * This is the path to the conda executable.
+   * This is the path to the pipenv executable.
+   *
+   * Useful for VS Code so users can configure where they have installed Pipenv.
+   */
+  pipenvExecutable?: string;
+  /**
+   * This is the path to the poetry executable.
    *
    * Useful for VS Code so users can configure where they have installed Poetry.
    */
@@ -260,7 +266,7 @@ interface Manager {
   /**
    * The type of the Manager.
    */
-  tool: "Conda" | "Poetry" | "Pyenv";
+  tool: "Conda" | "Pipenv" | "Poetry" | "Pyenv";
   /**
    * The version of the manager/tool.
    * In the case of conda, this is the version of conda.

@@ -7,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub enum EnvManagerType {
     Conda,
+    Pipenv,
     Poetry,
     Pyenv,
 }

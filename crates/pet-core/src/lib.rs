@@ -30,6 +30,7 @@ pub struct Configuration {
     pub workspace_directories: Option<Vec<PathBuf>>,
     pub executables: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
+    pub pipenv_executable: Option<PathBuf>,
     pub poetry_executable: Option<PathBuf>,
     /// Custom locations where environments can be found.
     /// These are different from search_paths, as these are specific directories where environments are expected.

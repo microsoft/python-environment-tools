@@ -3,21 +3,24 @@
 
 use env_variables::EnvVariables;
 use log::trace;
+use manager::PipenvManager;
 use pet_core::env::PythonEnv;
 use pet_core::os_environment::Environment;
 use pet_core::LocatorKind;
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator,
+    Configuration, Locator,
 };
 use pet_fs::path::norm_case;
 use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 use std::{fs, path::PathBuf};
 
 mod env_variables;
+pub mod manager;
 
 /// Returns the list of directories where pipenv stores centralized virtual environments.
 /// These are the known locations where pipenv creates virtualenvs when not using in-project mode.
@@ -272,21 +275,128 @@ fn is_pipenv(env: &PythonEnv, env_vars: &EnvVariables) -> bool {
     false
 }
 
+/// Get the default virtualenvs directory for pipenv
+/// - If WORKON_HOME is set, use that
+/// - Linux/macOS: ~/.local/share/virtualenvs/
+/// - Windows: %USERPROFILE%\.virtualenvs\
+fn get_virtualenvs_dir(env_vars: &EnvVariables) -> Option<PathBuf> {
+    // First check WORKON_HOME environment variable
+    if let Some(workon_home) = &env_vars.workon_home {
+        if workon_home.is_dir() {
+            return Some(workon_home.clone());
+        }
+    }
+
+    // Fall back to default locations
+    if let Some(home) = &env_vars.home {
+        if std::env::consts::OS == "windows" {
+            let dir = home.join(".virtualenvs");
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        } else {
+            let dir = home.join(".local").join("share").join("virtualenvs");
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
+    }
+
+    None
+}
+
+/// Discover pipenv environments from the virtualenvs directory
+fn list_environments(env_vars: &EnvVariables) -> Vec<PythonEnvironment> {
+    let mut environments = vec![];
+
+    if let Some(virtualenvs_dir) = get_virtualenvs_dir(env_vars) {
+        trace!("Searching for pipenv environments in {:?}", virtualenvs_dir);
+
+        if let Ok(entries) = fs::read_dir(&virtualenvs_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+
+                // Check if this directory is a valid virtualenv with a .project file
+                let project_file = path.join(".project");
+                if !project_file.exists() {
+                    continue;
+                }
+
+                // Read the project path from .project file
+                if let Ok(project_contents) = fs::read_to_string(&project_file) {
+                    let project_path = PathBuf::from(project_contents.trim());
+                    let project_path = norm_case(project_path);
+
+                    // Check if the project has a Pipfile
+                    if !project_path.join(&env_vars.pipenv_pipfile).exists() {
+                        continue;
+                    }
+
+                    // Find the Python executable in the virtualenv
+                    let bin_dir = if std::env::consts::OS == "windows" {
+                        path.join("Scripts")
+                    } else {
+                        path.join("bin")
+                    };
+
+                    let python_exe = if std::env::consts::OS == "windows" {
+                        bin_dir.join("python.exe")
+                    } else {
+                        bin_dir.join("python")
+                    };
+
+                    if python_exe.is_file() {
+                        let symlinks = find_executables(&bin_dir);
+                        let version = version::from_creator_for_virtual_env(&path);
+
+                        let env =
+                            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Pipenv))
+                                .executable(Some(norm_case(python_exe)))
+                                .version(version)
+                                .prefix(Some(norm_case(path.clone())))
+                                .project(Some(project_path))
+                                .symlinks(Some(symlinks))
+                                .build();
+
+                        trace!("Found pipenv environment: {:?}", env);
+                        environments.push(env);
+                    }
+                }
+            }
+        }
+    }
+
+    environments
+}
+
 pub struct PipEnv {
     env_vars: EnvVariables,
+    pipenv_executable: Arc<RwLock<Option<PathBuf>>>,
 }
 
 impl PipEnv {
     pub fn from(environment: &dyn Environment) -> PipEnv {
         PipEnv {
             env_vars: EnvVariables::from(environment),
+            pipenv_executable: Arc::new(RwLock::new(None)),
         }
     }
 }
+
 impl Locator for PipEnv {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::PipEnv
     }
+
+    fn configure(&self, config: &Configuration) {
+        if let Some(exe) = &config.pipenv_executable {
+            self.pipenv_executable.write().unwrap().replace(exe.clone());
+        }
+    }
+
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Pipenv]
     }
@@ -334,8 +444,19 @@ impl Locator for PipEnv {
         )
     }
 
-    fn find(&self, _reporter: &dyn Reporter) {
-        //
+    fn find(&self, reporter: &dyn Reporter) {
+        // First, find and report the pipenv manager
+        let pipenv_exe = self.pipenv_executable.read().unwrap().clone();
+        if let Some(manager) = PipenvManager::find(pipenv_exe, &self.env_vars) {
+            trace!("Found pipenv manager: {:?}", manager);
+            reporter.report_manager(&manager.to_manager());
+        }
+
+        // Then discover and report pipenv environments
+        let environments = list_environments(&self.env_vars);
+        for env in environments {
+            reporter.report_environment(&env);
+        }
     }
 }
 
@@ -361,6 +482,7 @@ mod tests {
             home,
             xdg_data_home: None,
             workon_home: None,
+            path: None,
         }
     }
 
@@ -402,6 +524,7 @@ mod tests {
         // Validate locator populates project
         let locator = PipEnv {
             env_vars: create_test_env_vars(None),
+            pipenv_executable: Arc::new(RwLock::new(None)),
         };
         let result = locator
             .try_from(&env)
@@ -460,6 +583,7 @@ mod tests {
             home: Some(temp_home.clone()),
             xdg_data_home: None,
             workon_home: None,
+            path: None,
         };
 
         // Validate is_in_pipenv_centralized_dir detects it
@@ -475,7 +599,10 @@ mod tests {
         );
 
         // Validate locator returns the environment
-        let locator = PipEnv { env_vars };
+        let locator = PipEnv {
+            env_vars,
+            pipenv_executable: Arc::new(RwLock::new(None)),
+        };
         let result = locator
             .try_from(&env)
             .expect("expected locator to return environment");
@@ -525,6 +652,7 @@ mod tests {
             home: Some(temp_home.clone()),
             xdg_data_home: None,
             workon_home: None,
+            path: None,
         };
 
         // Should still be detected as pipenv (centralized directory + .project file)
@@ -538,7 +666,10 @@ mod tests {
         );
 
         // Locator should return the environment, but project will point to non-existent path
-        let locator = PipEnv { env_vars };
+        let locator = PipEnv {
+            env_vars,
+            pipenv_executable: Arc::new(RwLock::new(None)),
+        };
         let result = locator
             .try_from(&env)
             .expect("expected locator to return environment");

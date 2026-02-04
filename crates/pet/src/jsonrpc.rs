@@ -100,6 +100,7 @@ pub struct ConfigureOptions {
     /// Glob patterns are supported (e.g., "/home/user/projects/*").
     pub workspace_directories: Option<Vec<PathBuf>>,
     pub conda_executable: Option<PathBuf>,
+    pub pipenv_executable: Option<PathBuf>,
     pub poetry_executable: Option<PathBuf>,
     /// Custom locations where environments can be found. Generally global locations where virtualenvs & the like can be found.
     /// Workspace directories should not be included into this list.
@@ -131,6 +132,7 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                             .filter(|p| p.is_dir())
                             .collect()
                     });
+                cfg.pipenv_executable = configure_options.pipenv_executable;
                 cfg.poetry_executable = configure_options.poetry_executable;
                 // We will not support changing the cache directories once set.
                 // No point, supporting such a use case.
