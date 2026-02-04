@@ -17,6 +17,31 @@ lazy_static! {
         Regex::new(r"python(\d+\.?)*$").expect("error parsing Unix executable regex");
 }
 
+/// Checks if a path is a broken symlink (symlink that points to a non-existent target).
+/// Returns true if the path is a symlink and its target does not exist.
+pub fn is_broken_symlink(path: &Path) -> bool {
+    // First check if it's a symlink using symlink_metadata (doesn't follow symlinks)
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            // Now check if the target exists using regular metadata (follows symlinks)
+            // If this fails or returns false for exists(), then it's broken
+            return !path.exists();
+        }
+    }
+    false
+}
+
+/// Result of looking for an executable in an environment path.
+#[derive(Debug, Clone)]
+pub enum ExecutableResult {
+    /// A valid executable was found
+    Found(PathBuf),
+    /// An executable path exists but is broken (e.g., broken symlink)
+    Broken(PathBuf),
+    /// No executable was found
+    NotFound,
+}
+
 #[cfg(windows)]
 pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
     [
@@ -41,6 +66,56 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
     ]
     .into_iter()
     .find(|path| path.is_file())
+}
+
+/// Finds an executable in the environment path, including broken symlinks.
+/// This is useful for detecting virtual environments that have broken Python executables.
+#[cfg(windows)]
+pub fn find_executable_or_broken(env_path: &Path) -> ExecutableResult {
+    let candidates = [
+        env_path.join("Scripts").join("python.exe"),
+        env_path.join("Scripts").join("python3.exe"),
+        env_path.join("bin").join("python.exe"),
+        env_path.join("bin").join("python3.exe"),
+        env_path.join("python.exe"),
+        env_path.join("python3.exe"),
+    ];
+
+    // First try to find a valid executable
+    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
+        return ExecutableResult::Found(path.clone());
+    }
+
+    // Then check for broken symlinks
+    if let Some(path) = candidates.iter().find(|path| is_broken_symlink(path)) {
+        return ExecutableResult::Broken(path.clone());
+    }
+
+    ExecutableResult::NotFound
+}
+
+/// Finds an executable in the environment path, including broken symlinks.
+/// This is useful for detecting virtual environments that have broken Python executables.
+#[cfg(unix)]
+pub fn find_executable_or_broken(env_path: &Path) -> ExecutableResult {
+    let candidates = [
+        env_path.join("bin").join("python"),
+        env_path.join("bin").join("python3"),
+        env_path.join("python"),
+        env_path.join("python3"),
+    ];
+
+    // First try to find a valid executable
+    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
+        return ExecutableResult::Found(path.clone());
+    }
+
+    // Then check for broken symlinks
+    if let Some(path) = candidates.iter().find(|path| is_broken_symlink(path)) {
+        return ExecutableResult::Broken(path.clone());
+    }
+
+    ExecutableResult::NotFound
 }
 
 pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {
@@ -305,5 +380,138 @@ mod tests {
         assert!(!is_pyenv_shims_dir(
             PathBuf::from("/home/user/project/shims").as_path()
         ));
+    }
+
+    #[test]
+    fn test_is_broken_symlink_regular_file() {
+        // A regular file should not be detected as a broken symlink
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("pet_test_regular_file.txt");
+        fs::write(&test_file, "test").unwrap();
+
+        assert!(!is_broken_symlink(&test_file));
+
+        let _ = fs::remove_file(&test_file);
+    }
+
+    #[test]
+    fn test_is_broken_symlink_nonexistent() {
+        // A non-existent path should not be detected as a broken symlink
+        let nonexistent = PathBuf::from("/this/path/does/not/exist/python");
+        assert!(!is_broken_symlink(&nonexistent));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_is_broken_symlink_unix() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = std::env::temp_dir();
+        let target = temp_dir.join("pet_test_symlink_target_nonexistent");
+        let link = temp_dir.join("pet_test_broken_symlink");
+
+        // Clean up any previous test artifacts
+        let _ = fs::remove_file(&link);
+        let _ = fs::remove_file(&target);
+
+        // Create a symlink to a non-existent target
+        symlink(&target, &link).unwrap();
+
+        // The symlink should be detected as broken
+        assert!(is_broken_symlink(&link));
+
+        // Clean up
+        let _ = fs::remove_file(&link);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_is_broken_symlink_valid_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = std::env::temp_dir();
+        let target = temp_dir.join("pet_test_symlink_target_exists");
+        let link = temp_dir.join("pet_test_valid_symlink");
+
+        // Clean up any previous test artifacts
+        let _ = fs::remove_file(&link);
+        let _ = fs::remove_file(&target);
+
+        // Create the target file
+        fs::write(&target, "test").unwrap();
+
+        // Create a symlink to the existing target
+        symlink(&target, &link).unwrap();
+
+        // The symlink should NOT be detected as broken
+        assert!(!is_broken_symlink(&link));
+
+        // Clean up
+        let _ = fs::remove_file(&link);
+        let _ = fs::remove_file(&target);
+    }
+
+    #[test]
+    fn test_find_executable_or_broken_not_found() {
+        let temp_dir = std::env::temp_dir().join("pet_test_empty_env");
+        let _ = fs::create_dir_all(&temp_dir);
+
+        match find_executable_or_broken(&temp_dir) {
+            ExecutableResult::NotFound => (),
+            other => panic!("Expected NotFound, got {:?}", other),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_find_executable_or_broken_found() {
+        let temp_dir = std::env::temp_dir().join("pet_test_valid_env");
+        #[cfg(windows)]
+        let bin_dir = temp_dir.join("Scripts");
+        #[cfg(unix)]
+        let bin_dir = temp_dir.join("bin");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        #[cfg(windows)]
+        let python_exe = bin_dir.join("python.exe");
+        #[cfg(unix)]
+        let python_exe = bin_dir.join("python");
+
+        fs::write(&python_exe, "fake python").unwrap();
+
+        match find_executable_or_broken(&temp_dir) {
+            ExecutableResult::Found(path) => assert_eq!(path, python_exe),
+            other => panic!("Expected Found, got {:?}", other),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_find_executable_or_broken_broken_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = std::env::temp_dir().join("pet_test_broken_env");
+        let bin_dir = temp_dir.join("bin");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let python_exe = bin_dir.join("python");
+        let nonexistent_target = PathBuf::from("/nonexistent/python3.10");
+
+        // Create a broken symlink
+        symlink(&nonexistent_target, &python_exe).unwrap();
+
+        match find_executable_or_broken(&temp_dir) {
+            ExecutableResult::Broken(path) => assert_eq!(path, python_exe),
+            other => panic!("Expected Broken, got {:?}", other),
+        }
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

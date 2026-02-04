@@ -221,6 +221,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/3.9.9/bin/python",
         ])]),
+        error: None,
     };
     let expected_virtual_env = PythonEnvironment {
         display_name: None,
@@ -242,6 +243,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env/bin/python",
         ])]),
+        error: None,
     };
     let expected_3_12_1 = PythonEnvironment {
         display_name: None,
@@ -263,6 +265,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/3.12.1/bin/python",
         ])]),
+        error: None,
     };
     let expected_3_13_dev = PythonEnvironment {
         display_name: None,
@@ -284,6 +287,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/3.13-dev/bin/python",
         ])]),
+        error: None,
     };
     let expected_3_12_1a3 = PythonEnvironment {
         display_name: None,
@@ -305,6 +309,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/3.12.1a3/bin/python",
         ])]),
+        error: None,
     };
     let expected_no_gil = PythonEnvironment {
         display_name: None,
@@ -326,6 +331,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/nogil-3.9.10-1/bin/python",
         ])]),
+        error: None,
     };
     let expected_pypy = PythonEnvironment {
         display_name: None,
@@ -347,6 +353,7 @@ fn find_pyenv_envs() {
             home.to_str().unwrap(),
             ".pyenv/versions/pypy3.9-7.3.15/bin/python",
         ])]),
+        error: None,
     };
 
     let expected_conda_root = PythonEnvironment {
@@ -360,6 +367,7 @@ fn find_pyenv_envs() {
         manager: Some(expected_conda_manager.clone()),
         arch: Some(Architecture::X64),
         symlinks: Some(vec![conda_dir.join("bin").join("python")]),
+        error: None,
     };
     let expected_conda_one = PythonEnvironment {
         display_name: None,
@@ -372,6 +380,7 @@ fn find_pyenv_envs() {
         manager: Some(expected_conda_manager.clone()),
         arch: None,
         symlinks: Some(vec![conda_dir.join("envs").join("one").join("python")]),
+        error: None,
     };
     let expected_conda_two = PythonEnvironment {
         display_name: None,
@@ -384,6 +393,7 @@ fn find_pyenv_envs() {
         manager: Some(expected_conda_manager.clone()),
         symlinks: Some(vec![conda_dir.join("envs").join("two").join("python")]),
         arch: None,
+        error: None,
     };
 
     let mut expected_envs = vec![
@@ -453,6 +463,7 @@ fn resolve_pyenv_environment() {
         manager: Some(expected_manager.clone()),
         arch: None,
         symlinks: Some(vec![executable]),
+        error: None,
     };
     let expected_virtual_env = PythonEnvironment {
         display_name: None,
@@ -474,6 +485,7 @@ fn resolve_pyenv_environment() {
             home.to_str().unwrap(),
             ".pyenv/versions/my-virtual-env/bin/python",
         ])]),
+        error: None,
     };
 
     // Resolve regular Python installs in Pyenv

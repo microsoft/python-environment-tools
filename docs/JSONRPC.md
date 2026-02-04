@@ -242,6 +242,13 @@ interface Environment {
    * Thats because there could be multiple conda installations on the system, hence we try not to make any assumptions.
    */
   manager?: Manager;
+  /**
+   * An error message if the environment is known to be in a bad state.
+   * For example: "Python executable is a broken symlink"
+   * If undefined, no known issues have been detected (but this doesn't guarantee
+   * the environment is fully functional - we don't spawn Python to verify).
+   */
+  error?: string;
 }
 
 interface Manager {

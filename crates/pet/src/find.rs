@@ -14,6 +14,7 @@ use pet_pixi::is_pixi_env;
 use pet_python_utils::executable::{
     find_executable, find_executables, should_search_for_environments_in_path,
 };
+use pet_venv::try_environment_from_venv_dir;
 use pet_virtualenv::is_virtualenv_dir;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -374,6 +375,13 @@ fn find_python_environments_in_paths_with_locators(
             if let Some(executable) = find_executable(path) {
                 vec![executable]
             } else {
+                // No valid executable found. Check if this is a broken venv.
+                // If so, report it with an error instead of silently skipping.
+                if let Some(broken_env) = try_environment_from_venv_dir(path) {
+                    if broken_env.error.is_some() {
+                        reporter.report_environment(&broken_env);
+                    }
+                }
                 vec![]
             }
         } else {
