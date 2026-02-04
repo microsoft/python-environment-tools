@@ -11,6 +11,7 @@
   "git.branchProtectionPrompt": "alwaysCommitToNewBranch",
   "git.branchRandomName.enable": true,
   "chat.tools.terminal.autoApprove": {
-    "cargo test": true
+    "cargo test": true,
+    "cargo fmt": true
   }
 }

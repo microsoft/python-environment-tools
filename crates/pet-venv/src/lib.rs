@@ -57,9 +57,7 @@ pub fn try_environment_from_venv_dir(path: &Path) -> Option<PythonEnvironment> {
                 .executable(Some(executable))
                 .version(version)
                 .prefix(Some(prefix))
-                .error(Some(
-                    "Python executable is a broken symlink".to_string(),
-                ))
+                .error(Some("Python executable is a broken symlink".to_string()))
                 .build(),
         ),
         ExecutableResult::NotFound => {
