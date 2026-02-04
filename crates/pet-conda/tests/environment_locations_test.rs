@@ -95,3 +95,113 @@ fn list_conda_envs_discovers_base_from_another_child_env() {
         ]
     );
 }
+
+/// Test that get_known_conda_install_locations discovers conda installations from PATH
+/// when no explicit conda_executable is provided. This is important for discovering
+/// conda installations on mapped drives and other non-standard locations.
+/// Fixes https://github.com/microsoft/python-environment-tools/issues/194
+#[cfg(unix)]
+#[test]
+fn discovers_conda_install_from_path() {
+    use common::{create_test_environment, resolve_test_path};
+    use pet_conda::env_variables::EnvVariables;
+    use pet_conda::environment_locations::get_known_conda_install_locations;
+    use std::collections::HashMap;
+
+    // Set up PATH to include the conda bin directory (simulating conda on a mapped drive)
+    let anaconda_bin = resolve_test_path(&["unix", "anaconda3-2023.03", "bin"]);
+    let path_value = anaconda_bin.to_string_lossy().to_string();
+
+    let mut vars = HashMap::new();
+    vars.insert("PATH".to_string(), path_value);
+
+    let env = create_test_environment(vars, None, vec![], None);
+    let env_vars = EnvVariables::from(&env);
+
+    // Call get_known_conda_install_locations without an explicit conda_executable
+    let locations = get_known_conda_install_locations(&env_vars, &None);
+
+    // The anaconda3-2023.03 install should be discovered from PATH
+    let expected_conda_install = resolve_test_path(&["unix", "anaconda3-2023.03"]);
+    assert!(
+        locations.contains(&expected_conda_install),
+        "Expected {:?} to be in {:?}",
+        expected_conda_install,
+        locations
+    );
+}
+
+/// Test that get_known_conda_install_locations discovers conda installations from condabin in PATH.
+/// This simulates the typical Windows Miniforge/Anaconda setup where condabin is added to PATH.
+/// Fixes https://github.com/microsoft/python-environment-tools/issues/194
+#[cfg(unix)]
+#[test]
+fn discovers_conda_install_from_condabin_in_path() {
+    use common::{create_test_environment, resolve_test_path};
+    use pet_conda::env_variables::EnvVariables;
+    use pet_conda::environment_locations::get_known_conda_install_locations;
+    use std::collections::HashMap;
+
+    // Set up PATH to include the condabin directory (typical Miniforge/Anaconda setup on Windows)
+    let anaconda_condabin = resolve_test_path(&["unix", "anaconda3-2023.03", "condabin"]);
+    let path_value = anaconda_condabin.to_string_lossy().to_string();
+
+    let mut vars = HashMap::new();
+    vars.insert("PATH".to_string(), path_value);
+
+    let env = create_test_environment(vars, None, vec![], None);
+    let env_vars = EnvVariables::from(&env);
+
+    // Call get_known_conda_install_locations without an explicit conda_executable
+    let locations = get_known_conda_install_locations(&env_vars, &None);
+
+    // The anaconda3-2023.03 install should be discovered from PATH via condabin
+    let expected_conda_install = resolve_test_path(&["unix", "anaconda3-2023.03"]);
+    assert!(
+        locations.contains(&expected_conda_install),
+        "Expected {:?} to be in {:?}",
+        expected_conda_install,
+        locations
+    );
+}
+
+/// Test that when an explicit conda_executable is provided, PATH lookup is skipped.
+/// This ensures we don't do unnecessary work when the user has configured a conda path.
+#[cfg(unix)]
+#[test]
+fn skips_path_lookup_when_conda_executable_provided() {
+    use common::{create_test_environment, resolve_test_path};
+    use pet_conda::env_variables::EnvVariables;
+    use pet_conda::environment_locations::get_known_conda_install_locations;
+    use std::collections::HashMap;
+
+    // Set up PATH to include a conda directory
+    let anaconda_bin = resolve_test_path(&["unix", "anaconda3-2023.03", "bin"]);
+    let path_value = anaconda_bin.to_string_lossy().to_string();
+
+    let mut vars = HashMap::new();
+    vars.insert("PATH".to_string(), path_value);
+
+    let env = create_test_environment(vars, None, vec![], None);
+    let env_vars = EnvVariables::from(&env);
+
+    // Provide an explicit conda_executable
+    let conda_executable = Some(resolve_test_path(&[
+        "unix",
+        "anaconda3-2023.03",
+        "bin",
+        "conda",
+    ]));
+
+    // Call get_known_conda_install_locations with an explicit conda_executable
+    let locations = get_known_conda_install_locations(&env_vars, &conda_executable);
+
+    // The conda install should still be discovered (from the explicit path, not PATH)
+    let expected_conda_install = resolve_test_path(&["unix", "anaconda3-2023.03"]);
+    assert!(
+        locations.contains(&expected_conda_install),
+        "Expected {:?} to be in {:?}",
+        expected_conda_install,
+        locations
+    );
+}
