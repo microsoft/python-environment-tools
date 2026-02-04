@@ -98,7 +98,7 @@ impl Locator for WindowsStore {
                 if let Some(symlinks) = &found_env.symlinks {
                     // Normalize symlinks for comparison
                     let normalized_symlinks: Vec<PathBuf> =
-                        symlinks.iter().map(|p| normalize_for_comparison(p)).collect();
+                        symlinks.iter().map(normalize_for_comparison).collect();
                     // Check if we have found this exe.
                     if list_of_possible_exes
                         .iter()
