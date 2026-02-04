@@ -3,8 +3,11 @@
 
 use std::{
     env,
-    path::{Path, PathBuf, MAIN_SEPARATOR},
+    path::{Path, PathBuf},
 };
+
+#[cfg(unix)]
+use std::path::MAIN_SEPARATOR;
 
 /// Strips trailing path separators from a path, preserving root paths.
 ///

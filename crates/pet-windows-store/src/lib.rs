@@ -67,7 +67,19 @@ impl Locator for WindowsStore {
         use std::path::PathBuf;
 
         use pet_core::python_environment::PythonEnvironmentBuilder;
+        use pet_fs::path::norm_case;
         use pet_virtualenv::is_virtualenv;
+
+        // Helper to normalize paths for comparison by stripping \\?\ prefix
+        fn normalize_for_comparison(path: &PathBuf) -> PathBuf {
+            let normalized = norm_case(path);
+            let path_str = normalized.to_string_lossy();
+            if path_str.starts_with(r"\\?\") {
+                PathBuf::from(path_str.trim_start_matches(r"\\?\"))
+            } else {
+                normalized
+            }
+        }
 
         // Assume we create a virtual env from a python install,
         // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
@@ -75,17 +87,22 @@ impl Locator for WindowsStore {
         if is_virtualenv(env) {
             return None;
         }
-        let list_of_possible_exes = vec![env.executable.clone()]
+        // Normalize paths to handle \\?\ prefix differences
+        let list_of_possible_exes: Vec<PathBuf> = vec![env.executable.clone()]
             .into_iter()
             .chain(env.symlinks.clone().unwrap_or_default())
-            .collect::<Vec<PathBuf>>();
+            .map(|p| normalize_for_comparison(&p))
+            .collect();
         if let Some(environments) = self.find_with_cache() {
             for found_env in environments {
                 if let Some(symlinks) = &found_env.symlinks {
+                    // Normalize symlinks for comparison
+                    let normalized_symlinks: Vec<PathBuf> =
+                        symlinks.iter().map(normalize_for_comparison).collect();
                     // Check if we have found this exe.
                     if list_of_possible_exes
                         .iter()
-                        .any(|exe| symlinks.contains(exe))
+                        .any(|exe| normalized_symlinks.contains(exe))
                     {
                         // Its possible the env discovery was not aware of the symlink
                         // E.g. if we are asked to resolve `../WindowsApp/python.exe`
