@@ -352,15 +352,14 @@ fn list_environments(env_vars: &EnvVariables) -> Vec<PythonEnvironment> {
                         let symlinks = find_executables(&bin_dir);
                         let version = version::from_creator_for_virtual_env(&path);
 
-                        let env = PythonEnvironmentBuilder::new(Some(
-                            PythonEnvironmentKind::Pipenv,
-                        ))
-                        .executable(Some(norm_case(python_exe)))
-                        .version(version)
-                        .prefix(Some(norm_case(path.clone())))
-                        .project(Some(project_path))
-                        .symlinks(Some(symlinks))
-                        .build();
+                        let env =
+                            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Pipenv))
+                                .executable(Some(norm_case(python_exe)))
+                                .version(version)
+                                .prefix(Some(norm_case(path.clone())))
+                                .project(Some(project_path))
+                                .symlinks(Some(symlinks))
+                                .build();
 
                         trace!("Found pipenv environment: {:?}", env);
                         environments.push(env);
