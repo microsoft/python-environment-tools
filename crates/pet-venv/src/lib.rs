@@ -138,3 +138,125 @@ impl Locator for Venv {
         // We expect the user of this class to call `is_compatible`
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_try_environment_from_venv_dir_not_a_venv() {
+        // A directory without pyvenv.cfg should return None
+        let temp_dir = std::env::temp_dir().join("pet_test_not_a_venv");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let result = try_environment_from_venv_dir(&temp_dir);
+        assert!(result.is_none());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_try_environment_from_venv_dir_missing_executable() {
+        // A venv with pyvenv.cfg but no Python executable
+        let temp_dir = std::env::temp_dir().join("pet_test_venv_no_exe");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create pyvenv.cfg
+        fs::write(
+            temp_dir.join("pyvenv.cfg"),
+            "version = 3.10.0\nprompt = test-env\n",
+        )
+        .unwrap();
+
+        let result = try_environment_from_venv_dir(&temp_dir);
+        assert!(result.is_some());
+
+        let env = result.unwrap();
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::Venv));
+        assert!(env.error.is_some());
+        assert!(env.error.unwrap().contains("not found"));
+        assert_eq!(env.name, Some("test-env".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_try_environment_from_venv_dir_valid() {
+        // A valid venv with pyvenv.cfg and Python executable
+        let temp_dir = std::env::temp_dir().join("pet_test_venv_valid");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        #[cfg(windows)]
+        let bin_dir = temp_dir.join("Scripts");
+        #[cfg(unix)]
+        let bin_dir = temp_dir.join("bin");
+
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        // Create pyvenv.cfg
+        fs::write(
+            temp_dir.join("pyvenv.cfg"),
+            "version = 3.11.0\nprompt = my-project\n",
+        )
+        .unwrap();
+
+        // Create python executable
+        #[cfg(windows)]
+        let python_exe = bin_dir.join("python.exe");
+        #[cfg(unix)]
+        let python_exe = bin_dir.join("python");
+
+        fs::write(&python_exe, "fake python").unwrap();
+
+        let result = try_environment_from_venv_dir(&temp_dir);
+        assert!(result.is_some());
+
+        let env = result.unwrap();
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::Venv));
+        assert!(env.error.is_none());
+        assert!(env.executable.is_some());
+        assert_eq!(env.name, Some("my-project".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_try_environment_from_venv_dir_broken_symlink() {
+        use std::os::unix::fs::symlink;
+
+        // A venv with pyvenv.cfg but a broken symlink for Python
+        let temp_dir = std::env::temp_dir().join("pet_test_venv_broken_symlink");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let bin_dir = temp_dir.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        // Create pyvenv.cfg
+        fs::write(
+            temp_dir.join("pyvenv.cfg"),
+            "version = 3.9.0\nprompt = broken-env\n",
+        )
+        .unwrap();
+
+        // Create a broken symlink
+        let python_exe = bin_dir.join("python");
+        let nonexistent_target = std::path::PathBuf::from("/nonexistent/python3.9");
+        symlink(&nonexistent_target, &python_exe).unwrap();
+
+        let result = try_environment_from_venv_dir(&temp_dir);
+        assert!(result.is_some());
+
+        let env = result.unwrap();
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::Venv));
+        assert!(env.error.is_some());
+        assert!(env.error.as_ref().unwrap().contains("broken symlink"));
+        assert_eq!(env.name, Some("broken-env".to_string()));
+        assert!(env.executable.is_some());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+}
