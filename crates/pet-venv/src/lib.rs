@@ -279,6 +279,9 @@ mod tests {
     #[test]
     fn test_is_venv_with_pyvenv_cfg_in_parent() {
         let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
         let bin_dir = dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
 
@@ -287,6 +290,9 @@ mod tests {
         writeln!(file, "version = 3.11.4").unwrap();
 
         // Create a fake python executable
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
         let python_path = bin_dir.join("python");
         fs::File::create(&python_path).unwrap();
 
@@ -297,9 +303,15 @@ mod tests {
     #[test]
     fn test_is_venv_without_pyvenv_cfg() {
         let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
         let bin_dir = dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
 
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
         let python_path = bin_dir.join("python");
         fs::File::create(&python_path).unwrap();
 
@@ -330,6 +342,9 @@ mod tests {
     #[test]
     fn test_venv_try_from_valid_venv() {
         let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
         let bin_dir = dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
 
@@ -338,6 +353,9 @@ mod tests {
         writeln!(file, "version = 3.11.4").unwrap();
         writeln!(file, "prompt = my-test-env").unwrap();
 
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
         let python_path = bin_dir.join("python");
         fs::File::create(&python_path).unwrap();
 
@@ -349,15 +367,26 @@ mod tests {
         let py_env = result.unwrap();
         assert_eq!(py_env.kind, Some(PythonEnvironmentKind::Venv));
         assert_eq!(py_env.name, Some("my-test-env".to_string()));
-        assert_eq!(py_env.executable, Some(python_path));
+        // Compare file names rather than full paths to avoid Windows 8.3 short path issues
+        assert!(py_env.executable.is_some());
+        assert_eq!(
+            py_env.executable.as_ref().unwrap().file_name(),
+            python_path.file_name()
+        );
     }
 
     #[test]
     fn test_venv_try_from_non_venv() {
         let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
         let bin_dir = dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
 
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
         let python_path = bin_dir.join("python");
         fs::File::create(&python_path).unwrap();
 
