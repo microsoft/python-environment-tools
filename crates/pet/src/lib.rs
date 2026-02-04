@@ -175,7 +175,7 @@ fn find_envs(
     }
 
     if options.print_summary {
-        let summary = summary.lock().unwrap();
+        let summary = summary.lock().expect("summary mutex poisoned");
         if !summary.locators.is_empty() {
             println!();
             println!("Breakdown by each locator:");

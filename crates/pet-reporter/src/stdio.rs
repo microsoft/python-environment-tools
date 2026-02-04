@@ -28,8 +28,11 @@ pub struct Summary {
 
 impl StdioReporter {
     pub fn get_summary(&self) -> Summary {
-        let managers = self.managers.lock().unwrap();
-        let environments = self.environments.lock().unwrap();
+        let managers = self.managers.lock().expect("managers mutex poisoned");
+        let environments = self
+            .environments
+            .lock()
+            .expect("environments mutex poisoned");
         Summary {
             managers: managers.clone(),
             environments: environments.clone(),
@@ -41,7 +44,7 @@ impl Reporter for StdioReporter {
         //
     }
     fn report_manager(&self, manager: &EnvManager) {
-        let mut managers = self.managers.lock().unwrap();
+        let mut managers = self.managers.lock().expect("managers mutex poisoned");
         let count = managers.get(&manager.tool).unwrap_or(&0) + 1;
         managers.insert(manager.tool, count);
         if self.print_list {
@@ -53,7 +56,10 @@ impl Reporter for StdioReporter {
         if self.kind.is_some() && env.kind != self.kind {
             return;
         }
-        let mut environments = self.environments.lock().unwrap();
+        let mut environments = self
+            .environments
+            .lock()
+            .expect("environments mutex poisoned");
         let count = environments.get(&env.kind).unwrap_or(&0) + 1;
         environments.insert(env.kind, count);
         if self.print_list {

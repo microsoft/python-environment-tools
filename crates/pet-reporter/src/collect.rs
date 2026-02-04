@@ -29,11 +29,17 @@ impl Reporter for CollectReporter {
         //
     }
     fn report_manager(&self, manager: &EnvManager) {
-        self.managers.lock().unwrap().push(manager.clone());
+        self.managers
+            .lock()
+            .expect("managers mutex poisoned")
+            .push(manager.clone());
     }
 
     fn report_environment(&self, env: &PythonEnvironment) {
-        self.environments.lock().unwrap().push(env.clone());
+        self.environments
+            .lock()
+            .expect("environments mutex poisoned")
+            .push(env.clone());
     }
 }
 
