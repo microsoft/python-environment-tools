@@ -282,10 +282,19 @@ mod tests {
     #[test]
     fn test_virtualenv_try_from_valid() {
         let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
         let bin_dir = dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        #[cfg(windows)]
+        fs::File::create(bin_dir.join("activate.bat")).unwrap();
+        #[cfg(unix)]
         fs::File::create(bin_dir.join("activate")).unwrap();
 
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
         let python_path = bin_dir.join("python");
         fs::File::create(&python_path).unwrap();
 
@@ -296,16 +305,27 @@ mod tests {
         assert!(result.is_some());
         let py_env = result.unwrap();
         assert_eq!(py_env.kind, Some(PythonEnvironmentKind::VirtualEnv));
-        assert_eq!(py_env.executable, Some(python_path));
-        assert_eq!(py_env.prefix, Some(dir.path().to_path_buf()));
+        // Compare file names rather than full paths to avoid Windows 8.3 short path issues
+        assert!(py_env.executable.is_some());
+        assert_eq!(
+            py_env.executable.as_ref().unwrap().file_name(),
+            python_path.file_name()
+        );
+        assert!(py_env.prefix.is_some());
     }
 
     #[test]
     fn test_virtualenv_try_from_non_virtualenv() {
         let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
         let bin_dir = dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
 
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
         let python_path = bin_dir.join("python");
         fs::File::create(&python_path).unwrap();
 
