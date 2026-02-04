@@ -56,6 +56,33 @@ impl PotentialPython {
         if let Some(result) = get_package_display_name_and_location(&name, hkcu) {
             let env_path = norm_case(PathBuf::from(result.env_path));
 
+            // Build the base symlinks list
+            // parent = WindowsApps folder (e.g., C:\Users\...\AppData\Local\Microsoft\WindowsApps)
+            // path = Package folder inside WindowsApps (e.g., WindowsApps\PythonSoftwareFoundation.Python.3.12_...)
+            // env_path = Program Files location (e.g., C:\Program Files\WindowsApps\PythonSoftwareFoundation...)
+            let mut symlinks = vec![
+                // Symlinks in the user WindowsApps folder
+                parent.join(format!("python{}.exe", self.version)),
+                parent.join("python3.exe"),
+                parent.join("python.exe"),
+                // Symlinks in the package subfolder under user WindowsApps
+                path.join("python.exe"),
+                path.join("python3.exe"),
+                path.join(format!("python{}.exe", self.version)),
+                // Symlinks in Program Files
+                env_path.join("python.exe"),
+                env_path.join("python3.exe"),
+                env_path.join(format!("python{}.exe", self.version)),
+            ];
+
+            // Add symlinks discovered by find_symlinks (includes python.exe and python3.exe
+            // from WindowsApps when there's only one Python version installed)
+            for symlink in &self.symlinks {
+                if !symlinks.contains(symlink) {
+                    symlinks.push(symlink.clone());
+                }
+            }
+
             Some(
                 PythonEnvironmentBuilder::new(Some(
                     pet_core::python_environment::PythonEnvironmentKind::WindowsStore,
@@ -70,14 +97,7 @@ impl PotentialPython {
                 })
                 // We only have the partial version, no point returning bogus info.
                 // .version(Some(self.version.clone()))
-                .symlinks(Some(vec![
-                    parent.join(format!("python{}.exe", self.version)),
-                    path.join("python.exe"),
-                    path.join("python3.exe"),
-                    path.join(format!("python{}.exe", self.version)),
-                    env_path.join("python.exe"),
-                    env_path.join(format!("python{}.exe", self.version)),
-                ]))
+                .symlinks(Some(symlinks))
                 .build(),
             )
         } else {
