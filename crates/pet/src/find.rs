@@ -582,4 +582,65 @@ mod tests {
             "Symlink should point to a valid venv"
         );
     }
+
+    /// CRITICAL TEST: Verify that path().is_dir() does NOT resolve symlinks to their target paths.
+    /// This ensures we use the symlink path (e.g., ~/envs/myenv) not the deep target path
+    /// (e.g., /some/deep/path/to/actual/venv).
+    ///
+    /// This is important because:
+    /// 1. Users expect to see the symlink path in their environment list
+    /// 2. We don't want to accidentally traverse into deep filesystem locations
+    /// 3. The symlink path is the "user-facing" path they configured
+    #[test]
+    #[cfg(unix)]
+    fn test_symlink_path_is_preserved_not_resolved() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().expect("Failed to create temp dir");
+
+        // Create a "deep" target directory structure
+        let deep_target = tmp.path().join("deep").join("nested").join("path").join("venv");
+        fs::create_dir_all(&deep_target).expect("Failed to create deep target");
+
+        // Create a container with a symlink pointing to the deep target
+        let container_dir = tmp.path().join("envs");
+        let symlink_path = container_dir.join("my_venv");
+        fs::create_dir_all(&container_dir).expect("Failed to create container");
+        symlink(&deep_target, &symlink_path).expect("Failed to create symlink");
+
+        // Get the discovered paths using the same pattern as our fix
+        let discovered: Vec<PathBuf> = fs::read_dir(&container_dir)
+            .expect("Failed to read dir")
+            .filter_map(Result::ok)
+            .filter(|d| d.path().is_dir()) // This follows symlink to CHECK if it's a dir
+            .map(|d| d.path()) // But this returns the SYMLINK path, not the target
+            .collect();
+
+        assert_eq!(discovered.len(), 1);
+
+        // CRITICAL: The path should be the symlink, NOT the resolved target
+        assert_eq!(
+            discovered[0], symlink_path,
+            "Should return the symlink path, not the deep target"
+        );
+
+        // Verify we did NOT get the deep target path
+        assert_ne!(
+            discovered[0], deep_target,
+            "Should NOT resolve to the deep target path"
+        );
+
+        // The path should NOT contain the deep nested structure
+        assert!(
+            !discovered[0].to_string_lossy().contains("deep/nested"),
+            "Path should not contain the deep nested target structure"
+        );
+
+        // Extra verification: fs::canonicalize WOULD resolve it (showing the difference)
+        let resolved = fs::canonicalize(&discovered[0]).expect("Should resolve");
+        assert_eq!(
+            resolved, deep_target,
+            "canonicalize() would resolve to target, but path() does not"
+        );
+    }
 }
