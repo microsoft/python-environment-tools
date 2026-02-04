@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use env_variables::EnvVariables;
+use log::trace;
 use pet_core::env::PythonEnv;
 use pet_core::os_environment::Environment;
 use pet_core::LocatorKind;
@@ -17,6 +18,119 @@ use std::path::Path;
 use std::{fs, path::PathBuf};
 
 mod env_variables;
+
+/// Returns the list of directories where pipenv stores centralized virtual environments.
+/// These are the known locations where pipenv creates virtualenvs when not using in-project mode.
+/// See: https://github.com/pypa/pipenv/blob/main/pipenv/utils/shell.py#L184
+fn get_pipenv_virtualenv_dirs(env_vars: &EnvVariables) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = vec![];
+
+    // WORKON_HOME can be used by pipenv as well
+    if let Some(workon_home) = &env_vars.workon_home {
+        if workon_home.exists() {
+            trace!("Pipenv: Found WORKON_HOME directory: {:?}", workon_home);
+            dirs.push(norm_case(workon_home));
+        }
+    }
+
+    // XDG_DATA_HOME/virtualenvs (common on Linux)
+    if let Some(xdg_data_home) = &env_vars.xdg_data_home {
+        let xdg_venvs = PathBuf::from(xdg_data_home).join("virtualenvs");
+        if xdg_venvs.exists() {
+            trace!("Pipenv: Found XDG_DATA_HOME/virtualenvs: {:?}", xdg_venvs);
+            dirs.push(norm_case(xdg_venvs));
+        }
+    }
+
+    if let Some(home) = &env_vars.home {
+        // ~/.local/share/virtualenvs - default pipenv location on macOS/Linux
+        let local_share_venvs = home.join(".local").join("share").join("virtualenvs");
+        if local_share_venvs.exists() {
+            trace!(
+                "Pipenv: Found ~/.local/share/virtualenvs: {:?}",
+                local_share_venvs
+            );
+            dirs.push(norm_case(local_share_venvs));
+        }
+
+        // ~/.venvs - alternative pipenv location
+        let dot_venvs = home.join(".venvs");
+        if dot_venvs.exists() {
+            trace!("Pipenv: Found ~/.venvs: {:?}", dot_venvs);
+            dirs.push(norm_case(dot_venvs));
+        }
+
+        // ~/.virtualenvs - can also be used by pipenv
+        let dot_virtualenvs = home.join(".virtualenvs");
+        if dot_virtualenvs.exists() {
+            trace!("Pipenv: Found ~/.virtualenvs: {:?}", dot_virtualenvs);
+            dirs.push(norm_case(dot_virtualenvs));
+        }
+    }
+
+    trace!("Pipenv: Centralized virtualenv directories: {:?}", dirs);
+    dirs
+}
+
+/// Checks if the given environment is in one of pipenv's centralized virtualenv directories.
+/// Pipenv uses a specific naming convention: <project-name>-<hash>
+fn is_in_pipenv_centralized_dir(env: &PythonEnv, env_vars: &EnvVariables) -> bool {
+    let prefix = match &env.prefix {
+        Some(p) => p,
+        None => {
+            // Try to derive prefix from executable path
+            if let Some(bin) = env.executable.parent() {
+                if bin.file_name().unwrap_or_default() == Path::new("bin")
+                    || bin.file_name().unwrap_or_default() == Path::new("Scripts")
+                {
+                    if let Some(p) = bin.parent() {
+                        p
+                    } else {
+                        trace!(
+                            "Pipenv: Cannot derive prefix from executable {:?}",
+                            env.executable
+                        );
+                        return false;
+                    }
+                } else {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+    };
+
+    let pipenv_dirs = get_pipenv_virtualenv_dirs(env_vars);
+    for pipenv_dir in &pipenv_dirs {
+        if let Some(parent) = prefix.parent() {
+            if norm_case(parent) == *pipenv_dir {
+                // Check if there's a .project file (pipenv always creates this for centralized envs)
+                let project_file = prefix.join(".project");
+                if project_file.exists() {
+                    trace!(
+                        "Pipenv: Detected centralized pipenv env at {:?} (in {:?}, has .project file)",
+                        prefix,
+                        pipenv_dir
+                    );
+                    return true;
+                } else {
+                    trace!(
+                        "Pipenv: Env {:?} is in pipenv dir {:?} but missing .project file",
+                        prefix,
+                        pipenv_dir
+                    );
+                }
+            }
+        }
+    }
+
+    trace!(
+        "Pipenv: Env {:?} is not in any centralized pipenv directory",
+        prefix
+    );
+    false
+}
 
 fn get_pipenv_project(env: &PythonEnv) -> Option<PathBuf> {
     if let Some(prefix) = &env.prefix {
@@ -74,11 +188,10 @@ fn get_pipenv_project_from_prefix(prefix: &Path) -> Option<PathBuf> {
     }
     let contents = fs::read_to_string(project_file).ok()?;
     let project_folder = norm_case(PathBuf::from(contents.trim().to_string()));
-    if project_folder.exists() {
-        Some(project_folder)
-    } else {
-        None
-    }
+    // Return the project folder path even if it doesn't exist.
+    // This allows us to identify pipenv environments in centralized directories
+    // even when the original project has been moved or deleted.
+    Some(project_folder)
 }
 
 fn is_pipenv_from_project(env: &PythonEnv) -> bool {
@@ -111,21 +224,52 @@ fn is_pipenv_from_project(env: &PythonEnv) -> bool {
 }
 
 fn is_pipenv(env: &PythonEnv, env_vars: &EnvVariables) -> bool {
-    if let Some(project_path) = get_pipenv_project(env) {
-        if project_path.join(env_vars.pipenv_pipfile.clone()).exists() {
-            return true;
-        }
-    }
-    if is_pipenv_from_project(env) {
+    trace!(
+        "Pipenv: Checking if {:?} is a pipenv environment",
+        env.executable
+    );
+
+    // Check if the environment is in a pipenv centralized directory.
+    // This is the primary way to detect pipenv environments that are stored
+    // in ~/.local/share/virtualenvs/ or similar locations.
+    if is_in_pipenv_centralized_dir(env, env_vars) {
+        trace!(
+            "Pipenv: {:?} identified via centralized directory",
+            env.executable
+        );
         return true;
     }
-    // If we have a Pipfile, then this is a pipenv environment.
-    // Else likely a virtualenvwrapper or the like.
+
+    // Check if there's a .project file pointing to a project with a Pipfile
     if let Some(project_path) = get_pipenv_project(env) {
-        project_path.join(env_vars.pipenv_pipfile.clone()).exists()
-    } else {
-        false
+        let pipfile_path = project_path.join(env_vars.pipenv_pipfile.clone());
+        if pipfile_path.exists() {
+            trace!(
+                "Pipenv: {:?} identified via .project file pointing to project with Pipfile at {:?}",
+                env.executable,
+                pipfile_path
+            );
+            return true;
+        } else {
+            trace!(
+                "Pipenv: {:?} has .project pointing to {:?} but no Pipfile found",
+                env.executable,
+                project_path
+            );
+        }
     }
+
+    // Check if the venv is inside a project folder with a Pipfile
+    if is_pipenv_from_project(env) {
+        trace!(
+            "Pipenv: {:?} identified via in-project Pipfile",
+            env.executable
+        );
+        return true;
+    }
+
+    trace!("Pipenv: {:?} is NOT a pipenv environment", env.executable);
+    false
 }
 
 pub struct PipEnv {
@@ -151,7 +295,14 @@ impl Locator for PipEnv {
         if !is_pipenv(env, &self.env_vars) {
             return None;
         }
-        let project_path = get_pipenv_project(env)?;
+        // Project path is optional - centralized pipenv envs may have a .project file
+        // pointing to a project that no longer exists
+        let project_path = get_pipenv_project(env);
+        trace!(
+            "Pipenv: Building environment for {:?}, project: {:?}",
+            env.executable,
+            project_path
+        );
         let mut prefix = env.prefix.clone();
         if prefix.is_none() {
             if let Some(bin) = env.executable.parent() {
@@ -177,7 +328,7 @@ impl Locator for PipEnv {
                 .executable(Some(env.executable.clone()))
                 .version(version)
                 .prefix(prefix)
-                .project(Some(project_path))
+                .project(project_path)
                 .symlinks(Some(symlinks))
                 .build(),
         )
@@ -201,6 +352,16 @@ mod tests {
             .as_nanos();
         dir.push(format!("pet_pipenv_test_{}", nanos));
         dir
+    }
+
+    fn create_test_env_vars(home: Option<PathBuf>) -> EnvVariables {
+        EnvVariables {
+            pipenv_max_depth: 3,
+            pipenv_pipfile: "Pipfile".to_string(),
+            home,
+            xdg_data_home: None,
+            workon_home: None,
+        }
     }
 
     #[test]
@@ -240,10 +401,7 @@ mod tests {
 
         // Validate locator populates project
         let locator = PipEnv {
-            env_vars: EnvVariables {
-                pipenv_max_depth: 3,
-                pipenv_pipfile: "Pipfile".to_string(),
-            },
+            env_vars: create_test_env_vars(None),
         };
         let result = locator
             .try_from(&env)
@@ -252,5 +410,141 @@ mod tests {
 
         // Cleanup
         std::fs::remove_dir_all(&project_dir).ok();
+    }
+
+    #[test]
+    fn detect_pipenv_centralized_env() {
+        // Simulate pipenv's centralized directory structure:
+        // ~/.local/share/virtualenvs/myproject-Abc123/
+        let temp_home = unique_temp_dir();
+        let virtualenvs_dir = temp_home.join(".local").join("share").join("virtualenvs");
+        let venv_dir = virtualenvs_dir.join("myproject-Abc123XyZ");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        let python_exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+
+        // Create the project directory with a Pipfile
+        let project_dir = temp_home.join("projects").join("myproject");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("Pipfile"), b"[[source]]\n").unwrap();
+
+        // Create the centralized venv with .project file
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(&python_exe, b"").unwrap();
+        std::fs::write(venv_dir.join("pyvenv.cfg"), b"version = 3.13.0\n").unwrap();
+        std::fs::write(
+            venv_dir.join(".project"),
+            project_dir.to_string_lossy().as_bytes(),
+        )
+        .unwrap();
+
+        // Construct PythonEnv
+        let env = PythonEnv {
+            executable: norm_case(python_exe.clone()),
+            prefix: Some(norm_case(venv_dir.clone())),
+            version: None,
+            symlinks: None,
+        };
+
+        // Create env_vars with home pointing to our temp directory
+        let env_vars = EnvVariables {
+            pipenv_max_depth: 3,
+            pipenv_pipfile: "Pipfile".to_string(),
+            home: Some(temp_home.clone()),
+            xdg_data_home: None,
+            workon_home: None,
+        };
+
+        // Validate is_in_pipenv_centralized_dir detects it
+        assert!(
+            is_in_pipenv_centralized_dir(&env, &env_vars),
+            "Expected env to be detected in centralized dir"
+        );
+
+        // Validate is_pipenv returns true
+        assert!(
+            is_pipenv(&env, &env_vars),
+            "Expected env to be identified as pipenv"
+        );
+
+        // Validate locator returns the environment
+        let locator = PipEnv { env_vars };
+        let result = locator
+            .try_from(&env)
+            .expect("expected locator to return environment");
+        assert_eq!(result.kind, Some(PythonEnvironmentKind::Pipenv));
+        assert_eq!(result.project, Some(norm_case(project_dir.clone())));
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_home).ok();
+    }
+
+    #[test]
+    fn detect_pipenv_centralized_env_without_existing_project() {
+        // Test that we still identify as pipenv even if the project folder doesn't exist
+        let temp_home = unique_temp_dir();
+        let virtualenvs_dir = temp_home.join(".local").join("share").join("virtualenvs");
+        let venv_dir = virtualenvs_dir.join("deleted-project-Xyz789");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        let python_exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+
+        // Don't create the project directory - simulating it was deleted
+
+        // Create the centralized venv with .project file pointing to non-existent path
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(&python_exe, b"").unwrap();
+        std::fs::write(venv_dir.join("pyvenv.cfg"), b"version = 3.13.0\n").unwrap();
+        std::fs::write(venv_dir.join(".project"), "/path/to/deleted/project").unwrap();
+
+        // Construct PythonEnv
+        let env = PythonEnv {
+            executable: norm_case(python_exe.clone()),
+            prefix: Some(norm_case(venv_dir.clone())),
+            version: None,
+            symlinks: None,
+        };
+
+        let env_vars = EnvVariables {
+            pipenv_max_depth: 3,
+            pipenv_pipfile: "Pipfile".to_string(),
+            home: Some(temp_home.clone()),
+            xdg_data_home: None,
+            workon_home: None,
+        };
+
+        // Should still be detected as pipenv (centralized directory + .project file)
+        assert!(
+            is_in_pipenv_centralized_dir(&env, &env_vars),
+            "Expected env to be detected in centralized dir"
+        );
+        assert!(
+            is_pipenv(&env, &env_vars),
+            "Expected env to be identified as pipenv"
+        );
+
+        // Locator should return the environment, but project will point to non-existent path
+        let locator = PipEnv { env_vars };
+        let result = locator
+            .try_from(&env)
+            .expect("expected locator to return environment");
+        assert_eq!(result.kind, Some(PythonEnvironmentKind::Pipenv));
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_home).ok();
     }
 }
