@@ -70,6 +70,11 @@ pub struct PythonEnvironment {
     // Some of the known symlinks for the environment.
     // E.g. in the case of Homebrew there are a number of symlinks that are created.
     pub symlinks: Option<Vec<PathBuf>>,
+    /// An error message if the environment is known to be in a bad state.
+    /// For example, when the Python executable is a broken symlink.
+    /// If None, no known issues have been detected (but this doesn't guarantee
+    /// the environment is fully functional - we don't spawn Python to verify).
+    pub error: Option<String>,
 }
 
 impl Ord for PythonEnvironment {
@@ -176,6 +181,9 @@ impl std::fmt::Display for PythonEnvironment {
                 }
             }
         }
+        if let Some(error) = &self.error {
+            writeln!(f, "   Error       : {error}").unwrap_or_default();
+        }
         Ok(())
     }
 }
@@ -194,6 +202,7 @@ pub struct PythonEnvironmentBuilder {
     project: Option<PathBuf>,
     arch: Option<Architecture>,
     symlinks: Option<Vec<PathBuf>>,
+    error: Option<String>,
 }
 
 impl PythonEnvironmentBuilder {
@@ -209,6 +218,7 @@ impl PythonEnvironmentBuilder {
             project: None,
             arch: None,
             symlinks: None,
+            error: None,
         }
     }
     pub fn from_environment(env: PythonEnvironment) -> Self {
@@ -223,6 +233,7 @@ impl PythonEnvironmentBuilder {
             project: env.project,
             arch: env.arch,
             symlinks: env.symlinks,
+            error: env.error,
         }
     }
 
@@ -285,6 +296,11 @@ impl PythonEnvironmentBuilder {
         self
     }
 
+    pub fn error(mut self, error: Option<String>) -> Self {
+        self.error = error;
+        self
+    }
+
     fn update_symlinks_and_exe(&mut self, symlinks: Option<Vec<PathBuf>>) {
         let mut all = self.symlinks.clone().unwrap_or_default();
         if let Some(ref exe) = self.executable {
@@ -340,6 +356,7 @@ impl PythonEnvironmentBuilder {
             project: self.project,
             arch: self.arch,
             symlinks,
+            error: self.error,
         }
     }
 }

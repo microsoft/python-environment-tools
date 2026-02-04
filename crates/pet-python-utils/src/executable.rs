@@ -17,6 +17,31 @@ lazy_static! {
         Regex::new(r"python(\d+\.?)*$").expect("error parsing Unix executable regex");
 }
 
+/// Checks if a path is a broken symlink (symlink that points to a non-existent target).
+/// Returns true if the path is a symlink and its target does not exist.
+pub fn is_broken_symlink(path: &Path) -> bool {
+    // First check if it's a symlink using symlink_metadata (doesn't follow symlinks)
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if metadata.file_type().is_symlink() {
+            // Now check if the target exists using regular metadata (follows symlinks)
+            // If this fails or returns false for exists(), then it's broken
+            return !path.exists();
+        }
+    }
+    false
+}
+
+/// Result of looking for an executable in an environment path.
+#[derive(Debug, Clone)]
+pub enum ExecutableResult {
+    /// A valid executable was found
+    Found(PathBuf),
+    /// An executable path exists but is broken (e.g., broken symlink)
+    Broken(PathBuf),
+    /// No executable was found
+    NotFound,
+}
+
 #[cfg(windows)]
 pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
     [
@@ -41,6 +66,56 @@ pub fn find_executable(env_path: &Path) -> Option<PathBuf> {
     ]
     .into_iter()
     .find(|path| path.is_file())
+}
+
+/// Finds an executable in the environment path, including broken symlinks.
+/// This is useful for detecting virtual environments that have broken Python executables.
+#[cfg(windows)]
+pub fn find_executable_or_broken(env_path: &Path) -> ExecutableResult {
+    let candidates = [
+        env_path.join("Scripts").join("python.exe"),
+        env_path.join("Scripts").join("python3.exe"),
+        env_path.join("bin").join("python.exe"),
+        env_path.join("bin").join("python3.exe"),
+        env_path.join("python.exe"),
+        env_path.join("python3.exe"),
+    ];
+
+    // First try to find a valid executable
+    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
+        return ExecutableResult::Found(path.clone());
+    }
+
+    // Then check for broken symlinks
+    if let Some(path) = candidates.iter().find(|path| is_broken_symlink(path)) {
+        return ExecutableResult::Broken(path.clone());
+    }
+
+    ExecutableResult::NotFound
+}
+
+/// Finds an executable in the environment path, including broken symlinks.
+/// This is useful for detecting virtual environments that have broken Python executables.
+#[cfg(unix)]
+pub fn find_executable_or_broken(env_path: &Path) -> ExecutableResult {
+    let candidates = [
+        env_path.join("bin").join("python"),
+        env_path.join("bin").join("python3"),
+        env_path.join("python"),
+        env_path.join("python3"),
+    ];
+
+    // First try to find a valid executable
+    if let Some(path) = candidates.iter().find(|path| path.is_file()) {
+        return ExecutableResult::Found(path.clone());
+    }
+
+    // Then check for broken symlinks
+    if let Some(path) = candidates.iter().find(|path| is_broken_symlink(path)) {
+        return ExecutableResult::Broken(path.clone());
+    }
+
+    ExecutableResult::NotFound
 }
 
 pub fn find_executables<T: AsRef<Path>>(env_path: T) -> Vec<PathBuf> {

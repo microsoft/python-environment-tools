@@ -10,7 +10,7 @@ use pet_core::{
     reporter::Reporter,
     Locator, LocatorKind,
 };
-use pet_python_utils::executable::find_executables;
+use pet_python_utils::executable::{find_executable_or_broken, find_executables, ExecutableResult};
 use pet_python_utils::version;
 
 fn is_venv_internal(env: &PythonEnv) -> Option<bool> {
@@ -26,6 +26,56 @@ pub fn is_venv(env: &PythonEnv) -> bool {
 pub fn is_venv_dir(path: &Path) -> bool {
     PyVenvCfg::find(path).is_some()
 }
+
+/// Tries to create a PythonEnvironment from a directory that might be a venv.
+/// This function can detect broken environments (e.g., with broken symlinks)
+/// and will return them with an error field set.
+pub fn try_environment_from_venv_dir(path: &Path) -> Option<PythonEnvironment> {
+    // Check if this is a venv directory
+    let cfg = PyVenvCfg::find(path)?;
+
+    let prefix = path.to_path_buf();
+    let version = version::from_creator_for_virtual_env(&prefix).or(Some(cfg.version.clone()));
+    let name = cfg.prompt;
+
+    match find_executable_or_broken(path) {
+        ExecutableResult::Found(executable) => {
+            let symlinks = find_executables(&prefix);
+            Some(
+                PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+                    .name(name)
+                    .executable(Some(executable))
+                    .version(version)
+                    .prefix(Some(prefix))
+                    .symlinks(Some(symlinks))
+                    .build(),
+            )
+        }
+        ExecutableResult::Broken(executable) => Some(
+            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+                .name(name)
+                .executable(Some(executable))
+                .version(version)
+                .prefix(Some(prefix))
+                .error(Some(
+                    "Python executable is a broken symlink".to_string(),
+                ))
+                .build(),
+        ),
+        ExecutableResult::NotFound => {
+            // pyvenv.cfg exists but no Python executable found at all
+            Some(
+                PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+                    .name(name)
+                    .version(version)
+                    .prefix(Some(prefix))
+                    .error(Some("Python executable not found".to_string()))
+                    .build(),
+            )
+        }
+    }
+}
+
 pub struct Venv {}
 
 impl Venv {
