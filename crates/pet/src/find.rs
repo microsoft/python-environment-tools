@@ -162,7 +162,9 @@ pub fn find_and_report_envs(
                         possible_environments.append(
                             &mut reader
                                 .filter_map(Result::ok)
-                                .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+                                // Use path().is_dir() instead of file_type().is_dir() to follow symlinks
+                                // See: https://github.com/microsoft/python-environment-tools/issues/196
+                                .filter(|d| d.path().is_dir())
                                 .map(|p| p.path())
                                 .collect(),
                         );
@@ -285,7 +287,8 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     if let Ok(reader) = fs::read_dir(workspace_folder.join(".pixi").join("envs")) {
         reader
             .filter_map(Result::ok)
-            .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+            // Use path().is_dir() instead of file_type().is_dir() to follow symlinks
+            .filter(|d| d.path().is_dir())
             .map(|p| p.path())
             .for_each(|p| paths_to_search_first.push(p));
     }
@@ -310,7 +313,8 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     if let Ok(reader) = fs::read_dir(workspace_folder) {
         for folder in reader
             .filter_map(Result::ok)
-            .filter(|d| d.file_type().is_ok_and(|f| f.is_dir()))
+            // Use path().is_dir() instead of file_type().is_dir() to follow symlinks
+            .filter(|d| d.path().is_dir())
             .map(|p| p.path())
             .filter(|p| {
                 // If this directory is a sub directory or is in the environment_directories, then do not search in this directory.
@@ -429,5 +433,153 @@ pub fn identify_python_executables_using_locators(
         } else {
             warn!("Unknown Python Env {:?}", executable);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// Test that `path().is_dir()` properly follows symlinks to directories.
+    /// This is the fix for https://github.com/microsoft/python-environment-tools/issues/196
+    ///
+    /// The issue was that `DirEntry::file_type().is_dir()` returns false for symlinks
+    /// to directories on Unix, causing symlinked virtual environments to be missed.
+    #[test]
+    #[cfg(unix)]
+    fn test_symlinked_directory_is_detected() {
+        use std::os::unix::fs::symlink;
+
+        // Create temporary directories
+        let tmp = TempDir::new().expect("Failed to create temp dir");
+        let target_dir = tmp.path().join("actual_venv");
+        let container_dir = tmp.path().join("envs");
+        let symlink_dir = container_dir.join("linked_venv");
+
+        // Create the target directory (simulating a venv)
+        fs::create_dir_all(&target_dir).expect("Failed to create target dir");
+        fs::create_dir_all(&container_dir).expect("Failed to create container dir");
+
+        // Create a symlink from envs/linked_venv -> actual_venv
+        symlink(&target_dir, &symlink_dir).expect("Failed to create symlink");
+
+        // Verify the symlink was created
+        assert!(symlink_dir.exists(), "Symlink should exist");
+
+        // Test that path().is_dir() follows the symlink
+        let entries: Vec<_> = fs::read_dir(&container_dir)
+            .expect("Failed to read dir")
+            .filter_map(Result::ok)
+            .collect();
+
+        assert_eq!(entries.len(), 1, "Should have one entry");
+
+        let entry = &entries[0];
+
+        // This is the OLD behavior that caused the bug:
+        // file_type().is_dir() does NOT follow symlinks
+        let file_type_is_dir = entry.file_type().is_ok_and(|ft| ft.is_dir());
+        assert!(
+            !file_type_is_dir,
+            "file_type().is_dir() should return false for symlinks (this is the bug)"
+        );
+
+        // This is the NEW behavior that fixes the bug:
+        // path().is_dir() DOES follow symlinks
+        let path_is_dir = entry.path().is_dir();
+        assert!(
+            path_is_dir,
+            "path().is_dir() should return true for symlinks to directories"
+        );
+    }
+
+    /// Test that regular directories still work with the fix
+    #[test]
+    fn test_regular_directory_is_detected() {
+        let tmp = TempDir::new().expect("Failed to create temp dir");
+        let container_dir = tmp.path().join("envs");
+        let sub_dir = container_dir.join("my_venv");
+
+        fs::create_dir_all(&sub_dir).expect("Failed to create dirs");
+
+        let entries: Vec<_> = fs::read_dir(&container_dir)
+            .expect("Failed to read dir")
+            .filter_map(Result::ok)
+            .filter(|d| d.path().is_dir())
+            .collect();
+
+        assert_eq!(entries.len(), 1, "Should detect the regular directory");
+        assert!(
+            entries[0].path().ends_with("my_venv"),
+            "Should be the my_venv directory"
+        );
+    }
+
+    /// Test that files are not incorrectly detected as directories
+    #[test]
+    fn test_file_is_not_detected_as_directory() {
+        let tmp = TempDir::new().expect("Failed to create temp dir");
+        let container_dir = tmp.path().join("envs");
+        let file_path = container_dir.join("some_file.txt");
+
+        fs::create_dir_all(&container_dir).expect("Failed to create dirs");
+        fs::write(&file_path, "test content").expect("Failed to write file");
+
+        let dirs: Vec<_> = fs::read_dir(&container_dir)
+            .expect("Failed to read dir")
+            .filter_map(Result::ok)
+            .filter(|d| d.path().is_dir())
+            .collect();
+
+        assert!(dirs.is_empty(), "Should not detect files as directories");
+    }
+
+    /// Test symlinked directory scenario matching the original issue:
+    /// User has ~/envs with symlinks to venvs in other locations
+    #[test]
+    #[cfg(unix)]
+    fn test_symlinked_venv_in_envs_directory() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().expect("Failed to create temp dir");
+
+        // Simulate user's actual venv location
+        let project_dir = tmp.path().join("projects").join("myproject");
+        let actual_venv = project_dir.join(".venv");
+
+        // Simulate ~/envs directory with symlink
+        let envs_dir = tmp.path().join("envs");
+        let symlinked_venv = envs_dir.join("myproject_venv");
+
+        // Create the actual venv structure
+        fs::create_dir_all(actual_venv.join("bin")).expect("Failed to create venv");
+        fs::write(actual_venv.join("bin").join("python"), "").expect("Failed to create python");
+        fs::write(actual_venv.join("pyvenv.cfg"), "home = /usr/bin")
+            .expect("Failed to create pyvenv.cfg");
+
+        // Create envs directory with symlink
+        fs::create_dir_all(&envs_dir).expect("Failed to create envs dir");
+        symlink(&actual_venv, &symlinked_venv).expect("Failed to create symlink");
+
+        // The fix ensures this symlinked directory is discovered
+        let discovered: Vec<_> = fs::read_dir(&envs_dir)
+            .expect("Failed to read envs dir")
+            .filter_map(Result::ok)
+            .filter(|d| d.path().is_dir()) // The fix: using path().is_dir()
+            .map(|d| d.path())
+            .collect();
+
+        assert_eq!(discovered.len(), 1, "Should discover the symlinked venv");
+        assert_eq!(
+            discovered[0], symlinked_venv,
+            "Should be the symlinked venv path"
+        );
+
+        // Verify it's actually a venv by checking for pyvenv.cfg
+        assert!(
+            discovered[0].join("pyvenv.cfg").exists(),
+            "Symlink should point to a valid venv"
+        );
     }
 }
