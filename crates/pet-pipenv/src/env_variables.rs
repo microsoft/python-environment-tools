@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use pet_core::os_environment::Environment;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 // NOTE: Do not implement Default trait, as we do not want to ever forget to set the values.
@@ -10,6 +11,9 @@ pub struct EnvVariables {
     #[allow(dead_code)]
     pub pipenv_max_depth: u16,
     pub pipenv_pipfile: String,
+    pub home: Option<PathBuf>,
+    pub xdg_data_home: Option<String>,
+    pub workon_home: Option<PathBuf>,
 }
 
 impl EnvVariables {
@@ -22,6 +26,11 @@ impl EnvVariables {
             pipenv_pipfile: env
                 .get_env_var("PIPENV_PIPFILE".to_string())
                 .unwrap_or("Pipfile".to_string()),
+            home: env.get_user_home(),
+            xdg_data_home: env.get_env_var("XDG_DATA_HOME".to_string()),
+            workon_home: env
+                .get_env_var("WORKON_HOME".to_string())
+                .map(PathBuf::from),
         }
     }
 }
