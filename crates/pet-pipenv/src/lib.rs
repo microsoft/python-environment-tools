@@ -583,6 +583,7 @@ mod tests {
             home: Some(temp_home.clone()),
             xdg_data_home: None,
             workon_home: None,
+            path: None,
         };
 
         // Validate is_in_pipenv_centralized_dir detects it
@@ -651,6 +652,7 @@ mod tests {
             home: Some(temp_home.clone()),
             xdg_data_home: None,
             workon_home: None,
+            path: None,
         };
 
         // Should still be detected as pipenv (centralized directory + .project file)
