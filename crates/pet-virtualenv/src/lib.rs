@@ -141,3 +141,198 @@ impl Locator for VirtualEnv {
         // We expect the user of this class to call `is_compatible`
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_is_virtualenv_dir_with_activate() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::File::create(bin_dir.join("activate")).unwrap();
+
+        assert!(is_virtualenv_dir(dir.path()));
+    }
+
+    #[test]
+    fn test_is_virtualenv_dir_with_activate_bat() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::File::create(bin_dir.join("activate.bat")).unwrap();
+
+        assert!(is_virtualenv_dir(dir.path()));
+    }
+
+    #[test]
+    fn test_is_virtualenv_dir_with_activate_ps1() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::File::create(bin_dir.join("activate.ps1")).unwrap();
+
+        assert!(is_virtualenv_dir(dir.path()));
+    }
+
+    #[test]
+    fn test_is_virtualenv_dir_from_bin() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::File::create(bin_dir.join("activate")).unwrap();
+
+        // Pass the bin directory itself
+        assert!(is_virtualenv_dir(&bin_dir));
+    }
+
+    #[test]
+    fn test_is_virtualenv_dir_without_activate() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        assert!(!is_virtualenv_dir(dir.path()));
+    }
+
+    #[test]
+    fn test_is_virtualenv_dir_global_paths_excluded() {
+        // Global paths should not be considered virtualenvs
+        assert!(!is_virtualenv_dir(&PathBuf::from("/bin")));
+        assert!(!is_virtualenv_dir(&PathBuf::from("/usr/bin")));
+        assert!(!is_virtualenv_dir(&PathBuf::from("/usr/local/bin")));
+    }
+
+    #[test]
+    fn test_is_virtualenv_with_activate() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::File::create(bin_dir.join("activate")).unwrap();
+
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        let env = PythonEnv::new(python_path, Some(dir.path().to_path_buf()), None);
+        assert!(is_virtualenv(&env));
+    }
+
+    #[test]
+    fn test_is_virtualenv_without_activate() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        let env = PythonEnv::new(python_path, Some(dir.path().to_path_buf()), None);
+        assert!(!is_virtualenv(&env));
+    }
+
+    #[test]
+    fn test_is_virtualenv_without_prefix() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::File::create(bin_dir.join("activate")).unwrap();
+
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        // No prefix provided
+        let env = PythonEnv::new(python_path, None, None);
+        assert!(is_virtualenv(&env));
+    }
+
+    #[test]
+    fn test_is_virtualenv_without_prefix_and_not_in_bin() {
+        let dir = tempdir().unwrap();
+        // Not in bin or Scripts directory
+        let python_path = dir.path().join("python");
+        fs::File::create(&python_path).unwrap();
+
+        let env = PythonEnv::new(python_path, None, None);
+        assert!(!is_virtualenv(&env));
+    }
+
+    #[test]
+    fn test_virtualenv_locator_kind() {
+        let venv = VirtualEnv::new();
+        assert_eq!(venv.get_kind(), LocatorKind::VirtualEnv);
+    }
+
+    #[test]
+    fn test_virtualenv_supported_categories() {
+        let venv = VirtualEnv::new();
+        let categories = venv.supported_categories();
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0], PythonEnvironmentKind::VirtualEnv);
+    }
+
+    #[test]
+    fn test_virtualenv_default() {
+        let venv = VirtualEnv::default();
+        assert_eq!(venv.get_kind(), LocatorKind::VirtualEnv);
+    }
+
+    #[test]
+    fn test_virtualenv_try_from_valid() {
+        let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        #[cfg(windows)]
+        fs::File::create(bin_dir.join("activate.bat")).unwrap();
+        #[cfg(unix)]
+        fs::File::create(bin_dir.join("activate")).unwrap();
+
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        let env = PythonEnv::new(python_path.clone(), Some(dir.path().to_path_buf()), None);
+        let venv = VirtualEnv::new();
+        let result = venv.try_from(&env);
+
+        assert!(result.is_some());
+        let py_env = result.unwrap();
+        assert_eq!(py_env.kind, Some(PythonEnvironmentKind::VirtualEnv));
+        // Compare file names rather than full paths to avoid Windows 8.3 short path issues
+        assert!(py_env.executable.is_some());
+        assert_eq!(
+            py_env.executable.as_ref().unwrap().file_name(),
+            python_path.file_name()
+        );
+        assert!(py_env.prefix.is_some());
+    }
+
+    #[test]
+    fn test_virtualenv_try_from_non_virtualenv() {
+        let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        let env = PythonEnv::new(python_path, Some(dir.path().to_path_buf()), None);
+        let venv = VirtualEnv::new();
+        let result = venv.try_from(&env);
+
+        assert!(result.is_none());
+    }
+}

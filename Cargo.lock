@@ -506,6 +506,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -748,6 +749,7 @@ dependencies = [
  "pet-core",
  "pet-python-utils",
  "pet-virtualenv",
+ "tempfile",
 ]
 
 [[package]]
@@ -759,6 +761,7 @@ dependencies = [
  "pet-core",
  "pet-fs",
  "pet-python-utils",
+ "tempfile",
 ]
 
 [[package]]
