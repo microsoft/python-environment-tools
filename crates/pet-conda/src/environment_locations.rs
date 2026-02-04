@@ -4,6 +4,7 @@
 use crate::{
     conda_rc::{get_conda_rc_search_paths, Condarc},
     env_variables::EnvVariables,
+    manager::find_conda_binary,
     utils::{is_conda_env, is_conda_install},
 };
 use log::trace;
@@ -265,6 +266,14 @@ pub fn get_known_conda_install_locations(
 ) -> Vec<PathBuf> {
     use pet_fs::path::norm_case;
 
+    // First, try to find conda from PATH - this handles conda installations on mapped drives
+    // and other non-standard locations that aren't in the hardcoded search paths.
+    let conda_from_path = if conda_executable.is_none() {
+        find_conda_binary(env_vars)
+    } else {
+        None
+    };
+
     let user_profile = env_vars.userprofile.clone().unwrap_or_default();
     let program_data = env_vars.programdata.clone().unwrap_or_default();
     let all_user_profile = env_vars.allusersprofile.clone().unwrap_or_default();
@@ -359,6 +368,10 @@ pub fn get_known_conda_install_locations(
     if let Some(conda_dir) = get_conda_dir_from_exe(conda_executable) {
         known_paths.push(conda_dir);
     }
+    // Add conda installation found from PATH (handles mapped drives and non-standard locations)
+    if let Some(conda_dir) = get_conda_dir_from_exe(&conda_from_path) {
+        known_paths.push(conda_dir);
+    }
     known_paths.sort();
     known_paths.dedup();
 
@@ -370,6 +383,14 @@ pub fn get_known_conda_install_locations(
     env_vars: &EnvVariables,
     conda_executable: &Option<PathBuf>,
 ) -> Vec<PathBuf> {
+    // First, try to find conda from PATH - this handles conda installations in
+    // non-standard locations that aren't in the hardcoded search paths.
+    let conda_from_path = if conda_executable.is_none() {
+        find_conda_binary(env_vars)
+    } else {
+        None
+    };
+
     let mut known_paths = vec![
         // We need to look in `/anaconda3` and `/miniconda3` as well.
         PathBuf::from("/anaconda"),
@@ -429,6 +450,10 @@ pub fn get_known_conda_install_locations(
         known_paths.push(home.join(".local"));
     }
     if let Some(conda_dir) = get_conda_dir_from_exe(conda_executable) {
+        known_paths.push(conda_dir);
+    }
+    // Add conda installation found from PATH (handles non-standard locations)
+    if let Some(conda_dir) = get_conda_dir_from_exe(&conda_from_path) {
         known_paths.push(conda_dir);
     }
     known_paths.sort();
