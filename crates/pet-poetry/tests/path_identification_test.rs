@@ -32,7 +32,7 @@ mod tests {
 
         if path_str.contains("pypoetry") && path_str.contains("virtualenvs") {
             if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                let re = Regex::new(r"^.+-[A-Za-z0-9_-]{8}-py.*$").unwrap();
+                let re = Regex::new(r"^.+-[A-Za-z0-9_-]{8}-py\d+\.\d+$").unwrap();
                 return re.is_match(dir_name);
             }
         }
@@ -97,8 +97,10 @@ mod tests {
     }
 
     #[test]
-    fn test_poetry_path_pattern_no_version() {
-        assert!(test_poetry_cache_path_pattern(
+    fn test_poetry_path_pattern_no_version_rejected() {
+        // Poetry always includes the Python version (major.minor) in the environment name
+        // A name ending in just "py" without version should not match
+        assert!(!test_poetry_cache_path_pattern(
             "/home/user/.cache/pypoetry/virtualenvs/testproject-XyZ12345-py"
         ));
     }

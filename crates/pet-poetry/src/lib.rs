@@ -31,7 +31,7 @@ mod pyproject_toml;
 mod telemetry;
 
 lazy_static! {
-    static ref POETRY_ENV_NAME_PATTERN: Regex = Regex::new(r"^.+-[A-Za-z0-9_-]{8}-py.*$")
+    static ref POETRY_ENV_NAME_PATTERN: Regex = Regex::new(r"^.+-[A-Za-z0-9_-]{8}-py\d+\.\d+$")
         .expect("Error generating RegEx for poetry environment name pattern");
 }
 
