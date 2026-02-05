@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 use env_variables::EnvVariables;
+use lazy_static::lazy_static;
 use log::trace;
 use manager::PipenvManager;
 use pet_core::env::PythonEnv;
@@ -15,12 +16,23 @@ use pet_core::{
 use pet_fs::path::norm_case;
 use pet_python_utils::executable::find_executables;
 use pet_python_utils::version;
+use regex::Regex;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::{fs, path::PathBuf};
 
 mod env_variables;
 pub mod manager;
+
+lazy_static! {
+    /// Regex pattern for pipenv environment directory names.
+    /// Pipenv uses the naming convention: `{sanitized-project-name}-{8-char-hash}`
+    /// The hash is 8 characters of URL-safe base64 encoding of SHA256.
+    /// Pattern: one or more name segments (letters, digits, underscores) separated by hyphens,
+    /// followed by a hyphen and exactly 8 alphanumeric characters (including _ and -).
+    static ref PIPENV_ENV_NAME_PATTERN: Regex = Regex::new(r"^.+-[A-Za-z0-9_-]{8}$")
+        .expect("Error creating pipenv environment name pattern regex");
+}
 
 /// Returns the list of directories where pipenv stores centralized virtual environments.
 /// These are the known locations where pipenv creates virtualenvs when not using in-project mode.
@@ -108,7 +120,7 @@ fn is_in_pipenv_centralized_dir(env: &PythonEnv, env_vars: &EnvVariables) -> boo
     for pipenv_dir in &pipenv_dirs {
         if let Some(parent) = prefix.parent() {
             if norm_case(parent) == *pipenv_dir {
-                // Check if there's a .project file (pipenv always creates this for centralized envs)
+                // Primary check: .project file (pipenv always creates this for centralized envs)
                 let project_file = prefix.join(".project");
                 if project_file.exists() {
                     trace!(
@@ -117,12 +129,27 @@ fn is_in_pipenv_centralized_dir(env: &PythonEnv, env_vars: &EnvVariables) -> boo
                         pipenv_dir
                     );
                     return true;
-                } else {
-                    trace!(
-                        "Pipenv: Env {:?} is in pipenv dir {:?} but missing .project file",
-                        prefix,
-                        pipenv_dir
-                    );
+                }
+
+                // Fallback: Check if directory name matches pipenv naming pattern
+                // Pattern: {sanitized-project-name}-{8-char-hash}
+                // This handles edge cases where .project was deleted, corrupted,
+                // or environments from older pipenv versions.
+                if let Some(dir_name) = prefix.file_name().and_then(|n| n.to_str()) {
+                    if PIPENV_ENV_NAME_PATTERN.is_match(dir_name) {
+                        trace!(
+                            "Pipenv: Detected centralized pipenv env at {:?} (in {:?}, matched naming pattern, no .project file)",
+                            prefix,
+                            pipenv_dir
+                        );
+                        return true;
+                    } else {
+                        trace!(
+                            "Pipenv: Env {:?} is in pipenv dir {:?} but missing .project file and name doesn't match pattern",
+                            prefix,
+                            pipenv_dir
+                        );
+                    }
                 }
             }
         }
@@ -677,5 +704,92 @@ mod tests {
 
         // Cleanup
         std::fs::remove_dir_all(&temp_home).ok();
+    }
+
+    #[test]
+    fn detect_pipenv_centralized_env_without_project_file_via_naming_pattern() {
+        // Test fallback detection when .project file is missing but directory name matches
+        // pipenv's naming pattern: {project-name}-{8-char-hash}
+        let temp_home = unique_temp_dir();
+        let virtualenvs_dir = temp_home.join(".local").join("share").join("virtualenvs");
+        // Use a name that matches pipenv pattern: name + hyphen + 8 alphanumeric chars
+        let venv_dir = virtualenvs_dir.join("myproject-AbC12xYz");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        let python_exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+
+        // Create the venv WITHOUT a .project file (simulating corrupted/deleted .project)
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(&python_exe, b"").unwrap();
+        std::fs::write(venv_dir.join("pyvenv.cfg"), b"version = 3.13.0\n").unwrap();
+        // Explicitly NOT creating .project file
+
+        // Construct PythonEnv
+        let env = PythonEnv {
+            executable: norm_case(python_exe.clone()),
+            prefix: Some(norm_case(venv_dir.clone())),
+            version: None,
+            symlinks: None,
+        };
+
+        let env_vars = EnvVariables {
+            pipenv_max_depth: 3,
+            pipenv_pipfile: "Pipfile".to_string(),
+            home: Some(temp_home.clone()),
+            xdg_data_home: None,
+            workon_home: None,
+            path: None,
+        };
+
+        // Should be detected via naming pattern fallback
+        assert!(
+            is_in_pipenv_centralized_dir(&env, &env_vars),
+            "Expected env to be detected in centralized dir via naming pattern"
+        );
+        assert!(
+            is_pipenv(&env, &env_vars),
+            "Expected env to be identified as pipenv via naming pattern"
+        );
+
+        // Locator should return the environment
+        let locator = PipEnv {
+            env_vars,
+            pipenv_executable: Arc::new(RwLock::new(None)),
+        };
+        let result = locator
+            .try_from(&env)
+            .expect("expected locator to return environment");
+        assert_eq!(result.kind, Some(PythonEnvironmentKind::Pipenv));
+        // Project should be None since there's no .project file and no Pipfile nearby
+        assert_eq!(result.project, None);
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_home).ok();
+    }
+
+    #[test]
+    fn test_pipenv_naming_pattern_regex() {
+        // Test that our regex correctly matches pipenv naming patterns
+        // Valid patterns: {name}-{8-char-hash}
+        assert!(PIPENV_ENV_NAME_PATTERN.is_match("myproject-AbC12xYz"));
+        assert!(PIPENV_ENV_NAME_PATTERN.is_match("my-project-AbC12xYz"));
+        assert!(PIPENV_ENV_NAME_PATTERN.is_match("my_project-AbC12xYz"));
+        assert!(PIPENV_ENV_NAME_PATTERN.is_match("project123-12345678"));
+        assert!(PIPENV_ENV_NAME_PATTERN.is_match("a-b-c-d-12345678"));
+        // URL-safe base64 can include _ and -
+        assert!(PIPENV_ENV_NAME_PATTERN.is_match("myproject-AbC_2-Yz"));
+
+        // Invalid patterns (should NOT match)
+        assert!(!PIPENV_ENV_NAME_PATTERN.is_match("myproject")); // no hash
+        assert!(!PIPENV_ENV_NAME_PATTERN.is_match("myproject-abc")); // hash too short (3 chars)
+        assert!(!PIPENV_ENV_NAME_PATTERN.is_match("myproject-abcdefg")); // hash too short (7 chars)
+        assert!(!PIPENV_ENV_NAME_PATTERN.is_match("-AbC12xYz")); // no project name
     }
 }
