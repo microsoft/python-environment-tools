@@ -222,9 +222,12 @@ fn get_conda_env_name(
  * And example is `# cmd: conda create -n sample``
  *
  * This function returns the name of the conda environment based on how it was created:
- * - If created with --prefix/-p (path-based): returns None (activation must use full path)
  * - If created with --name/-n (name-based): returns the folder name (can use named activation)
- * - If we can't determine: returns the folder name (preserve existing behavior)
+ * - Otherwise: returns None (activation must use full path for safety)
+ *
+ * This is used for external environments (not under conda_dir). We only return a name
+ * if we can positively confirm it was created with -n/--name, because that's the only
+ * case where name-based activation works reliably for external environments.
  */
 fn get_conda_env_name_from_history_file(env_path: &Path, prefix: &Path) -> Option<String> {
     let name = prefix
@@ -239,33 +242,15 @@ fn get_conda_env_name_from_history_file(env_path: &Path, prefix: &Path) -> Optio
             // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
             // # cmd: /usr/bin/conda create --prefix ./prefix-envs/.conda1 python=3.12 -y
 
-            // Check if environment was created with --prefix/-p (path-based)
-            // In this case, return None so activation uses full path
-            if is_path_based_conda_env(&line) {
-                return None;
-            }
-
-            // Check if environment was created with --name/-n (name-based)
-            // In this case, return the folder name for named activation
+            // Only return a name if we can confirm it was created with -n/--name
+            // This matches the original behavior where we checked for the exact name in the cmd
             if is_name_based_conda_env(&line) {
                 return Some(name.clone());
             }
         }
     }
-    // If we can't determine from history, return folder name (preserve existing behavior)
-    name
-}
-
-/// Check if the conda create command used --prefix or -p (path-based environment)
-fn is_path_based_conda_env(cmd_line: &str) -> bool {
-    // Look for " -p " or " --prefix " after "create"
-    // We need to be careful to match the flag, not just any occurrence of -p
-    let lower = cmd_line.to_lowercase();
-    if let Some(create_idx) = lower.find(" create ") {
-        let after_create = &lower[create_idx..];
-        return after_create.contains(" -p ") || after_create.contains(" --prefix ");
-    }
-    false
+    // If we can't confirm name-based creation, return None for safe path-based activation
+    None
 }
 
 /// Check if the conda create command used --name or -n (name-based environment)
@@ -401,28 +386,6 @@ mod tests {
             conda_dir,
             PathBuf::from("/Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3")
         );
-    }
-
-    #[test]
-    fn test_is_path_based_conda_env() {
-        // Path-based environments use --prefix or -p
-        assert!(is_path_based_conda_env(
-            "# cmd: /usr/bin/conda create --yes --prefix .conda python=3.12"
-        ));
-        assert!(is_path_based_conda_env(
-            "# cmd: /usr/bin/conda create -p .conda python=3.12"
-        ));
-        assert!(is_path_based_conda_env(
-            "# cmd: C:\\Users\\user\\miniconda3\\Scripts\\conda.exe create --prefix .conda python=3.9"
-        ));
-
-        // Name-based environments use --name or -n
-        assert!(!is_path_based_conda_env(
-            "# cmd: /usr/bin/conda create -n myenv python=3.12"
-        ));
-        assert!(!is_path_based_conda_env(
-            "# cmd: /usr/bin/conda create --name myenv python=3.12"
-        ));
     }
 
     #[test]
