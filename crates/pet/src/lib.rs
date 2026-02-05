@@ -47,7 +47,7 @@ pub fn initialize_tracing(verbose: bool) {
         if use_json {
             tracing_subscriber::registry()
                 .with(filter)
-                .with(fmt::layer().json())
+                .with(fmt::layer().json().with_writer(std::io::stderr))
                 .init();
         } else {
             tracing_subscriber::registry()
@@ -55,7 +55,8 @@ pub fn initialize_tracing(verbose: bool) {
                 .with(
                     fmt::layer()
                         .with_target(true)
-                        .with_timer(fmt::time::uptime()),
+                        .with_timer(fmt::time::uptime())
+                        .with_writer(std::io::stderr),
                 )
                 .init();
         }
