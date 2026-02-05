@@ -105,7 +105,7 @@ fn list_all_environments_from_project_config(
 
     // Check if we're allowed to use .venv as a poetry env
     // This can be configured in global, project or env variable.
-    // Order of preference is Global, EnvVariable & Project (project wins)
+    // Order of preference is Project (local config) > EnvVariable > Global
     if should_use_local_venv_as_poetry_env(global, &local, env) {
         // If virtualenvs are in the project, then look for .venv
         let venv = path.join(".venv");
@@ -121,21 +121,21 @@ fn should_use_local_venv_as_poetry_env(
     local: &Option<Config>,
     env: &EnvVariables,
 ) -> bool {
-    // Given preference to env variable.
-    if let Some(poetry_virtualenvs_in_project) = env.poetry_virtualenvs_in_project {
-        trace!(
-            "Poetry virtualenvs_in_project from Env Variable: {}",
-            poetry_virtualenvs_in_project
-        );
-        return poetry_virtualenvs_in_project;
-    }
-
-    // Give preference to setting in local config file.
+    // Give preference to setting in local config file (project-level).
     if let Some(poetry_virtualenvs_in_project) =
         local.clone().and_then(|c| c.virtualenvs_in_project)
     {
         trace!(
             "Poetry virtualenvs_in_project from local config file: {}",
+            poetry_virtualenvs_in_project
+        );
+        return poetry_virtualenvs_in_project;
+    }
+
+    // Then check env variable.
+    if let Some(poetry_virtualenvs_in_project) = env.poetry_virtualenvs_in_project {
+        trace!(
+            "Poetry virtualenvs_in_project from Env Variable: {}",
             poetry_virtualenvs_in_project
         );
         return poetry_virtualenvs_in_project;
