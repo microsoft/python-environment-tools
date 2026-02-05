@@ -191,10 +191,19 @@ fn get_conda_env_name(
     // if the conda install folder is parent of the env folder, then we can use named activation.
     // E.g. conda env is = <conda install>/envs/<env name>
     // Then we can use `<conda install>/bin/conda activate -n <env name>`
-    if let Some(conda_dir) = conda_dir {
-        if !prefix.starts_with(conda_dir) {
-            name = get_conda_env_name_from_history_file(env_path, prefix);
-        }
+    //
+    // Check the history file when:
+    // 1. conda_dir is known but prefix is not under it (external environment)
+    // 2. conda_dir is unknown (we need to check history to determine if it's name or path based)
+    // This ensures path-based environments (created with --prefix) return None for name,
+    // so activation uses the full path instead of incorrectly trying name-based activation.
+    let should_check_history = match conda_dir {
+        Some(dir) => !prefix.starts_with(dir),
+        None => true,
+    };
+
+    if should_check_history {
+        name = get_conda_env_name_from_history_file(env_path, prefix);
     }
 
     name
