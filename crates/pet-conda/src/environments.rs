@@ -498,4 +498,83 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    /// Test that environments under conda_dir/envs/ return the folder name.
+    /// This is the most common case for named conda environments.
+    #[test]
+    fn env_under_conda_dir_returns_folder_name() {
+        // Create a temp directory simulating conda_dir/envs/myenv structure
+        let temp_dir = std::env::temp_dir().join("pet_test_env_under_conda");
+        let conda_dir = temp_dir.join("miniconda3");
+        let env_path = conda_dir.join("envs").join("myenv");
+        let conda_meta_dir = env_path.join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        // When env is under conda_dir/envs/, name should be the folder name
+        let name = get_conda_env_name(&env_path, &env_path, &Some(conda_dir));
+        assert_eq!(
+            name,
+            Some("myenv".to_string()),
+            "Env under conda_dir/envs/ should return folder name"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that external env with no history file returns None for name.
+    /// This ensures safe path-based activation when we can't determine how it was created.
+    #[test]
+    fn external_env_without_history_returns_none_name() {
+        // Create a temp directory simulating an external conda env without history
+        let temp_dir = std::env::temp_dir().join("pet_test_external_no_history");
+        let conda_meta_dir = temp_dir.join("myenv").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+        // Note: NOT creating a history file
+
+        let env_path = temp_dir.join("myenv");
+        // conda_dir is known but env is NOT under it (external environment)
+        let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
+
+        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        assert!(
+            name.is_none(),
+            "External env without history should return None for safe path-based activation, got {:?}",
+            name
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that external env with history but no -n/-p flags returns None.
+    /// Edge case: history exists but create command doesn't clearly indicate name or path based.
+    #[test]
+    fn external_env_with_ambiguous_history_returns_none_name() {
+        // Create a temp directory simulating an external conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_external_ambiguous");
+        let conda_meta_dir = temp_dir.join("myenv").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        // Write a history file without -n or -p (edge case, maybe cloned env)
+        let history_file = conda_meta_dir.join("history");
+        std::fs::write(
+            &history_file,
+            "# some other history content\n# no create command here\n",
+        )
+        .unwrap();
+
+        let env_path = temp_dir.join("myenv");
+        let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
+
+        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        assert!(
+            name.is_none(),
+            "External env with ambiguous history should return None, got {:?}",
+            name
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
