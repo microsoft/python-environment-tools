@@ -192,18 +192,25 @@ fn get_conda_env_name(
     // E.g. conda env is = <conda install>/envs/<env name>
     // Then we can use `<conda install>/bin/conda activate -n <env name>`
     //
-    // Check the history file when:
-    // 1. conda_dir is known but prefix is not under it (external environment)
-    // 2. conda_dir is unknown (we need to check history to determine if it's name or path based)
-    // This ensures path-based environments (created with --prefix) return None for name,
-    // so activation uses the full path instead of incorrectly trying name-based activation.
-    let should_check_history = match conda_dir {
-        Some(dir) => !prefix.starts_with(dir),
-        None => true,
-    };
-
-    if should_check_history {
-        name = get_conda_env_name_from_history_file(env_path, prefix);
+    // Handle three cases:
+    // 1. conda_dir known, prefix is under it → name-based activation works, return folder name
+    // 2. conda_dir known, prefix NOT under it → external env, check history to distinguish -n vs -p
+    // 3. conda_dir unknown → can't do name-based activation without knowing conda installation,
+    //    return None so activation uses full path (fixes issue #329 for path-based envs)
+    match conda_dir {
+        Some(dir) => {
+            if !prefix.starts_with(dir) {
+                // External environment - check history to see if created with -n or -p
+                name = get_conda_env_name_from_history_file(env_path, prefix);
+            }
+            // else: env is under conda_dir/envs/, name-based activation works
+        }
+        None => {
+            // No known conda installation directory
+            // Name-based activation requires knowing which conda to use, so return None
+            // This ensures path-based activation is used (correct for --prefix envs too)
+            name = None;
+        }
     }
 
     name
@@ -440,13 +447,37 @@ mod tests {
         ));
     }
 
-    /// Test that path-based conda environments (created with --prefix) return None for name
-    /// when conda_dir is unknown. This ensures VS Code uses path-based activation.
-    /// Regression test for https://github.com/microsoft/python-environment-tools/issues/329
+    /// Test that when conda_dir is unknown, we return None for name.
+    /// This is correct because name-based activation requires knowing which conda installation
+    /// to use. Without conda_dir, activation must use the full path.
+    /// This also fixes issue #329 where path-based envs incorrectly got a name.
     #[test]
-    fn path_based_env_returns_none_name_when_conda_dir_unknown() {
-        // Create a temp directory structure simulating a path-based conda env
-        let temp_dir = std::env::temp_dir().join("pet_test_path_based_env");
+    fn env_returns_none_name_when_conda_dir_unknown() {
+        // Create a temp directory structure simulating a conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_conda_dir_unknown");
+        let conda_meta_dir = temp_dir.join("myenv").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        let env_path = temp_dir.join("myenv");
+
+        // When conda_dir is None, name should be None (can't do named activation)
+        let name = get_conda_env_name(&env_path, &env_path, &None);
+        assert!(
+            name.is_none(),
+            "When conda_dir is unknown, name should be None for path-based activation, got {:?}",
+            name
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that external environments (not under conda_dir) created with --prefix
+    /// return None for name, so activation uses path instead of name.
+    #[test]
+    fn external_path_based_env_returns_none_name() {
+        // Create a temp directory simulating an external path-based conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_external_path_env");
         let conda_meta_dir = temp_dir.join(".conda").join("conda-meta");
         std::fs::create_dir_all(&conda_meta_dir).unwrap();
 
@@ -459,12 +490,13 @@ mod tests {
         .unwrap();
 
         let env_path = temp_dir.join(".conda");
+        // conda_dir is known but env is NOT under it (external environment)
+        let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
-        // When conda_dir is None and env was created with --prefix, name should be None
-        let name = get_conda_env_name(&env_path, &env_path, &None);
+        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
         assert!(
             name.is_none(),
-            "Path-based env should return None for name, got {:?}",
+            "Path-based external env should return None for name, got {:?}",
             name
         );
 
@@ -472,12 +504,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
-    /// Test that name-based conda environments (created with -n) return the name
-    /// even when conda_dir is unknown.
+    /// Test that external environments (not under conda_dir) created with -n
+    /// return the name for name-based activation.
     #[test]
-    fn name_based_env_returns_name_when_conda_dir_unknown() {
-        // Create a temp directory structure simulating a name-based conda env
-        let temp_dir = std::env::temp_dir().join("pet_test_name_based_env");
+    fn external_name_based_env_returns_name() {
+        // Create a temp directory simulating an external name-based conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_external_name_env");
         let conda_meta_dir = temp_dir.join("myenv").join("conda-meta");
         std::fs::create_dir_all(&conda_meta_dir).unwrap();
 
@@ -490,13 +522,14 @@ mod tests {
         .unwrap();
 
         let env_path = temp_dir.join("myenv");
+        // conda_dir is known but env is NOT under it (external environment)
+        let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
-        // When conda_dir is None but env was created with -n, name should be returned
-        let name = get_conda_env_name(&env_path, &env_path, &None);
+        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
         assert_eq!(
             name,
             Some("myenv".to_string()),
-            "Name-based env should return the name"
+            "Name-based external env should return the name"
         );
 
         // Cleanup
