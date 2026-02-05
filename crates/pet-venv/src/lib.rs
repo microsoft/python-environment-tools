@@ -35,7 +35,7 @@ pub fn try_environment_from_venv_dir(path: &Path) -> Option<PythonEnvironment> {
     let cfg = PyVenvCfg::find(path)?;
 
     let prefix = path.to_path_buf();
-    let version = version::from_creator_for_virtual_env(&prefix).or(Some(cfg.version.clone()));
+    let version = version::from_creator_for_virtual_env(&prefix).or(cfg.version.clone());
     let name = cfg.prompt;
 
     match find_executable_or_broken(path) {

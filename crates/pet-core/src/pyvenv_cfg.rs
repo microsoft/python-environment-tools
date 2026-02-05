@@ -19,18 +19,18 @@ const PYVENV_CONFIG_FILE: &str = "pyvenv.cfg";
 
 #[derive(Debug)]
 pub struct PyVenvCfg {
-    pub version: String,
-    pub version_major: u64,
-    pub version_minor: u64,
+    pub version: Option<String>,
+    pub version_major: Option<u64>,
+    pub version_minor: Option<u64>,
     pub prompt: Option<String>,
     pub file_path: PathBuf,
 }
 
 impl PyVenvCfg {
     fn new(
-        version: String,
-        version_major: u64,
-        version_minor: u64,
+        version: Option<String>,
+        version_major: Option<u64>,
+        version_minor: Option<u64>,
         prompt: Option<String>,
         file_path: PathBuf,
     ) -> Self {
@@ -130,13 +130,15 @@ fn parse(file: &Path) -> Option<PyVenvCfg> {
 
     match (version, version_major, version_minor) {
         (Some(ver), Some(major), Some(minor)) => Some(PyVenvCfg::new(
-            ver,
-            major,
-            minor,
+            Some(ver),
+            Some(major),
+            Some(minor),
             prompt,
             file.to_path_buf(),
         )),
-        _ => None,
+        // Even without version info, return the struct - presence of pyvenv.cfg
+        // is sufficient to identify this as a venv environment
+        _ => Some(PyVenvCfg::new(None, None, None, prompt, file.to_path_buf())),
     }
 }
 
@@ -275,9 +277,9 @@ mod tests {
         let result = PyVenvCfg::find(dir.path());
         assert!(result.is_some());
         let cfg = result.unwrap();
-        assert_eq!(cfg.version, "3.11.4");
-        assert_eq!(cfg.version_major, 3);
-        assert_eq!(cfg.version_minor, 11);
+        assert_eq!(cfg.version, Some("3.11.4".to_string()));
+        assert_eq!(cfg.version_major, Some(3));
+        assert_eq!(cfg.version_minor, Some(11));
         assert_eq!(cfg.prompt, Some("test-env".to_string()));
     }
 
@@ -294,9 +296,9 @@ mod tests {
         let result = PyVenvCfg::find(&bin_dir);
         assert!(result.is_some());
         let cfg = result.unwrap();
-        assert_eq!(cfg.version, "3.10.0");
-        assert_eq!(cfg.version_major, 3);
-        assert_eq!(cfg.version_minor, 10);
+        assert_eq!(cfg.version, Some("3.10.0".to_string()));
+        assert_eq!(cfg.version_major, Some(3));
+        assert_eq!(cfg.version_minor, Some(10));
     }
 
     #[test]
@@ -315,7 +317,13 @@ mod tests {
         writeln!(file, "prompt = my-env").unwrap();
 
         let result = PyVenvCfg::find(dir.path());
-        assert!(result.is_none()); // Version is required
+        // pyvenv.cfg exists, so we should get a result even without version
+        assert!(result.is_some());
+        let cfg = result.unwrap();
+        assert!(cfg.version.is_none());
+        assert!(cfg.version_major.is_none());
+        assert!(cfg.version_minor.is_none());
+        assert_eq!(cfg.prompt, Some("my-env".to_string()));
     }
 
     #[test]
@@ -328,8 +336,8 @@ mod tests {
         let result = PyVenvCfg::find(dir.path());
         assert!(result.is_some());
         let cfg = result.unwrap();
-        assert_eq!(cfg.version, "3.12.1.final.0");
-        assert_eq!(cfg.version_major, 3);
-        assert_eq!(cfg.version_minor, 12);
+        assert_eq!(cfg.version, Some("3.12.1.final.0".to_string()));
+        assert_eq!(cfg.version_major, Some(3));
+        assert_eq!(cfg.version_minor, Some(12));
     }
 }
