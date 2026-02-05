@@ -191,6 +191,7 @@ fn get_conda_env_name(
     // if the conda install folder is parent of the env folder, then we can use named activation.
     // E.g. conda env is = <conda install>/envs/<env name>
     // Then we can use `<conda install>/bin/conda activate -n <env name>`
+    //
     if let Some(conda_dir) = conda_dir {
         if !prefix.starts_with(conda_dir) {
             name = get_conda_env_name_from_history_file(env_path, prefix);
@@ -224,6 +225,17 @@ fn get_conda_env_name_from_history_file(env_path: &Path, prefix: &Path) -> Optio
         }
     }
     None
+}
+
+fn is_conda_env_name_in_cmd(cmd_line: String, name: &str) -> bool {
+    // Sample lines
+    // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+    // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
+    // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+    // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
+    // Look for "-n <name>" in the command line
+    cmd_line.contains(format!("-n {name}").as_str())
+        || cmd_line.contains(format!("--name {name}").as_str())
 }
 
 fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
@@ -286,17 +298,6 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn is_conda_env_name_in_cmd(cmd_line: String, name: &str) -> bool {
-    // Sample lines
-    // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
-    // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
-    // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-    // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
-    // Look for "-n <name>" in the command line
-    cmd_line.contains(format!("-n {name}").as_str())
-        || cmd_line.contains(format!("--name {name}").as_str())
 }
 
 pub fn get_activation_command(
@@ -378,5 +379,150 @@ mod tests {
 
         line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
         assert!(!is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+    }
+
+    /// Test that external environments (not under conda_dir) created with --prefix
+    /// return None for name, so activation uses path instead of name.
+    /// This is the fix for issue #329.
+    #[test]
+    fn external_path_based_env_returns_none_name() {
+        // Create a temp directory simulating an external path-based conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_external_path_env");
+        let conda_meta_dir = temp_dir.join(".conda").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        // Write a history file showing the env was created with --prefix (path-based)
+        let history_file = conda_meta_dir.join("history");
+        std::fs::write(
+            &history_file,
+            "# cmd: /usr/bin/conda create --yes --prefix .conda python=3.12\n",
+        )
+        .unwrap();
+
+        let env_path = temp_dir.join(".conda");
+        // conda_dir is known but env is NOT under it (external environment)
+        let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
+
+        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        assert!(
+            name.is_none(),
+            "Path-based external env should return None for name, got {:?}",
+            name
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that external environments (not under conda_dir) created with -n
+    /// return the name for name-based activation, but only if the folder name matches.
+    #[test]
+    fn external_name_based_env_returns_name() {
+        // Create a temp directory simulating an external name-based conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_external_name_env");
+        let conda_meta_dir = temp_dir.join("myenv").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        // Write a history file showing the env was created with -n myenv (name-based)
+        // Note: the folder name "myenv" matches the -n argument "myenv"
+        let history_file = conda_meta_dir.join("history");
+        std::fs::write(
+            &history_file,
+            "# cmd: /usr/bin/conda create -n myenv python=3.12\n",
+        )
+        .unwrap();
+
+        let env_path = temp_dir.join("myenv");
+        // conda_dir is known but env is NOT under it (external environment)
+        let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
+
+        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        assert_eq!(
+            name,
+            Some("myenv".to_string()),
+            "Name-based external env should return the name when folder matches"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that environments under conda_dir/envs/ return the folder name.
+    /// This is the most common case for named conda environments.
+    #[test]
+    fn env_under_conda_dir_returns_folder_name() {
+        // Create a temp directory simulating conda_dir/envs/myenv structure
+        let temp_dir = std::env::temp_dir().join("pet_test_env_under_conda");
+        let conda_dir = temp_dir.join("miniconda3");
+        let env_path = conda_dir.join("envs").join("myenv");
+        let conda_meta_dir = env_path.join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        // When env is under conda_dir/envs/, name should be the folder name
+        let name = get_conda_env_name(&env_path, &env_path, &Some(conda_dir));
+        assert_eq!(
+            name,
+            Some("myenv".to_string()),
+            "Env under conda_dir/envs/ should return folder name"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that external env with no history file returns None for name.
+    /// This ensures safe path-based activation when we can't determine how it was created.
+    #[test]
+    fn external_env_without_history_returns_none_name() {
+        // Create a temp directory simulating an external conda env without history
+        let temp_dir = std::env::temp_dir().join("pet_test_external_no_history");
+        let conda_meta_dir = temp_dir.join("myenv").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+        // Note: NOT creating a history file
+
+        let env_path = temp_dir.join("myenv");
+        // conda_dir is known but env is NOT under it (external environment)
+        let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
+
+        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        assert!(
+            name.is_none(),
+            "External env without history should return None for safe path-based activation, got {:?}",
+            name
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that external env with history but folder name doesn't match -n argument returns None.
+    /// This prevents wrong activation when env was moved/renamed after creation.
+    #[test]
+    fn external_env_with_mismatched_name_returns_none() {
+        // Create a temp directory simulating an external conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_external_mismatch");
+        // Folder is named "renamed_env" but was created with -n "original_name"
+        let conda_meta_dir = temp_dir.join("renamed_env").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        let history_file = conda_meta_dir.join("history");
+        std::fs::write(
+            &history_file,
+            "# cmd: /usr/bin/conda create -n original_name python=3.12\n",
+        )
+        .unwrap();
+
+        let env_path = temp_dir.join("renamed_env");
+        let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
+
+        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        assert!(
+            name.is_none(),
+            "External env with mismatched name should return None, got {:?}",
+            name
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
