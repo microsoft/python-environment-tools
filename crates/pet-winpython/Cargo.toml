@@ -12,3 +12,6 @@ pet-virtualenv = { path = "../pet-virtualenv" }
 log = "0.4.21"
 lazy_static = "1.4.0"
 regex = "1.10.4"
+
+[dev-dependencies]
+tempfile = "3.10"

@@ -346,6 +346,8 @@ fn get_winpython_search_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use tempfile::tempdir;
 
     #[test]
     fn test_is_winpython_dir_name() {
@@ -394,5 +396,145 @@ mod tests {
 
         assert_eq!(version_from_folder_name("python"), None);
         assert_eq!(version_from_folder_name("not-python-3.9.0"), None);
+    }
+
+    #[test]
+    fn test_get_display_name() {
+        let path = PathBuf::from("C:\\WPy64-31300");
+        assert_eq!(
+            get_display_name(&path, Some("3.13.0")),
+            Some("WinPython 3.13.0".to_string())
+        );
+        assert_eq!(
+            get_display_name(&path, None),
+            Some("WinPython (WPy64-31300)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_is_winpython_root_with_marker() {
+        let dir = tempdir().unwrap();
+        let winpython_marker = dir.path().join(".winpython");
+        File::create(&winpython_marker).unwrap();
+
+        assert!(is_winpython_root(dir.path()));
+    }
+
+    #[test]
+    fn test_is_winpython_root_with_ini_marker() {
+        let dir = tempdir().unwrap();
+        let winpython_ini = dir.path().join("winpython.ini");
+        File::create(&winpython_ini).unwrap();
+
+        assert!(is_winpython_root(dir.path()));
+    }
+
+    #[test]
+    fn test_is_winpython_root_without_marker() {
+        let dir = tempdir().unwrap();
+        assert!(!is_winpython_root(dir.path()));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_find_python_folder_in_winpython() {
+        let dir = tempdir().unwrap();
+        let python_folder = dir.path().join("python-3.13.0.amd64");
+        fs::create_dir_all(&python_folder).unwrap();
+
+        // Create python.exe
+        let python_exe = python_folder.join("python.exe");
+        File::create(&python_exe).unwrap();
+
+        let result = find_python_folder_in_winpython(dir.path());
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), python_folder);
+    }
+
+    #[test]
+    fn test_find_python_folder_missing_exe() {
+        let dir = tempdir().unwrap();
+        let python_folder = dir.path().join("python-3.13.0.amd64");
+        fs::create_dir_all(&python_folder).unwrap();
+
+        // No python.exe created
+        let result = find_python_folder_in_winpython(dir.path());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_find_winpython_root_with_marker() {
+        let dir = tempdir().unwrap();
+
+        // Create WinPython structure with marker
+        let winpython_root = dir.path().join("WPy64-31300");
+        fs::create_dir_all(&winpython_root).unwrap();
+        File::create(winpython_root.join(".winpython")).unwrap();
+
+        let python_folder = winpython_root.join("python-3.13.0.amd64");
+        fs::create_dir_all(&python_folder).unwrap();
+        let python_exe = python_folder.join("python.exe");
+        File::create(&python_exe).unwrap();
+
+        let result = find_winpython_root(&python_exe);
+        assert!(result.is_some());
+        let (root, folder) = result.unwrap();
+        assert_eq!(root, winpython_root);
+        assert_eq!(folder, python_folder);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_find_winpython_root_by_dir_name() {
+        let dir = tempdir().unwrap();
+
+        // Create WinPython structure without marker (relying on dir name)
+        let winpython_root = dir.path().join("WPy64-31300");
+        fs::create_dir_all(&winpython_root).unwrap();
+
+        let python_folder = winpython_root.join("python-3.13.0.amd64");
+        fs::create_dir_all(&python_folder).unwrap();
+        let python_exe = python_folder.join("python.exe");
+        File::create(&python_exe).unwrap();
+
+        let result = find_winpython_root(&python_exe);
+        assert!(result.is_some());
+        let (root, folder) = result.unwrap();
+        assert_eq!(root, winpython_root);
+        assert_eq!(folder, python_folder);
+    }
+
+    #[test]
+    fn test_find_winpython_root_not_winpython() {
+        let dir = tempdir().unwrap();
+
+        // Create a regular Python structure (not WinPython)
+        let python_folder = dir.path().join("some-random-folder");
+        fs::create_dir_all(&python_folder).unwrap();
+
+        #[cfg(windows)]
+        let python_exe = python_folder.join("python.exe");
+        #[cfg(not(windows))]
+        let python_exe = python_folder.join("python");
+
+        File::create(&python_exe).unwrap();
+
+        let result = find_winpython_root(&python_exe);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_winpython_locator_kind() {
+        let locator = WinPython::new();
+        assert_eq!(locator.get_kind(), LocatorKind::WinPython);
+    }
+
+    #[test]
+    fn test_winpython_supported_categories() {
+        let locator = WinPython::new();
+        let categories = locator.supported_categories();
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0], PythonEnvironmentKind::WinPython);
     }
 }
