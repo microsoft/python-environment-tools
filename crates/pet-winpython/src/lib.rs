@@ -400,7 +400,8 @@ mod tests {
 
     #[test]
     fn test_get_display_name() {
-        let path = PathBuf::from("C:\\WPy64-31300");
+        // Use a simple directory name that works on all platforms
+        let path = PathBuf::from("WPy64-31300");
         assert_eq!(
             get_display_name(&path, Some("3.13.0")),
             Some("WinPython 3.13.0".to_string())
