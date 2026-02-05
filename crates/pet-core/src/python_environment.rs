@@ -28,6 +28,7 @@ pub enum PythonEnvironmentKind {
     Venv,
     VirtualEnv,
     VirtualEnvWrapper,
+    WinPython,
     WindowsStore,
     WindowsRegistry,
 }

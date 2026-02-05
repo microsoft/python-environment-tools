@@ -38,26 +38,31 @@ pub fn create_locators(
 
     // 1. Windows store Python
     // 2. Windows registry python
+    // 3. WinPython
     if cfg!(windows) {
         #[cfg(windows)]
         use pet_windows_registry::WindowsRegistry;
         #[cfg(windows)]
         use pet_windows_store::WindowsStore;
         #[cfg(windows)]
+        use pet_winpython::WinPython;
+        #[cfg(windows)]
         locators.push(Arc::new(WindowsStore::from(environment)));
         #[cfg(windows)]
-        locators.push(Arc::new(WindowsRegistry::from(conda_locator.clone())))
+        locators.push(Arc::new(WindowsRegistry::from(conda_locator.clone())));
+        #[cfg(windows)]
+        locators.push(Arc::new(WinPython::new()));
     }
-    // 3. Pyenv Python
+    // 4. Pyenv Python
     locators.push(Arc::new(PyEnv::from(environment, conda_locator.clone())));
 
-    // 4. Pixi
+    // 5. Pixi
     locators.push(Arc::new(Pixi::new()));
 
-    // 5. Conda Python
+    // 6. Conda Python
     locators.push(conda_locator);
 
-    // 6. Support for Virtual Envs
+    // 7. Support for Virtual Envs
     // The order of these matter.
     // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
     locators.push(Arc::new(Uv::new()));
@@ -68,7 +73,7 @@ pub fn create_locators(
     // VirtualEnv is the most generic, hence should be the last.
     locators.push(Arc::new(VirtualEnv::new()));
 
-    // 7. Homebrew Python
+    // 8. Homebrew Python
     if cfg!(unix) {
         #[cfg(unix)]
         use pet_homebrew::Homebrew;
@@ -78,14 +83,14 @@ pub fn create_locators(
         locators.push(Arc::new(homebrew_locator));
     }
 
-    // 8. Global Mac Python
-    // 9. CommandLineTools Python & xcode
+    // 9. Global Mac Python
+    // 10. CommandLineTools Python & xcode
     if std::env::consts::OS == "macos" {
         locators.push(Arc::new(MacXCode::new()));
         locators.push(Arc::new(MacCmdLineTools::new()));
         locators.push(Arc::new(MacPythonOrg::new()));
     }
-    // 10. Global Linux Python
+    // 11. Global Linux Python
     // All other Linux (not mac, & not windows)
     // THIS MUST BE LAST
     if std::env::consts::OS != "macos" && std::env::consts::OS != "windows" {

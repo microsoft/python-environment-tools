@@ -175,9 +175,12 @@ enum PythonEnvironmentKind {
   MacCommandLineTools,
   LinuxGlobal, // Python installed in Linux in paths such as `/usr/bin`, `/usr/local/bin` etc.
   MacXCode,
+  Uv,
+  UvWorkspace,
   Venv,
   VirtualEnv,
   VirtualEnvWrapper,
+  WinPython, // WinPython portable distribution for Windows
   WindowsStore,
   WindowsRegistry,
 }

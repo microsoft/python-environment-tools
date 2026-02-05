@@ -56,6 +56,7 @@ pub enum LocatorKind {
     Venv,
     VirtualEnv,
     VirtualEnvWrapper,
+    WinPython,
     WindowsRegistry,
     WindowsStore,
 }
