@@ -214,25 +214,62 @@ fn get_conda_env_name(
  * And example is `# cmd: <conda install directory>\Scripts\conda-script.py create -n sample``
  * And example is `# cmd: conda create -n sample``
  *
- * This function returns the name of the conda environment.
+ * This function returns the name of the conda environment based on how it was created:
+ * - If created with --prefix/-p (path-based): returns None (activation must use full path)
+ * - If created with --name/-n (name-based): returns the folder name (can use named activation)
+ * - If we can't determine: returns the folder name (preserve existing behavior)
  */
 fn get_conda_env_name_from_history_file(env_path: &Path, prefix: &Path) -> Option<String> {
     let name = prefix
         .file_name()
         .map(|name| name.to_str().unwrap_or_default().to_string());
 
-    if let Some(name) = name {
+    if let Some(ref name) = name {
         if let Some(line) = get_conda_creation_line_from_history(env_path) {
             // Sample lines
             // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
             // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
             // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-            if is_conda_env_name_in_cmd(line, &name) {
-                return Some(name);
+            // # cmd: /usr/bin/conda create --prefix ./prefix-envs/.conda1 python=3.12 -y
+
+            // Check if environment was created with --prefix/-p (path-based)
+            // In this case, return None so activation uses full path
+            if is_path_based_conda_env(&line) {
+                return None;
+            }
+
+            // Check if environment was created with --name/-n (name-based)
+            // In this case, return the folder name for named activation
+            if is_name_based_conda_env(&line) {
+                return Some(name.clone());
             }
         }
     }
-    None
+    // If we can't determine from history, return folder name (preserve existing behavior)
+    name
+}
+
+/// Check if the conda create command used --prefix or -p (path-based environment)
+fn is_path_based_conda_env(cmd_line: &str) -> bool {
+    // Look for " -p " or " --prefix " after "create"
+    // We need to be careful to match the flag, not just any occurrence of -p
+    let lower = cmd_line.to_lowercase();
+    if let Some(create_idx) = lower.find(" create ") {
+        let after_create = &lower[create_idx..];
+        return after_create.contains(" -p ") || after_create.contains(" --prefix ");
+    }
+    false
+}
+
+/// Check if the conda create command used --name or -n (name-based environment)
+fn is_name_based_conda_env(cmd_line: &str) -> bool {
+    // Look for " -n " or " --name " after "create"
+    let lower = cmd_line.to_lowercase();
+    if let Some(create_idx) = lower.find(" create ") {
+        let after_create = &lower[create_idx..];
+        return after_create.contains(" -n ") || after_create.contains(" --name ");
+    }
+    false
 }
 
 fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
@@ -295,17 +332,6 @@ fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
         }
     }
     None
-}
-
-fn is_conda_env_name_in_cmd(cmd_line: String, name: &str) -> bool {
-    // Sample lines
-    // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
-    // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
-    // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-    // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
-    // Look for "-n <name>" in the command line
-    cmd_line.contains(format!("-n {name}").as_str())
-        || cmd_line.contains(format!("--name {name}").as_str())
 }
 
 pub fn get_activation_command(
@@ -371,22 +397,47 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
-    fn verify_conda_env_name() {
-        let line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --name .conda python=3.12";
-        assert!(is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+    fn test_is_path_based_conda_env() {
+        // Path-based environments use --prefix or -p
+        assert!(is_path_based_conda_env(
+            "# cmd: /usr/bin/conda create --yes --prefix .conda python=3.12"
+        ));
+        assert!(is_path_based_conda_env(
+            "# cmd: /usr/bin/conda create -p .conda python=3.12"
+        ));
+        assert!(is_path_based_conda_env(
+            "# cmd: C:\\Users\\user\\miniconda3\\Scripts\\conda.exe create --prefix .conda python=3.9"
+        ));
 
-        let mut line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -n .conda python=3.12";
-        assert!(is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+        // Name-based environments use --name or -n
+        assert!(!is_path_based_conda_env(
+            "# cmd: /usr/bin/conda create -n myenv python=3.12"
+        ));
+        assert!(!is_path_based_conda_env(
+            "# cmd: /usr/bin/conda create --name myenv python=3.12"
+        ));
+    }
 
-        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --name .conda python=3.12";
-        assert!(!is_conda_env_name_in_cmd(line.to_string(), "base"));
+    #[test]
+    fn test_is_name_based_conda_env() {
+        // Name-based environments use --name or -n
+        assert!(is_name_based_conda_env(
+            "# cmd: /usr/bin/conda create -n myenv python=3.12"
+        ));
+        assert!(is_name_based_conda_env(
+            "# cmd: /usr/bin/conda create --name myenv python=3.12"
+        ));
+        assert!(is_name_based_conda_env(
+            "# cmd: C:\\Users\\user\\miniconda3\\Scripts\\conda.exe create -n myenv python=3.9"
+        ));
 
-        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
-        assert!(!is_conda_env_name_in_cmd(line.to_string(), "base"));
-
-        line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
-        assert!(!is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+        // Path-based environments use --prefix or -p
+        assert!(!is_name_based_conda_env(
+            "# cmd: /usr/bin/conda create --prefix .conda python=3.12"
+        ));
+        assert!(!is_name_based_conda_env(
+            "# cmd: /usr/bin/conda create -p .conda python=3.12"
+        ));
     }
 
     /// Test that path-based conda environments (created with --prefix) return None for name
