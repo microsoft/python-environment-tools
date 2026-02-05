@@ -439,6 +439,8 @@ pub fn identify_python_executables_using_locators(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(unix)]
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     /// Test that `path().is_dir()` properly follows symlinks to directories.
@@ -599,7 +601,12 @@ mod tests {
         let tmp = TempDir::new().expect("Failed to create temp dir");
 
         // Create a "deep" target directory structure
-        let deep_target = tmp.path().join("deep").join("nested").join("path").join("venv");
+        let deep_target = tmp
+            .path()
+            .join("deep")
+            .join("nested")
+            .join("path")
+            .join("venv");
         fs::create_dir_all(&deep_target).expect("Failed to create deep target");
 
         // Create a container with a symlink pointing to the deep target
