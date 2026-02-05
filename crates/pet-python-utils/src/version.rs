@@ -14,7 +14,7 @@ pub fn from_header_files(prefix: &Path) -> Option<String> {
     Headers::get_version(prefix)
 }
 pub fn from_pyvenv_cfg(prefix: &Path) -> Option<String> {
-    PyVenvCfg::find(prefix).map(|cfg| cfg.version)
+    PyVenvCfg::find(prefix).and_then(|cfg| cfg.version)
 }
 pub fn from_creator_for_virtual_env(prefix: &Path) -> Option<String> {
     if let Some(version) = Headers::get_version(prefix) {
@@ -44,7 +44,10 @@ pub fn from_creator_for_virtual_env(prefix: &Path) -> Option<String> {
             // Try to get the version of that environment.
             let sys_root = parent_dir.parent()?;
             let pyver = if let Some(pyvenvcfg) = PyVenvCfg::find(prefix) {
-                Some((pyvenvcfg.version_major, pyvenvcfg.version_minor))
+                match (pyvenvcfg.version_major, pyvenvcfg.version_minor) {
+                    (Some(major), Some(minor)) => Some((major, minor)),
+                    _ => None,
+                }
             } else {
                 None
             };
@@ -127,7 +130,7 @@ fn get_version_from_pyvenv_if_pyvenv_cfg_and_exe_created_same_time(
             "Using pyvenv.cfg to get version of virtual environment {:?}",
             prefix
         );
-        Some(cfg.version)
+        cfg.version
     } else {
         None
     }
