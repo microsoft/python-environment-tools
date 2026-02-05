@@ -629,12 +629,14 @@ dependencies = [
 name = "pet-pipenv"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
  "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
  "pet-python-utils",
  "pet-virtualenv",
+ "regex",
 ]
 
 [[package]]
