@@ -388,4 +388,67 @@ mod tests {
         line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
         assert!(!is_conda_env_name_in_cmd(line.to_string(), ".conda"));
     }
+
+    /// Test that path-based conda environments (created with --prefix) return None for name
+    /// when conda_dir is unknown. This ensures VS Code uses path-based activation.
+    /// Regression test for https://github.com/microsoft/python-environment-tools/issues/329
+    #[test]
+    fn path_based_env_returns_none_name_when_conda_dir_unknown() {
+        // Create a temp directory structure simulating a path-based conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_path_based_env");
+        let conda_meta_dir = temp_dir.join(".conda").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        // Write a history file showing the env was created with --prefix (path-based)
+        let history_file = conda_meta_dir.join("history");
+        std::fs::write(
+            &history_file,
+            "# cmd: /usr/bin/conda create --yes --prefix .conda python=3.12\n",
+        )
+        .unwrap();
+
+        let env_path = temp_dir.join(".conda");
+
+        // When conda_dir is None and env was created with --prefix, name should be None
+        let name = get_conda_env_name(&env_path, &env_path, &None);
+        assert!(
+            name.is_none(),
+            "Path-based env should return None for name, got {:?}",
+            name
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    /// Test that name-based conda environments (created with -n) return the name
+    /// even when conda_dir is unknown.
+    #[test]
+    fn name_based_env_returns_name_when_conda_dir_unknown() {
+        // Create a temp directory structure simulating a name-based conda env
+        let temp_dir = std::env::temp_dir().join("pet_test_name_based_env");
+        let conda_meta_dir = temp_dir.join("myenv").join("conda-meta");
+        std::fs::create_dir_all(&conda_meta_dir).unwrap();
+
+        // Write a history file showing the env was created with -n (name-based)
+        let history_file = conda_meta_dir.join("history");
+        std::fs::write(
+            &history_file,
+            "# cmd: /usr/bin/conda create -n myenv python=3.12\n",
+        )
+        .unwrap();
+
+        let env_path = temp_dir.join("myenv");
+
+        // When conda_dir is None but env was created with -n, name should be returned
+        let name = get_conda_env_name(&env_path, &env_path, &None);
+        assert_eq!(
+            name,
+            Some("myenv".to_string()),
+            "Name-based env should return the name"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
