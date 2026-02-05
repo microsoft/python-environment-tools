@@ -644,9 +644,12 @@ mod tests {
         );
 
         // Extra verification: fs::canonicalize WOULD resolve it (showing the difference)
+        // Note: We canonicalize both paths for comparison because on macOS /var is a
+        // symlink to /private/var, so canonicalize resolves that too.
         let resolved = fs::canonicalize(&discovered[0]).expect("Should resolve");
+        let canonical_target = fs::canonicalize(&deep_target).expect("Should resolve target");
         assert_eq!(
-            resolved, deep_target,
+            resolved, canonical_target,
             "canonicalize() would resolve to target, but path() does not"
         );
     }
