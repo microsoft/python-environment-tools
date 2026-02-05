@@ -1,0 +1,17 @@
+[package]
+name = "pet-winpython"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+pet-core = { path = "../pet-core" }
+pet-fs = { path = "../pet-fs" }
+pet-python-utils = { path = "../pet-python-utils" }
+pet-virtualenv = { path = "../pet-virtualenv" }
+log = "0.4.21"
+lazy_static = "1.4.0"
+regex = "1.10.4"
+
+[dev-dependencies]
+tempfile = "3.10"

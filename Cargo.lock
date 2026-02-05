@@ -467,6 +467,7 @@ dependencies = [
  "pet-virtualenvwrapper",
  "pet-windows-registry",
  "pet-windows-store",
+ "pet-winpython",
  "regex",
  "serde",
  "serde_json",
@@ -809,6 +810,20 @@ dependencies = [
  "pet-virtualenv",
  "regex",
  "winreg",
+]
+
+[[package]]
+name = "pet-winpython"
+version = "0.1.0"
+dependencies = [
+ "lazy_static",
+ "log",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+ "regex",
+ "tempfile",
 ]
 
 [[package]]

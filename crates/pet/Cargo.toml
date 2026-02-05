@@ -7,6 +7,7 @@ license = "MIT"
 [target.'cfg(windows)'.dependencies]
 pet-windows-store = { path = "../pet-windows-store" }
 pet-windows-registry = { path = "../pet-windows-registry" }
+pet-winpython = { path = "../pet-winpython" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
