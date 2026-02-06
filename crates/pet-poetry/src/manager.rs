@@ -27,7 +27,10 @@ impl PoetryManager {
         if let Some(executable) = executable {
             if executable.is_file() {
                 let version = Self::extract_version_from_path(&executable);
-                return Some(PoetryManager { executable, version });
+                return Some(PoetryManager {
+                    executable,
+                    version,
+                });
             }
         }
 
@@ -119,7 +122,10 @@ impl PoetryManager {
             for executable in search_paths {
                 if executable.is_file() {
                     let version = Self::extract_version_from_path(&executable);
-                    return Some(PoetryManager { executable, version });
+                    return Some(PoetryManager {
+                        executable,
+                        version,
+                    });
                 }
             }
 
@@ -129,13 +135,19 @@ impl PoetryManager {
                     let executable = each.join("poetry");
                     if executable.is_file() {
                         let version = Self::extract_version_from_path(&executable);
-                        return Some(PoetryManager { executable, version });
+                        return Some(PoetryManager {
+                            executable,
+                            version,
+                        });
                     }
                     if std::env::consts::OS == "windows" {
                         let executable = each.join("poetry.exe");
                         if executable.is_file() {
                             let version = Self::extract_version_from_path(&executable);
-                            return Some(PoetryManager { executable, version });
+                            return Some(PoetryManager {
+                                executable,
+                                version,
+                            });
                         }
                     }
                 }
@@ -162,7 +174,11 @@ impl PoetryManager {
         if let Some(captures) = HOMEBREW_POETRY_VERSION.captures(&path_str) {
             if let Some(version_match) = captures.get(1) {
                 let version = version_match.as_str().to_string();
-                trace!("Extracted Poetry version {} from Homebrew path: {:?}", version, resolved);
+                trace!(
+                    "Extracted Poetry version {} from Homebrew path: {:?}",
+                    version,
+                    resolved
+                );
                 return Some(version);
             }
         }
@@ -174,6 +190,99 @@ impl PoetryManager {
             executable: self.executable.clone(),
             version: self.version.clone(),
             tool: EnvManagerType::Poetry,
+        }
+    }
+
+    /// Extracts version from a path string using the Homebrew Cellar regex.
+    /// This is exposed for testing purposes.
+    #[cfg(test)]
+    fn extract_version_from_path_str(path_str: &str) -> Option<String> {
+        if let Some(captures) = HOMEBREW_POETRY_VERSION.captures(path_str) {
+            captures.get(1).map(|m| m.as_str().to_string())
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_version_macos_arm() {
+        // macOS ARM Homebrew path
+        let path = "/opt/homebrew/Cellar/poetry/1.8.3/bin/poetry";
+        assert_eq!(
+            PoetryManager::extract_version_from_path_str(path),
+            Some("1.8.3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_version_macos_arm_with_revision() {
+        // macOS ARM Homebrew path with revision suffix
+        let path = "/opt/homebrew/Cellar/poetry/1.8.3_2/bin/poetry";
+        assert_eq!(
+            PoetryManager::extract_version_from_path_str(path),
+            Some("1.8.3".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_version_macos_intel() {
+        // macOS Intel Homebrew path
+        let path = "/usr/local/Cellar/poetry/2.0.1/bin/poetry";
+        assert_eq!(
+            PoetryManager::extract_version_from_path_str(path),
+            Some("2.0.1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_version_linux() {
+        // Linux Homebrew path
+        let path = "/home/linuxbrew/.linuxbrew/Cellar/poetry/1.7.0/bin/poetry";
+        assert_eq!(
+            PoetryManager::extract_version_from_path_str(path),
+            Some("1.7.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_version_non_homebrew_path() {
+        // Non-Homebrew installation paths should return None
+        let paths = [
+            "/usr/local/bin/poetry",
+            "/home/user/.local/bin/poetry",
+            "/home/user/.poetry/bin/poetry",
+            "C:\\Users\\user\\AppData\\Roaming\\pypoetry\\venv\\Scripts\\poetry.exe",
+        ];
+        for path in paths {
+            assert_eq!(
+                PoetryManager::extract_version_from_path_str(path),
+                None,
+                "Expected None for path: {}",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_version_invalid_version_format() {
+        // Invalid version formats should not match
+        let paths = [
+            "/opt/homebrew/Cellar/poetry/invalid/bin/poetry",
+            "/opt/homebrew/Cellar/poetry/1.8/bin/poetry", // Missing patch version
+            "/opt/homebrew/Cellar/poetry/v1.8.3/bin/poetry", // Has 'v' prefix
+        ];
+        for path in paths {
+            assert_eq!(
+                PoetryManager::extract_version_from_path_str(path),
+                None,
+                "Expected None for path: {}",
+                path
+            );
         }
     }
 }

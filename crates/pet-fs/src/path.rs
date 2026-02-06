@@ -618,4 +618,80 @@ mod tests {
             result
         );
     }
+
+    // ==================== resolve_any_symlink tests ====================
+
+    #[test]
+    fn test_resolve_any_symlink_nonexistent_path() {
+        // Non-existent paths should return None
+        let nonexistent = PathBuf::from("/this/path/does/not/exist/anywhere");
+        assert_eq!(resolve_any_symlink(&nonexistent), None);
+    }
+
+    #[test]
+    fn test_resolve_any_symlink_regular_file() {
+        // Regular files (not symlinks) should return None
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join("pet_test_regular_file.txt");
+
+        // Create a regular file
+        let mut file = std::fs::File::create(&test_file).expect("Failed to create test file");
+        file.write_all(b"test").expect("Failed to write test file");
+
+        // resolve_any_symlink should return None for regular files
+        assert_eq!(resolve_any_symlink(&test_file), None);
+
+        // Clean up
+        let _ = std::fs::remove_file(&test_file);
+    }
+
+    #[test]
+    fn test_resolve_any_symlink_directory() {
+        // Directories (not symlinks) should return None
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_regular_dir");
+
+        // Create a regular directory
+        let _ = std::fs::create_dir(&test_dir);
+
+        // resolve_any_symlink should return None for regular directories
+        assert_eq!(resolve_any_symlink(&test_dir), None);
+
+        // Clean up
+        let _ = std::fs::remove_dir(&test_dir);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_resolve_any_symlink_unix_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = std::env::temp_dir();
+        let target_file = temp_dir.join("pet_test_symlink_target.txt");
+        let symlink_path = temp_dir.join("pet_test_symlink.txt");
+
+        // Clean up any existing test files
+        let _ = std::fs::remove_file(&target_file);
+        let _ = std::fs::remove_file(&symlink_path);
+
+        // Create target file
+        std::fs::write(&target_file, "test").expect("Failed to create target file");
+
+        // Create symlink
+        symlink(&target_file, &symlink_path).expect("Failed to create symlink");
+
+        // resolve_any_symlink should return the target path
+        let result = resolve_any_symlink(&symlink_path);
+        assert!(result.is_some(), "Should resolve symlink");
+
+        let resolved = result.unwrap();
+        // The resolved path should be canonicalized, so compare canonical forms
+        let expected = std::fs::canonicalize(&target_file).unwrap();
+        assert_eq!(resolved, expected);
+
+        // Clean up
+        let _ = std::fs::remove_file(&symlink_path);
+        let _ = std::fs::remove_file(&target_file);
+    }
 }
