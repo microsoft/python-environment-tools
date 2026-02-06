@@ -18,12 +18,14 @@ pub struct StdioReporter {
     print_list: bool,
     managers: Arc<Mutex<HashMap<EnvManagerType, u16>>>,
     environments: Arc<Mutex<HashMap<Option<PythonEnvironmentKind>, u16>>>,
+    environment_paths: Arc<Mutex<HashMap<Option<PythonEnvironmentKind>, Vec<PythonEnvironment>>>>,
     kind: Option<PythonEnvironmentKind>,
 }
 
 pub struct Summary {
     pub managers: HashMap<EnvManagerType, u16>,
     pub environments: HashMap<Option<PythonEnvironmentKind>, u16>,
+    pub environment_paths: HashMap<Option<PythonEnvironmentKind>, Vec<PythonEnvironment>>,
 }
 
 impl StdioReporter {
@@ -33,9 +35,14 @@ impl StdioReporter {
             .environments
             .lock()
             .expect("environments mutex poisoned");
+        let environment_paths = self
+            .environment_paths
+            .lock()
+            .expect("environment_paths mutex poisoned");
         Summary {
             managers: managers.clone(),
             environments: environments.clone(),
+            environment_paths: environment_paths.clone(),
         }
     }
 }
@@ -62,6 +69,15 @@ impl Reporter for StdioReporter {
             .expect("environments mutex poisoned");
         let count = environments.get(&env.kind).unwrap_or(&0) + 1;
         environments.insert(env.kind, count);
+
+        // Store the environment details for verbose reporting
+        let mut environment_paths = self
+            .environment_paths
+            .lock()
+            .expect("environment_paths mutex poisoned");
+        let paths = environment_paths.entry(env.kind).or_insert_with(Vec::new);
+        paths.push(env.clone());
+
         if self.print_list {
             println!("{env}")
         }
@@ -73,6 +89,7 @@ pub fn create_reporter(print_list: bool, kind: Option<PythonEnvironmentKind>) ->
         print_list,
         managers: Arc::new(Mutex::new(HashMap::new())),
         environments: Arc::new(Mutex::new(HashMap::new())),
+        environment_paths: Arc::new(Mutex::new(HashMap::new())),
         kind,
     }
 }
