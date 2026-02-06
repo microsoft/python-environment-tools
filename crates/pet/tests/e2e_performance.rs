@@ -518,7 +518,10 @@ fn test_server_startup_performance() {
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
 
-    println!("=== Server Startup Performance ({} iterations) ===", STAT_ITERATIONS);
+    println!(
+        "=== Server Startup Performance ({} iterations) ===",
+        STAT_ITERATIONS
+    );
 
     for i in 0..STAT_ITERATIONS {
         let start = Instant::now();
@@ -586,7 +589,10 @@ fn test_full_refresh_performance() {
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
 
-    println!("=== Full Refresh Performance ({} iterations) ===", STAT_ITERATIONS);
+    println!(
+        "=== Full Refresh Performance ({} iterations) ===",
+        STAT_ITERATIONS
+    );
 
     for i in 0..STAT_ITERATIONS {
         // Fresh server each iteration for consistent cold-start measurement
@@ -671,7 +677,10 @@ fn test_workspace_scoped_refresh_performance() {
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
 
-    println!("=== Workspace-Scoped Refresh Performance ({} iterations) ===", STAT_ITERATIONS);
+    println!(
+        "=== Workspace-Scoped Refresh Performance ({} iterations) ===",
+        STAT_ITERATIONS
+    );
 
     for i in 0..STAT_ITERATIONS {
         let mut client = PetClient::spawn().expect("Failed to spawn server");
@@ -727,7 +736,10 @@ fn test_kind_specific_refresh_performance() {
     // Test different environment kinds
     let kinds = ["Conda", "Venv", "VirtualEnv", "Pyenv"];
 
-    println!("=== Kind-Specific Refresh Performance ({} iterations per kind) ===", STAT_ITERATIONS);
+    println!(
+        "=== Kind-Specific Refresh Performance ({} iterations per kind) ===",
+        STAT_ITERATIONS
+    );
 
     let mut all_kind_stats: HashMap<String, Value> = HashMap::new();
 
@@ -789,7 +801,10 @@ fn test_resolve_performance() {
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
 
-    println!("=== Resolve Performance ({} iterations) ===", STAT_ITERATIONS);
+    println!(
+        "=== Resolve Performance ({} iterations) ===",
+        STAT_ITERATIONS
+    );
 
     // First, find an executable to test with (use a single server)
     let exe_to_test: String;
@@ -829,7 +844,9 @@ fn test_resolve_performance() {
         });
         client.configure(config).expect("Failed to configure");
 
-        let (_, cold_time) = client.resolve(&exe_to_test).expect("Failed to resolve (cold)");
+        let (_, cold_time) = client
+            .resolve(&exe_to_test)
+            .expect("Failed to resolve (cold)");
         cold_resolve_stats.add(cold_time.as_millis());
         println!("    Iteration {}: {}ms", i + 1, cold_time.as_millis());
     }
@@ -848,7 +865,9 @@ fn test_resolve_performance() {
         client.resolve(&exe_to_test).expect("Failed to prime cache");
 
         for i in 0..STAT_ITERATIONS {
-            let (_, warm_time) = client.resolve(&exe_to_test).expect("Failed to resolve (warm)");
+            let (_, warm_time) = client
+                .resolve(&exe_to_test)
+                .expect("Failed to resolve (warm)");
             warm_resolve_stats.add(warm_time.as_millis());
             println!("    Iteration {}: {}ms", i + 1, warm_time.as_millis());
         }
@@ -861,7 +880,10 @@ fn test_resolve_performance() {
     // Calculate speedup
     if let (Some(cold_p50), Some(warm_p50)) = (cold_resolve_stats.p50(), warm_resolve_stats.p50()) {
         if warm_p50 > 0 {
-            println!("Cache speedup (P50): {:.2}x", cold_p50 as f64 / warm_p50 as f64);
+            println!(
+                "Cache speedup (P50): {:.2}x",
+                cold_p50 as f64 / warm_p50 as f64
+            );
         }
     }
 

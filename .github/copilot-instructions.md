@@ -127,8 +127,8 @@ Tests validate discovered environments using 4 verification methods:
 3. `crates/pet-core/src/lib.rs` - Essential traits and types
 4. `crates/pet/tests/ci_test.rs` - Comprehensive testing patterns
 
-
 ## Scripts
+
 - Use `cargo fetch` to download all dependencies
 - Use `rustup component add clippy` to install Clippy linter
 - Use `cargo fmt --all` to format code in all packages
@@ -137,3 +137,17 @@ Tests validate discovered environments using 4 verification methods:
 - Use `cargo test [TESTNAME]` to test a specific test
 - Use `cargo test -p [SPEC]` to test a specific package
 - Use `cargo test --all` to test all packages
+
+## Required Before Committing
+
+**ALWAYS run these commands before committing any Rust code changes:**
+
+```bash
+# Format all code (required)
+cargo fmt --all
+
+# Run clippy with warnings as errors (required)
+cargo clippy --all -- -D warnings
+```
+
+If clippy reports warnings, fix them before committing. Do not use `#[allow(...)]` attributes to suppress warnings unless absolutely necessary and justified.
