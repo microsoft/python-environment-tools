@@ -75,7 +75,7 @@ impl Reporter for StdioReporter {
             .environment_paths
             .lock()
             .expect("environment_paths mutex poisoned");
-        let paths = environment_paths.entry(env.kind).or_insert_with(Vec::new);
+        let paths = environment_paths.entry(env.kind).or_default();
         paths.push(env.clone());
 
         if self.print_list {
