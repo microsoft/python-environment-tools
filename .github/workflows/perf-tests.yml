@@ -151,20 +151,28 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         id: perf-linux
         run: |
-          # Extract PR metrics
+          # Extract PR metrics (P50 values at top level for backwards compatibility)
           PR_STARTUP=$(jq -r '.server_startup_ms // 0' metrics.json)
           PR_REFRESH=$(jq -r '.full_refresh_ms // 0' metrics.json)
           PR_ENVS=$(jq -r '.environments_count // 0' metrics.json)
+
+          # Extract P95 values from stats object (if available)
+          PR_STARTUP_P95=$(jq -r '.stats.server_startup.p95 // .server_startup_ms // 0' metrics.json)
+          PR_REFRESH_P95=$(jq -r '.stats.full_refresh.p95 // .full_refresh_ms // 0' metrics.json)
 
           # Extract baseline metrics (default to 0 if not available)
           if [ -f baseline-perf/metrics.json ]; then
             BASELINE_STARTUP=$(jq -r '.server_startup_ms // 0' baseline-perf/metrics.json)
             BASELINE_REFRESH=$(jq -r '.full_refresh_ms // 0' baseline-perf/metrics.json)
             BASELINE_ENVS=$(jq -r '.environments_count // 0' baseline-perf/metrics.json)
+            BASELINE_STARTUP_P95=$(jq -r '.stats.server_startup.p95 // .server_startup_ms // 0' baseline-perf/metrics.json)
+            BASELINE_REFRESH_P95=$(jq -r '.stats.full_refresh.p95 // .full_refresh_ms // 0' baseline-perf/metrics.json)
           else
             BASELINE_STARTUP=0
             BASELINE_REFRESH=0
             BASELINE_ENVS=0
+            BASELINE_STARTUP_P95=0
+            BASELINE_REFRESH_P95=0
           fi
 
           # Calculate diff (positive means slowdown, negative means speedup)
@@ -200,8 +208,12 @@ jobs:
           # Set outputs
           echo "pr_startup=$PR_STARTUP" >> $GITHUB_OUTPUT
           echo "pr_refresh=$PR_REFRESH" >> $GITHUB_OUTPUT
+          echo "pr_startup_p95=$PR_STARTUP_P95" >> $GITHUB_OUTPUT
+          echo "pr_refresh_p95=$PR_REFRESH_P95" >> $GITHUB_OUTPUT
           echo "baseline_startup=$BASELINE_STARTUP" >> $GITHUB_OUTPUT
           echo "baseline_refresh=$BASELINE_REFRESH" >> $GITHUB_OUTPUT
+          echo "baseline_startup_p95=$BASELINE_STARTUP_P95" >> $GITHUB_OUTPUT
+          echo "baseline_refresh_p95=$BASELINE_REFRESH_P95" >> $GITHUB_OUTPUT
           echo "startup_diff=$STARTUP_DIFF" >> $GITHUB_OUTPUT
           echo "refresh_diff=$REFRESH_DIFF" >> $GITHUB_OUTPUT
           echo "startup_pct=$STARTUP_PCT" >> $GITHUB_OUTPUT
@@ -211,22 +223,26 @@ jobs:
           # Write step summary
           echo "## Performance Report (Linux)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | PR | Baseline | Delta | Change |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-----|----------|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Server Startup | ${PR_STARTUP}ms | ${BASELINE_STARTUP}ms | ${STARTUP_DIFF}ms | ${STARTUP_PCT}% |" >> $GITHUB_STEP_SUMMARY
-          echo "| Full Refresh | ${PR_REFRESH}ms | ${BASELINE_REFRESH}ms | ${REFRESH_DIFF}ms | ${REFRESH_PCT}% ${DELTA_INDICATOR} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environments | ${PR_ENVS} | ${BASELINE_ENVS} | - | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta | Change |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|----------|----------|----------------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Server Startup | ${PR_STARTUP}ms | ${PR_STARTUP_P95}ms | ${BASELINE_STARTUP}ms | ${STARTUP_DIFF}ms | ${STARTUP_PCT}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Full Refresh | ${PR_REFRESH}ms | ${PR_REFRESH_P95}ms | ${BASELINE_REFRESH}ms | ${REFRESH_DIFF}ms | ${REFRESH_PCT}% ${DELTA_INDICATOR} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environments | ${PR_ENVS} | - | ${BASELINE_ENVS} | - | - |" >> $GITHUB_STEP_SUMMARY
         shell: bash
 
       - name: Generate Performance Report (Windows)
         if: startsWith(matrix.os, 'windows')
         id: perf-windows
         run: |
-          # Extract PR metrics
+          # Extract PR metrics (P50 values at top level for backwards compatibility)
           $prMetrics = Get-Content -Path "metrics.json" -Raw | ConvertFrom-Json
           $prStartup = $prMetrics.server_startup_ms
           $prRefresh = $prMetrics.full_refresh_ms
           $prEnvs = $prMetrics.environments_count
+
+          # Extract P95 values from stats object (if available)
+          $prStartupP95 = if ($prMetrics.stats.server_startup.p95) { $prMetrics.stats.server_startup.p95 } else { $prStartup }
+          $prRefreshP95 = if ($prMetrics.stats.full_refresh.p95) { $prMetrics.stats.full_refresh.p95 } else { $prRefresh }
 
           # Extract baseline metrics (default to 0 if not available)
           if (Test-Path "baseline-perf/metrics.json") {
@@ -234,10 +250,14 @@ jobs:
             $baselineStartup = $baselineMetrics.server_startup_ms
             $baselineRefresh = $baselineMetrics.full_refresh_ms
             $baselineEnvs = $baselineMetrics.environments_count
+            $baselineStartupP95 = if ($baselineMetrics.stats.server_startup.p95) { $baselineMetrics.stats.server_startup.p95 } else { $baselineStartup }
+            $baselineRefreshP95 = if ($baselineMetrics.stats.full_refresh.p95) { $baselineMetrics.stats.full_refresh.p95 } else { $baselineRefresh }
           } else {
             $baselineStartup = 0
             $baselineRefresh = 0
             $baselineEnvs = 0
+            $baselineStartupP95 = 0
+            $baselineRefreshP95 = 0
           }
 
           # Calculate diff
@@ -273,8 +293,12 @@ jobs:
           # Set outputs
           echo "pr_startup=$prStartup" >> $env:GITHUB_OUTPUT
           echo "pr_refresh=$prRefresh" >> $env:GITHUB_OUTPUT
+          echo "pr_startup_p95=$prStartupP95" >> $env:GITHUB_OUTPUT
+          echo "pr_refresh_p95=$prRefreshP95" >> $env:GITHUB_OUTPUT
           echo "baseline_startup=$baselineStartup" >> $env:GITHUB_OUTPUT
           echo "baseline_refresh=$baselineRefresh" >> $env:GITHUB_OUTPUT
+          echo "baseline_startup_p95=$baselineStartupP95" >> $env:GITHUB_OUTPUT
+          echo "baseline_refresh_p95=$baselineRefreshP95" >> $env:GITHUB_OUTPUT
           echo "startup_diff=$startupDiff" >> $env:GITHUB_OUTPUT
           echo "refresh_diff=$refreshDiff" >> $env:GITHUB_OUTPUT
           echo "startup_pct=$startupPct" >> $env:GITHUB_OUTPUT
@@ -284,31 +308,39 @@ jobs:
           # Write step summary
           echo "## Performance Report (Windows)" >> $env:GITHUB_STEP_SUMMARY
           echo "" >> $env:GITHUB_STEP_SUMMARY
-          echo "| Metric | PR | Baseline | Delta | Change |" >> $env:GITHUB_STEP_SUMMARY
-          echo "|--------|-----|----------|-------|--------|" >> $env:GITHUB_STEP_SUMMARY
-          echo "| Server Startup | ${prStartup}ms | ${baselineStartup}ms | ${startupDiff}ms | ${startupPct}% |" >> $env:GITHUB_STEP_SUMMARY
-          echo "| Full Refresh | ${prRefresh}ms | ${baselineRefresh}ms | ${refreshDiff}ms | ${refreshPct}% ${deltaIndicator} |" >> $env:GITHUB_STEP_SUMMARY
-          echo "| Environments | ${prEnvs} | ${baselineEnvs} | - | - |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta | Change |" >> $env:GITHUB_STEP_SUMMARY
+          echo "|--------|----------|----------|----------------|-------|--------|" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Server Startup | ${prStartup}ms | ${prStartupP95}ms | ${baselineStartup}ms | ${startupDiff}ms | ${startupPct}% |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Full Refresh | ${prRefresh}ms | ${prRefreshP95}ms | ${baselineRefresh}ms | ${refreshDiff}ms | ${refreshPct}% ${deltaIndicator} |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| Environments | ${prEnvs} | - | ${baselineEnvs} | - | - |" >> $env:GITHUB_STEP_SUMMARY
         shell: pwsh
 
       - name: Generate Performance Report (macOS)
         if: startsWith(matrix.os, 'macos')
         id: perf-macos
         run: |
-          # Extract PR metrics
+          # Extract PR metrics (P50 values at top level for backwards compatibility)
           PR_STARTUP=$(jq -r '.server_startup_ms // 0' metrics.json)
           PR_REFRESH=$(jq -r '.full_refresh_ms // 0' metrics.json)
           PR_ENVS=$(jq -r '.environments_count // 0' metrics.json)
+
+          # Extract P95 values from stats object (if available)
+          PR_STARTUP_P95=$(jq -r '.stats.server_startup.p95 // .server_startup_ms // 0' metrics.json)
+          PR_REFRESH_P95=$(jq -r '.stats.full_refresh.p95 // .full_refresh_ms // 0' metrics.json)
 
           # Extract baseline metrics (default to 0 if not available)
           if [ -f baseline-perf/metrics.json ]; then
             BASELINE_STARTUP=$(jq -r '.server_startup_ms // 0' baseline-perf/metrics.json)
             BASELINE_REFRESH=$(jq -r '.full_refresh_ms // 0' baseline-perf/metrics.json)
             BASELINE_ENVS=$(jq -r '.environments_count // 0' baseline-perf/metrics.json)
+            BASELINE_STARTUP_P95=$(jq -r '.stats.server_startup.p95 // .server_startup_ms // 0' baseline-perf/metrics.json)
+            BASELINE_REFRESH_P95=$(jq -r '.stats.full_refresh.p95 // .full_refresh_ms // 0' baseline-perf/metrics.json)
           else
             BASELINE_STARTUP=0
             BASELINE_REFRESH=0
             BASELINE_ENVS=0
+            BASELINE_STARTUP_P95=0
+            BASELINE_REFRESH_P95=0
           fi
 
           # Calculate diff
@@ -318,19 +350,23 @@ jobs:
           # Set outputs
           echo "pr_startup=$PR_STARTUP" >> $GITHUB_OUTPUT
           echo "pr_refresh=$PR_REFRESH" >> $GITHUB_OUTPUT
+          echo "pr_startup_p95=$PR_STARTUP_P95" >> $GITHUB_OUTPUT
+          echo "pr_refresh_p95=$PR_REFRESH_P95" >> $GITHUB_OUTPUT
           echo "baseline_startup=$BASELINE_STARTUP" >> $GITHUB_OUTPUT
           echo "baseline_refresh=$BASELINE_REFRESH" >> $GITHUB_OUTPUT
+          echo "baseline_startup_p95=$BASELINE_STARTUP_P95" >> $GITHUB_OUTPUT
+          echo "baseline_refresh_p95=$BASELINE_REFRESH_P95" >> $GITHUB_OUTPUT
           echo "startup_diff=$STARTUP_DIFF" >> $GITHUB_OUTPUT
           echo "refresh_diff=$REFRESH_DIFF" >> $GITHUB_OUTPUT
 
           # Write step summary
           echo "## Performance Report (macOS)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | PR | Baseline | Delta |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-----|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Server Startup | ${PR_STARTUP}ms | ${BASELINE_STARTUP}ms | ${STARTUP_DIFF}ms |" >> $GITHUB_STEP_SUMMARY
-          echo "| Full Refresh | ${PR_REFRESH}ms | ${BASELINE_REFRESH}ms | ${REFRESH_DIFF}ms |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environments | ${PR_ENVS} | ${BASELINE_ENVS} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|----------|----------|----------------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Server Startup | ${PR_STARTUP}ms | ${PR_STARTUP_P95}ms | ${BASELINE_STARTUP}ms | ${STARTUP_DIFF}ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| Full Refresh | ${PR_REFRESH}ms | ${PR_REFRESH_P95}ms | ${BASELINE_REFRESH}ms | ${REFRESH_DIFF}ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environments | ${PR_ENVS} | - | ${BASELINE_ENVS} | - |" >> $GITHUB_STEP_SUMMARY
         shell: bash
 
       - name: Post Performance Comment (Linux)
@@ -341,10 +377,12 @@ jobs:
           message: |
             ## Performance Report (Linux) ${{ steps.perf-linux.outputs.delta_indicator }}
 
-            | Metric | PR | Baseline | Delta | Change |
-            |--------|-----|----------|-------|--------|
-            | Server Startup | ${{ steps.perf-linux.outputs.pr_startup }}ms | ${{ steps.perf-linux.outputs.baseline_startup }}ms | ${{ steps.perf-linux.outputs.startup_diff }}ms | ${{ steps.perf-linux.outputs.startup_pct }}% |
-            | Full Refresh | ${{ steps.perf-linux.outputs.pr_refresh }}ms | ${{ steps.perf-linux.outputs.baseline_refresh }}ms | ${{ steps.perf-linux.outputs.refresh_diff }}ms | ${{ steps.perf-linux.outputs.refresh_pct }}% |
+            | Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta | Change |
+            |--------|----------|----------|----------------|-------|--------|
+            | Server Startup | ${{ steps.perf-linux.outputs.pr_startup }}ms | ${{ steps.perf-linux.outputs.pr_startup_p95 }}ms | ${{ steps.perf-linux.outputs.baseline_startup }}ms | ${{ steps.perf-linux.outputs.startup_diff }}ms | ${{ steps.perf-linux.outputs.startup_pct }}% |
+            | Full Refresh | ${{ steps.perf-linux.outputs.pr_refresh }}ms | ${{ steps.perf-linux.outputs.pr_refresh_p95 }}ms | ${{ steps.perf-linux.outputs.baseline_refresh }}ms | ${{ steps.perf-linux.outputs.refresh_diff }}ms | ${{ steps.perf-linux.outputs.refresh_pct }}% |
+
+            > Results based on 10 iterations. P50 = median, P95 = 95th percentile.
 
             ---
             <details>
@@ -365,10 +403,12 @@ jobs:
           message: |
             ## Performance Report (Windows) ${{ steps.perf-windows.outputs.delta_indicator }}
 
-            | Metric | PR | Baseline | Delta | Change |
-            |--------|-----|----------|-------|--------|
-            | Server Startup | ${{ steps.perf-windows.outputs.pr_startup }}ms | ${{ steps.perf-windows.outputs.baseline_startup }}ms | ${{ steps.perf-windows.outputs.startup_diff }}ms | ${{ steps.perf-windows.outputs.startup_pct }}% |
-            | Full Refresh | ${{ steps.perf-windows.outputs.pr_refresh }}ms | ${{ steps.perf-windows.outputs.baseline_refresh }}ms | ${{ steps.perf-windows.outputs.refresh_diff }}ms | ${{ steps.perf-windows.outputs.refresh_pct }}% |
+            | Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta | Change |
+            |--------|----------|----------|----------------|-------|--------|
+            | Server Startup | ${{ steps.perf-windows.outputs.pr_startup }}ms | ${{ steps.perf-windows.outputs.pr_startup_p95 }}ms | ${{ steps.perf-windows.outputs.baseline_startup }}ms | ${{ steps.perf-windows.outputs.startup_diff }}ms | ${{ steps.perf-windows.outputs.startup_pct }}% |
+            | Full Refresh | ${{ steps.perf-windows.outputs.pr_refresh }}ms | ${{ steps.perf-windows.outputs.pr_refresh_p95 }}ms | ${{ steps.perf-windows.outputs.baseline_refresh }}ms | ${{ steps.perf-windows.outputs.refresh_diff }}ms | ${{ steps.perf-windows.outputs.refresh_pct }}% |
+
+            > Results based on 10 iterations. P50 = median, P95 = 95th percentile.
 
             ---
             <details>
@@ -389,10 +429,12 @@ jobs:
           message: |
             ## Performance Report (macOS)
 
-            | Metric | PR | Baseline | Delta |
-            |--------|-----|----------|-------|
-            | Server Startup | ${{ steps.perf-macos.outputs.pr_startup }}ms | ${{ steps.perf-macos.outputs.baseline_startup }}ms | ${{ steps.perf-macos.outputs.startup_diff }}ms |
-            | Full Refresh | ${{ steps.perf-macos.outputs.pr_refresh }}ms | ${{ steps.perf-macos.outputs.baseline_refresh }}ms | ${{ steps.perf-macos.outputs.refresh_diff }}ms |
+            | Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta |
+            |--------|----------|----------|----------------|-------|
+            | Server Startup | ${{ steps.perf-macos.outputs.pr_startup }}ms | ${{ steps.perf-macos.outputs.pr_startup_p95 }}ms | ${{ steps.perf-macos.outputs.baseline_startup }}ms | ${{ steps.perf-macos.outputs.startup_diff }}ms |
+            | Full Refresh | ${{ steps.perf-macos.outputs.pr_refresh }}ms | ${{ steps.perf-macos.outputs.pr_refresh_p95 }}ms | ${{ steps.perf-macos.outputs.baseline_refresh }}ms | ${{ steps.perf-macos.outputs.refresh_diff }}ms |
+
+            > Results based on 10 iterations. P50 = median, P95 = 95th percentile.
 
             ---
             <details>

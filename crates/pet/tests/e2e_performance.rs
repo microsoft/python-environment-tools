@@ -22,6 +22,131 @@ mod common;
 /// JSONRPC request ID counter
 static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 
+/// Number of iterations for statistical tests
+const STAT_ITERATIONS: usize = 10;
+
+/// Statistical metrics with percentile calculations
+#[derive(Debug, Clone, Default)]
+pub struct StatisticalMetrics {
+    samples: Vec<u128>,
+}
+
+impl StatisticalMetrics {
+    pub fn new() -> Self {
+        Self {
+            samples: Vec::new(),
+        }
+    }
+
+    pub fn add(&mut self, value: u128) {
+        self.samples.push(value);
+    }
+
+    pub fn count(&self) -> usize {
+        self.samples.len()
+    }
+
+    pub fn min(&self) -> Option<u128> {
+        self.samples.iter().copied().min()
+    }
+
+    pub fn max(&self) -> Option<u128> {
+        self.samples.iter().copied().max()
+    }
+
+    pub fn mean(&self) -> Option<f64> {
+        if self.samples.is_empty() {
+            return None;
+        }
+        let sum: u128 = self.samples.iter().sum();
+        Some(sum as f64 / self.samples.len() as f64)
+    }
+
+    pub fn std_dev(&self) -> Option<f64> {
+        let mean = self.mean()?;
+        if self.samples.len() < 2 {
+            return None;
+        }
+        let variance: f64 = self
+            .samples
+            .iter()
+            .map(|&x| {
+                let diff = x as f64 - mean;
+                diff * diff
+            })
+            .sum::<f64>()
+            / (self.samples.len() - 1) as f64;
+        Some(variance.sqrt())
+    }
+
+    fn sorted(&self) -> Vec<u128> {
+        let mut sorted = self.samples.clone();
+        sorted.sort();
+        sorted
+    }
+
+    fn percentile(&self, p: f64) -> Option<u128> {
+        if self.samples.is_empty() {
+            return None;
+        }
+        let sorted = self.sorted();
+        let n = sorted.len();
+        if n == 1 {
+            return Some(sorted[0]);
+        }
+        // Linear interpolation between closest ranks
+        let rank = p / 100.0 * (n - 1) as f64;
+        let lower = rank.floor() as usize;
+        let upper = rank.ceil() as usize;
+        let weight = rank - lower as f64;
+
+        if upper >= n {
+            return Some(sorted[n - 1]);
+        }
+
+        let result = sorted[lower] as f64 * (1.0 - weight) + sorted[upper] as f64 * weight;
+        Some(result.round() as u128)
+    }
+
+    pub fn p50(&self) -> Option<u128> {
+        self.percentile(50.0)
+    }
+
+    pub fn p95(&self) -> Option<u128> {
+        self.percentile(95.0)
+    }
+
+    pub fn p99(&self) -> Option<u128> {
+        self.percentile(99.0)
+    }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "count": self.count(),
+            "min": self.min(),
+            "max": self.max(),
+            "mean": self.mean(),
+            "std_dev": self.std_dev(),
+            "p50": self.p50(),
+            "p95": self.p95(),
+            "p99": self.p99()
+        })
+    }
+
+    pub fn print_summary(&self, label: &str) {
+        println!(
+            "{}: P50={}ms, P95={}ms, P99={}ms, mean={:.1}ms, std_dev={:.1}ms (n={})",
+            label,
+            self.p50().unwrap_or(0),
+            self.p95().unwrap_or(0),
+            self.p99().unwrap_or(0),
+            self.mean().unwrap_or(0.0),
+            self.std_dev().unwrap_or(0.0),
+            self.count()
+        );
+    }
+}
+
 /// Performance metrics collected during tests
 #[derive(Debug, Clone, Default)]
 pub struct PerformanceMetrics {
@@ -386,80 +511,152 @@ fn get_workspace_dir() -> PathBuf {
 #[cfg_attr(feature = "ci-perf", test)]
 #[allow(dead_code)]
 fn test_server_startup_performance() {
-    let start = Instant::now();
-    let mut client = PetClient::spawn().expect("Failed to spawn server");
-    let spawn_time = start.elapsed();
+    let mut spawn_stats = StatisticalMetrics::new();
+    let mut configure_stats = StatisticalMetrics::new();
+    let mut total_stats = StatisticalMetrics::new();
 
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
 
-    let config = json!({
-        "workspaceDirectories": [workspace_dir],
-        "cacheDirectory": cache_dir
-    });
+    println!("=== Server Startup Performance ({} iterations) ===", STAT_ITERATIONS);
 
-    let configure_time = client.configure(config).expect("Failed to configure");
+    for i in 0..STAT_ITERATIONS {
+        let start = Instant::now();
+        let mut client = PetClient::spawn().expect("Failed to spawn server");
+        let spawn_time = start.elapsed();
 
-    println!("=== Server Startup Performance ===");
-    println!("Server spawn time: {:?}", spawn_time);
-    println!("Configure request time: {:?}", configure_time);
-    println!("Total startup time: {:?}", spawn_time + configure_time);
+        let config = json!({
+            "workspaceDirectories": [workspace_dir.clone()],
+            "cacheDirectory": cache_dir.clone()
+        });
 
-    // Assert reasonable startup time (should be under 1 second on most machines)
+        let configure_time = client.configure(config).expect("Failed to configure");
+        let total_time = spawn_time + configure_time;
+
+        spawn_stats.add(spawn_time.as_millis());
+        configure_stats.add(configure_time.as_millis());
+        total_stats.add(total_time.as_millis());
+
+        println!(
+            "  Iteration {}: spawn={}ms, configure={}ms, total={}ms",
+            i + 1,
+            spawn_time.as_millis(),
+            configure_time.as_millis(),
+            total_time.as_millis()
+        );
+    }
+
+    println!();
+    spawn_stats.print_summary("Server spawn");
+    configure_stats.print_summary("Configure");
+    total_stats.print_summary("Total startup");
+
+    // Output JSON for CI
+    let json_output = serde_json::to_string_pretty(&json!({
+        "spawn": spawn_stats.to_json(),
+        "configure": configure_stats.to_json(),
+        "total": total_stats.to_json()
+    }))
+    .unwrap();
+    println!("\nJSON metrics:\n{}", json_output);
+
+    // Assert reasonable startup time (P95 should be under 5 seconds)
     assert!(
-        spawn_time.as_millis() < 5000,
-        "Server spawn took too long: {:?}",
-        spawn_time
+        spawn_stats.p95().unwrap_or(0) < 5000,
+        "Server spawn P95 took too long: {}ms",
+        spawn_stats.p95().unwrap_or(0)
     );
     assert!(
-        configure_time.as_millis() < 1000,
-        "Configure took too long: {:?}",
-        configure_time
+        configure_stats.p95().unwrap_or(0) < 1000,
+        "Configure P95 took too long: {}ms",
+        configure_stats.p95().unwrap_or(0)
     );
 }
 
 #[cfg_attr(feature = "ci-perf", test)]
 #[allow(dead_code)]
 fn test_full_refresh_performance() {
-    let mut client = PetClient::spawn().expect("Failed to spawn server");
+    let mut server_duration_stats = StatisticalMetrics::new();
+    let mut client_duration_stats = StatisticalMetrics::new();
+    let mut time_to_first_env_stats = StatisticalMetrics::new();
+    let mut env_count = 0usize;
+    let mut manager_count = 0usize;
+    let mut kind_counts: HashMap<String, usize> = HashMap::new();
 
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
 
-    let config = json!({
-        "workspaceDirectories": [workspace_dir],
-        "cacheDirectory": cache_dir
-    });
+    println!("=== Full Refresh Performance ({} iterations) ===", STAT_ITERATIONS);
 
-    client.configure(config).expect("Failed to configure");
+    for i in 0..STAT_ITERATIONS {
+        // Fresh server each iteration for consistent cold-start measurement
+        let mut client = PetClient::spawn().expect("Failed to spawn server");
 
-    // Full machine refresh
-    let (result, client_elapsed) = client.refresh(None).expect("Failed to refresh");
-    let environments = client.get_environments();
-    let managers = client.get_managers();
+        let config = json!({
+            "workspaceDirectories": [workspace_dir.clone()],
+            "cacheDirectory": cache_dir.clone()
+        });
 
-    println!("=== Full Refresh Performance ===");
-    println!("Server-reported duration: {}ms", result.duration);
-    println!("Client-measured duration: {:?}", client_elapsed);
-    println!("Environments discovered: {}", environments.len());
-    println!("Managers discovered: {}", managers.len());
+        client.configure(config).expect("Failed to configure");
 
-    if let Some(time_to_first) = client.time_to_first_env() {
-        println!("Time to first environment: {:?}", time_to_first);
-    }
+        // Full machine refresh
+        let (result, client_elapsed) = client.refresh(None).expect("Failed to refresh");
+        let environments = client.get_environments();
+        let managers = client.get_managers();
 
-    // Log environment kinds found
-    let mut kind_counts: HashMap<String, usize> = HashMap::new();
-    for env in &environments {
-        if let Some(kind) = &env.kind {
-            *kind_counts.entry(kind.clone()).or_insert(0) += 1;
+        server_duration_stats.add(result.duration);
+        client_duration_stats.add(client_elapsed.as_millis());
+
+        if let Some(time_to_first) = client.time_to_first_env() {
+            time_to_first_env_stats.add(time_to_first.as_millis());
         }
+
+        // Track counts from last iteration
+        env_count = environments.len();
+        manager_count = managers.len();
+
+        // Aggregate kind counts
+        if i == STAT_ITERATIONS - 1 {
+            for env in &environments {
+                if let Some(kind) = &env.kind {
+                    *kind_counts.entry(kind.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+
+        println!(
+            "  Iteration {}: server={}ms, client={}ms, envs={}",
+            i + 1,
+            result.duration,
+            client_elapsed.as_millis(),
+            environments.len()
+        );
     }
+
+    println!();
+    server_duration_stats.print_summary("Server duration");
+    client_duration_stats.print_summary("Client duration");
+    if time_to_first_env_stats.count() > 0 {
+        time_to_first_env_stats.print_summary("Time to first env");
+    }
+    println!("Environments discovered: {}", env_count);
+    println!("Managers discovered: {}", manager_count);
     println!("Environment kinds: {:?}", kind_counts);
+
+    // Output JSON for CI
+    let json_output = serde_json::to_string_pretty(&json!({
+        "server_duration": server_duration_stats.to_json(),
+        "client_duration": client_duration_stats.to_json(),
+        "time_to_first_env": time_to_first_env_stats.to_json(),
+        "environments_count": env_count,
+        "managers_count": manager_count
+    }))
+    .unwrap();
+    println!("\nJSON metrics:\n{}", json_output);
 
     // Assert we found at least some environments (CI should always have Python installed)
     assert!(
-        !environments.is_empty(),
+        env_count > 0,
         "No environments discovered - this is unexpected"
     );
 }
@@ -467,121 +664,214 @@ fn test_full_refresh_performance() {
 #[cfg_attr(feature = "ci-perf", test)]
 #[allow(dead_code)]
 fn test_workspace_scoped_refresh_performance() {
-    let mut client = PetClient::spawn().expect("Failed to spawn server");
+    let mut server_duration_stats = StatisticalMetrics::new();
+    let mut client_duration_stats = StatisticalMetrics::new();
+    let mut env_count = 0usize;
 
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
 
-    let config = json!({
-        "workspaceDirectories": [workspace_dir.clone()],
-        "cacheDirectory": cache_dir
-    });
+    println!("=== Workspace-Scoped Refresh Performance ({} iterations) ===", STAT_ITERATIONS);
 
-    client.configure(config).expect("Failed to configure");
+    for i in 0..STAT_ITERATIONS {
+        let mut client = PetClient::spawn().expect("Failed to spawn server");
 
-    // Workspace-scoped refresh
-    let (result, client_elapsed) = client
-        .refresh(Some(json!({ "searchPaths": [workspace_dir] })))
-        .expect("Failed to refresh");
+        let config = json!({
+            "workspaceDirectories": [workspace_dir.clone()],
+            "cacheDirectory": cache_dir.clone()
+        });
 
-    let environments = client.get_environments();
+        client.configure(config).expect("Failed to configure");
 
-    println!("=== Workspace-Scoped Refresh Performance ===");
-    println!("Server-reported duration: {}ms", result.duration);
-    println!("Client-measured duration: {:?}", client_elapsed);
-    println!("Environments discovered: {}", environments.len());
+        // Workspace-scoped refresh
+        let (result, client_elapsed) = client
+            .refresh(Some(json!({ "searchPaths": [workspace_dir.clone()] })))
+            .expect("Failed to refresh");
 
-    // Workspace-scoped should be faster than full refresh
-    // (though we don't assert this as it depends on the environment)
+        let environments = client.get_environments();
+
+        server_duration_stats.add(result.duration);
+        client_duration_stats.add(client_elapsed.as_millis());
+        env_count = environments.len();
+
+        println!(
+            "  Iteration {}: server={}ms, client={}ms, envs={}",
+            i + 1,
+            result.duration,
+            client_elapsed.as_millis(),
+            environments.len()
+        );
+    }
+
+    println!();
+    server_duration_stats.print_summary("Server duration");
+    client_duration_stats.print_summary("Client duration");
+    println!("Environments discovered: {}", env_count);
+
+    // Output JSON for CI
+    let json_output = serde_json::to_string_pretty(&json!({
+        "server_duration": server_duration_stats.to_json(),
+        "client_duration": client_duration_stats.to_json(),
+        "environments_count": env_count
+    }))
+    .unwrap();
+    println!("\nJSON metrics:\n{}", json_output);
 }
 
 #[cfg_attr(feature = "ci-perf", test)]
 #[allow(dead_code)]
 fn test_kind_specific_refresh_performance() {
-    let mut client = PetClient::spawn().expect("Failed to spawn server");
-
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
-
-    let config = json!({
-        "workspaceDirectories": [workspace_dir],
-        "cacheDirectory": cache_dir
-    });
-
-    client.configure(config).expect("Failed to configure");
 
     // Test different environment kinds
     let kinds = ["Conda", "Venv", "VirtualEnv", "Pyenv"];
 
-    println!("=== Kind-Specific Refresh Performance ===");
+    println!("=== Kind-Specific Refresh Performance ({} iterations per kind) ===", STAT_ITERATIONS);
+
+    let mut all_kind_stats: HashMap<String, Value> = HashMap::new();
 
     for kind in kinds {
-        let (result, client_elapsed) = client
-            .refresh(Some(json!({ "searchKind": kind })))
-            .expect(&format!("Failed to refresh for kind {}", kind));
+        let mut server_duration_stats = StatisticalMetrics::new();
+        let mut env_count = 0usize;
 
-        let environments = client.get_environments();
+        println!("\n  Testing kind: {}", kind);
 
-        println!(
-            "{}: {}ms (server), {:?} (client), {} envs",
-            kind,
-            result.duration,
-            client_elapsed,
-            environments.len()
+        for i in 0..STAT_ITERATIONS {
+            let mut client = PetClient::spawn().expect("Failed to spawn server");
+
+            let config = json!({
+                "workspaceDirectories": [workspace_dir.clone()],
+                "cacheDirectory": cache_dir.clone()
+            });
+
+            client.configure(config).expect("Failed to configure");
+
+            let (result, _) = client
+                .refresh(Some(json!({ "searchKind": kind })))
+                .expect(&format!("Failed to refresh for kind {}", kind));
+
+            let environments = client.get_environments();
+            server_duration_stats.add(result.duration);
+            env_count = environments.len();
+
+            println!(
+                "    Iteration {}: {}ms, {} envs",
+                i + 1,
+                result.duration,
+                environments.len()
+            );
+        }
+
+        server_duration_stats.print_summary(&format!("  {}", kind));
+        println!("  {} environments found: {}", kind, env_count);
+
+        all_kind_stats.insert(
+            kind.to_string(),
+            json!({
+                "duration": server_duration_stats.to_json(),
+                "environments_count": env_count
+            }),
         );
     }
+
+    // Output JSON for CI
+    let json_output = serde_json::to_string_pretty(&json!(all_kind_stats)).unwrap();
+    println!("\nJSON metrics:\n{}", json_output);
 }
 
 #[cfg_attr(feature = "ci-perf", test)]
 #[allow(dead_code)]
 fn test_resolve_performance() {
-    let mut client = PetClient::spawn().expect("Failed to spawn server");
+    let mut cold_resolve_stats = StatisticalMetrics::new();
+    let mut warm_resolve_stats = StatisticalMetrics::new();
 
     let cache_dir = get_test_cache_dir();
     let workspace_dir = get_workspace_dir();
 
-    let config = json!({
-        "workspaceDirectories": [workspace_dir],
-        "cacheDirectory": cache_dir
-    });
+    println!("=== Resolve Performance ({} iterations) ===", STAT_ITERATIONS);
 
-    client.configure(config).expect("Failed to configure");
+    // First, find an executable to test with (use a single server)
+    let exe_to_test: String;
+    {
+        let mut client = PetClient::spawn().expect("Failed to spawn server");
+        let config = json!({
+            "workspaceDirectories": [workspace_dir.clone()],
+            "cacheDirectory": cache_dir.clone()
+        });
+        client.configure(config).expect("Failed to configure");
+        client.refresh(None).expect("Failed to refresh");
+        let environments = client.get_environments();
 
-    // First, discover environments
-    client.refresh(None).expect("Failed to refresh");
-    let environments = client.get_environments();
-
-    if environments.is_empty() {
-        println!("No environments found to test resolve performance");
-        return;
-    }
-
-    println!("=== Resolve Performance ===");
-
-    // Find an environment with an executable to resolve
-    let env_with_exe = environments.iter().find(|e| e.executable.is_some());
-
-    if let Some(env) = env_with_exe {
-        let exe = env.executable.as_ref().unwrap();
-
-        // Cold resolve (first time)
-        let (_, cold_time) = client.resolve(exe).expect("Failed to resolve (cold)");
-        println!("Cold resolve time: {:?}", cold_time);
-
-        // Warm resolve (cached)
-        let (_, warm_time) = client.resolve(exe).expect("Failed to resolve (warm)");
-        println!("Warm resolve time: {:?}", warm_time);
-
-        // Warm should be faster than cold (if caching is working)
-        if warm_time < cold_time {
-            println!(
-                "Cache speedup: {:.2}x",
-                cold_time.as_micros() as f64 / warm_time.as_micros() as f64
-            );
+        if environments.is_empty() {
+            println!("No environments found to test resolve performance");
+            return;
         }
-    } else {
-        println!("No environment with executable found");
+
+        let env_with_exe = environments.iter().find(|e| e.executable.is_some());
+        if let Some(env) = env_with_exe {
+            exe_to_test = env.executable.as_ref().unwrap().clone();
+        } else {
+            println!("No environment with executable found");
+            return;
+        }
     }
+
+    println!("Testing with executable: {}", exe_to_test);
+
+    // Cold resolve tests (fresh server each time)
+    println!("\n  Cold resolve iterations:");
+    for i in 0..STAT_ITERATIONS {
+        let mut client = PetClient::spawn().expect("Failed to spawn server");
+        let config = json!({
+            "workspaceDirectories": [workspace_dir.clone()],
+            "cacheDirectory": cache_dir.clone()
+        });
+        client.configure(config).expect("Failed to configure");
+
+        let (_, cold_time) = client.resolve(&exe_to_test).expect("Failed to resolve (cold)");
+        cold_resolve_stats.add(cold_time.as_millis());
+        println!("    Iteration {}: {}ms", i + 1, cold_time.as_millis());
+    }
+
+    // Warm resolve tests (same server, multiple resolves)
+    println!("\n  Warm resolve iterations:");
+    {
+        let mut client = PetClient::spawn().expect("Failed to spawn server");
+        let config = json!({
+            "workspaceDirectories": [workspace_dir.clone()],
+            "cacheDirectory": cache_dir.clone()
+        });
+        client.configure(config).expect("Failed to configure");
+
+        // Prime the cache with a first resolve
+        client.resolve(&exe_to_test).expect("Failed to prime cache");
+
+        for i in 0..STAT_ITERATIONS {
+            let (_, warm_time) = client.resolve(&exe_to_test).expect("Failed to resolve (warm)");
+            warm_resolve_stats.add(warm_time.as_millis());
+            println!("    Iteration {}: {}ms", i + 1, warm_time.as_millis());
+        }
+    }
+
+    println!();
+    cold_resolve_stats.print_summary("Cold resolve");
+    warm_resolve_stats.print_summary("Warm resolve");
+
+    // Calculate speedup
+    if let (Some(cold_p50), Some(warm_p50)) = (cold_resolve_stats.p50(), warm_resolve_stats.p50()) {
+        if warm_p50 > 0 {
+            println!("Cache speedup (P50): {:.2}x", cold_p50 as f64 / warm_p50 as f64);
+        }
+    }
+
+    // Output JSON for CI
+    let json_output = serde_json::to_string_pretty(&json!({
+        "cold_resolve": cold_resolve_stats.to_json(),
+        "warm_resolve": warm_resolve_stats.to_json()
+    }))
+    .unwrap();
+    println!("\nJSON metrics:\n{}", json_output);
 }
 
 #[cfg_attr(feature = "ci-perf", test)]
@@ -678,7 +968,11 @@ fn test_refresh_warm_vs_cold_cache() {
 #[cfg_attr(feature = "ci-perf", test)]
 #[allow(dead_code)]
 fn test_performance_summary() {
-    let mut metrics = PerformanceMetrics::default();
+    let mut startup_stats = StatisticalMetrics::new();
+    let mut refresh_stats = StatisticalMetrics::new();
+    let mut time_to_first_env_stats = StatisticalMetrics::new();
+    let mut env_count = 0usize;
+    let mut manager_count = 0usize;
 
     let cache_dir = get_test_cache_dir();
     let _ = std::fs::remove_dir_all(&cache_dir);
@@ -686,58 +980,70 @@ fn test_performance_summary() {
 
     let workspace_dir = get_workspace_dir();
 
-    // Measure server startup
-    let spawn_start = Instant::now();
-    let mut client = PetClient::spawn().expect("Failed to spawn server");
-
-    let config = json!({
-        "workspaceDirectories": [workspace_dir.clone()],
-        "cacheDirectory": cache_dir
-    });
-
-    client.configure(config).expect("Failed to configure");
-    metrics.server_startup_ms = spawn_start.elapsed().as_millis();
-
-    // Measure full refresh
-    let (result, _) = client.refresh(None).expect("Failed to refresh");
-    metrics.full_refresh_ms = result.duration;
-    metrics.environments_count = client.get_environments().len();
-    metrics.managers_count = client.get_managers().len();
-
-    if let Some(ttfe) = client.time_to_first_env() {
-        metrics.time_to_first_env_ms = Some(ttfe.as_millis());
-    }
-
-    // Measure workspace refresh
-    let (result, _) = client
-        .refresh(Some(json!({ "searchPaths": [workspace_dir] })))
-        .expect("Failed to refresh");
-    metrics.workspace_refresh_ms = Some(result.duration);
-
-    // Print summary
     println!("\n========================================");
-    println!("       PERFORMANCE TEST SUMMARY         ");
-    println!("========================================");
-    println!("Server startup:        {}ms", metrics.server_startup_ms);
-    println!("Full refresh:          {}ms", metrics.full_refresh_ms);
-    if let Some(ws) = metrics.workspace_refresh_ms {
-        println!("Workspace refresh:     {}ms", ws);
+    println!("  PERFORMANCE SUMMARY ({} iterations)", STAT_ITERATIONS);
+    println!("========================================\n");
+
+    for i in 0..STAT_ITERATIONS {
+        // Measure server startup (fresh server each iteration)
+        let spawn_start = Instant::now();
+        let mut client = PetClient::spawn().expect("Failed to spawn server");
+
+        let config = json!({
+            "workspaceDirectories": [workspace_dir.clone()],
+            "cacheDirectory": cache_dir.clone()
+        });
+
+        client.configure(config).expect("Failed to configure");
+        let startup_time = spawn_start.elapsed().as_millis();
+        startup_stats.add(startup_time);
+
+        // Measure full refresh
+        let (result, _) = client.refresh(None).expect("Failed to refresh");
+        refresh_stats.add(result.duration);
+
+        env_count = client.get_environments().len();
+        manager_count = client.get_managers().len();
+
+        if let Some(ttfe) = client.time_to_first_env() {
+            time_to_first_env_stats.add(ttfe.as_millis());
+        }
+
+        println!(
+            "  Iteration {}: startup={}ms, refresh={}ms, envs={}",
+            i + 1,
+            startup_time,
+            result.duration,
+            env_count
+        );
     }
-    if let Some(ttfe) = metrics.time_to_first_env_ms {
-        println!("Time to first env:     {}ms", ttfe);
+
+    // Print statistical summary
+    println!("\n----------------------------------------");
+    println!("             STATISTICS                 ");
+    println!("----------------------------------------");
+    startup_stats.print_summary("Server startup");
+    refresh_stats.print_summary("Full refresh");
+    if time_to_first_env_stats.count() > 0 {
+        time_to_first_env_stats.print_summary("Time to first env");
     }
-    println!("Environments found:    {}", metrics.environments_count);
-    println!("Managers found:        {}", metrics.managers_count);
+    println!("Environments found:    {}", env_count);
+    println!("Managers found:        {}", manager_count);
     println!("========================================\n");
 
     // Output as JSON for CI parsing
+    // Includes both P50 values at top level (for backwards compatibility) and full stats
     let json_output = serde_json::to_string_pretty(&json!({
-        "server_startup_ms": metrics.server_startup_ms,
-        "full_refresh_ms": metrics.full_refresh_ms,
-        "workspace_refresh_ms": metrics.workspace_refresh_ms,
-        "time_to_first_env_ms": metrics.time_to_first_env_ms,
-        "environments_count": metrics.environments_count,
-        "managers_count": metrics.managers_count
+        "server_startup_ms": startup_stats.p50().unwrap_or(0),
+        "full_refresh_ms": refresh_stats.p50().unwrap_or(0),
+        "time_to_first_env_ms": time_to_first_env_stats.p50(),
+        "environments_count": env_count,
+        "managers_count": manager_count,
+        "stats": {
+            "server_startup": startup_stats.to_json(),
+            "full_refresh": refresh_stats.to_json(),
+            "time_to_first_env": time_to_first_env_stats.to_json()
+        }
     }))
     .unwrap();
 
