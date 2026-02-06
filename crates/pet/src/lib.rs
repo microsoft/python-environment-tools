@@ -197,16 +197,15 @@ fn find_envs(
         }
 
         let summary = stdio_reporter.get_summary();
-        
+
         // If verbose, print the paths of discovered environments first
         if options.verbose && !summary.environment_paths.is_empty() {
             println!("Environment Paths:");
             println!("------------------");
-            for (kind, envs) in summary
-                .environment_paths
-                .iter()
-            {
-                let kind_str = kind.map(|v| format!("{v:?}")).unwrap_or("Unknown".to_string());
+            for (kind, envs) in summary.environment_paths.iter() {
+                let kind_str = kind
+                    .map(|v| format!("{v:?}"))
+                    .unwrap_or("Unknown".to_string());
                 println!("\n{kind_str}:");
                 for env in envs {
                     if let Some(executable) = &env.executable {
@@ -216,7 +215,7 @@ fn find_envs(
             }
             println!()
         }
-        
+
         if !summary.managers.is_empty() {
             println!("Managers:");
             println!("---------");
