@@ -200,6 +200,33 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(result_str))
 }
 
+/// Resolves any symlink to its real file path without filtering.
+///
+/// Returns `None` if the path is not a symlink or cannot be resolved.
+/// If the real file equals the input, returns `None` (the path is not a symlink).
+///
+/// # Use Cases
+/// - Resolving Homebrew symlinks for tools like Poetry: `/opt/homebrew/bin/poetry` → Cellar path
+/// - Generic symlink resolution where no filename filtering is needed
+///
+/// # Related
+/// - `resolve_symlink()` - Filtered version for Python/Conda executables only
+pub fn resolve_any_symlink<T: AsRef<Path>>(path: &T) -> Option<PathBuf> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if metadata.is_file() || !metadata.file_type().is_symlink() {
+        return None;
+    }
+    if let Ok(readlink) = std::fs::canonicalize(path) {
+        if readlink == path.as_ref().to_path_buf() {
+            None
+        } else {
+            Some(readlink)
+        }
+    } else {
+        None
+    }
+}
+
 /// Resolves a symlink to its real file path.
 ///
 /// Returns `None` if the path is not a symlink or cannot be resolved.
@@ -217,6 +244,7 @@ fn normalize_case_windows(path: &Path) -> Option<PathBuf> {
 ///
 /// # Related
 /// - `norm_case()` - Normalizes path case without resolving symlinks
+/// - `resolve_any_symlink()` - Unfiltered version for any symlink
 pub fn resolve_symlink<T: AsRef<Path>>(exe: &T) -> Option<PathBuf> {
     let name = exe.as_ref().file_name()?.to_string_lossy();
     // In bin directory of homebrew, we have files like python-build, python-config, python3-config
