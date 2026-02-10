@@ -211,40 +211,49 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
 
                 let mut search_scope = None;
 
-                // If search kind is provided and no search_paths, then we will only search in the global locations.
-                if refresh_options.search_kind.is_some() || refresh_options.search_paths.is_some() {
-                    // Always clear this, as we will either serach in specified folder or a specific kind in global locations.
+                // If search_paths is provided, limit search to those paths.
+                // If only search_kind is provided (without search_paths), we still search
+                // workspace directories because many environment types (like Venv, VirtualEnv)
+                // don't have global locations - they only exist in workspace folders.
+                // The reporter will filter results to only report the requested kind.
+                if let Some(search_paths) = refresh_options.search_paths {
+                    // Clear workspace directories when explicit search paths are provided.
                     config.workspace_directories = None;
-                    if let Some(search_paths) = refresh_options.search_paths {
-                        // Expand any glob patterns in the search paths
-                        let expanded_paths = expand_glob_patterns(&search_paths);
-                        trace!(
-                            "Expanded {} search paths to {} paths",
-                            search_paths.len(),
-                            expanded_paths.len()
-                        );
-                        // These workspace folders are only for this refresh.
-                        config.workspace_directories = Some(
-                            expanded_paths
-                                .iter()
-                                .filter(|p| p.is_dir())
-                                .cloned()
-                                .collect(),
-                        );
-                        config.executables = Some(
-                            expanded_paths
-                                .iter()
-                                .filter(|p| p.is_file())
-                                .cloned()
-                                .collect(),
-                        );
-                        search_scope = Some(SearchScope::Workspace);
-                    } else if let Some(search_kind) = refresh_options.search_kind {
-                        config.executables = None;
-                        search_scope = Some(SearchScope::Global(search_kind));
-                    }
+                    // Expand any glob patterns in the search paths
+                    let expanded_paths = expand_glob_patterns(&search_paths);
+                    trace!(
+                        "Expanded {} search paths to {} paths",
+                        search_paths.len(),
+                        expanded_paths.len()
+                    );
+                    // These workspace folders are only for this refresh.
+                    config.workspace_directories = Some(
+                        expanded_paths
+                            .iter()
+                            .filter(|p| p.is_dir())
+                            .cloned()
+                            .collect(),
+                    );
+                    config.executables = Some(
+                        expanded_paths
+                            .iter()
+                            .filter(|p| p.is_file())
+                            .cloned()
+                            .collect(),
+                    );
+                    search_scope = Some(SearchScope::Workspace);
 
                     // Configure the locators with the modified config.
+                    for locator in context.locators.iter() {
+                        locator.configure(&config);
+                    }
+                } else if let Some(search_kind) = refresh_options.search_kind {
+                    // When only search_kind is provided, keep workspace directories so that
+                    // workspace-based environments (Venv, VirtualEnv, etc.) can be found.
+                    // The search_scope tells find_and_report_envs to filter locators by kind.
+                    search_scope = Some(SearchScope::Global(search_kind));
+
+                    // Re-configure the locators (config unchanged, but ensures consistency).
                     for locator in context.locators.iter() {
                         locator.configure(&config);
                     }
