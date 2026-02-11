@@ -725,10 +725,21 @@ mod tests {
 
         let environments = reporter.environments.lock().unwrap();
 
+        // Canonicalize the venv_dir for comparison (handles Windows 8.3 short paths)
+        let venv_dir_canonical = fs::canonicalize(&venv_dir).unwrap_or(venv_dir.clone());
+
         // The venv should be discovered even when searching by kind
+        // Use canonicalize to handle Windows short path names (e.g., RUNNER~1 vs runneradmin)
         let venv_found = environments.iter().any(|env| {
             env.kind == Some(PythonEnvironmentKind::Venv)
-                && env.prefix.as_ref().map(|p| p == &venv_dir).unwrap_or(false)
+                && env
+                    .prefix
+                    .as_ref()
+                    .map(|p| {
+                        let p_canonical = fs::canonicalize(p).unwrap_or(p.clone());
+                        p_canonical == venv_dir_canonical
+                    })
+                    .unwrap_or(false)
         });
 
         assert!(
