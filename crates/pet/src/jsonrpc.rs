@@ -472,7 +472,7 @@ pub fn handle_clear_cache(_context: Arc<Context>, id: u32, _params: Value) {
 /// This is extracted from handle_refresh to enable unit testing.
 ///
 /// Returns (modified_config, search_scope)
-pub fn build_refresh_config(
+pub(crate) fn build_refresh_config(
     refresh_options: &RefreshOptions,
     mut config: Configuration,
 ) -> (Configuration, Option<SearchScope>) {
@@ -560,24 +560,27 @@ mod tests {
     /// Test that when searchPaths is provided, workspace_directories ARE replaced.
     #[test]
     fn test_search_paths_replaces_workspace_directories() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let search_dir = temp_dir.path().join("search_path");
+        std::fs::create_dir(&search_dir).unwrap();
+
         let original_workspace = PathBuf::from("/original/workspace");
         let config = Configuration {
             workspace_directories: Some(vec![original_workspace]),
             ..Default::default()
         };
 
-        // Note: search_paths won't exist as directories in tests, so expanded result will be empty
         let refresh_options = RefreshOptions {
             search_kind: None,
-            search_paths: Some(vec![PathBuf::from("/search/path")]),
+            search_paths: Some(vec![search_dir.clone()]),
         };
 
         let (result_config, search_scope) = build_refresh_config(&refresh_options, config);
 
-        // workspace_directories should be replaced (empty since paths don't exist)
+        // workspace_directories should be replaced with the search_paths directory
         assert_eq!(
             result_config.workspace_directories,
-            Some(vec![]),
+            Some(vec![search_dir]),
             "workspace_directories should be replaced by search_paths"
         );
 
