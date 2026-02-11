@@ -204,66 +204,27 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                 // Ensure we can have only one refresh at a time.
                 let lock = REFRESH_LOCK.lock().expect("REFRESH_LOCK mutex poisoned");
 
-                let mut config = context.configuration.read().unwrap().clone();
+                let config = context.configuration.read().unwrap().clone();
                 let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter(
                     refresh_options.search_kind,
                 ))));
 
-                let mut search_scope = None;
-
-                // If search_paths is provided, limit search to those paths.
-                // If only search_kind is provided (without search_paths), we still search
-                // workspace directories because many environment types (like Venv, VirtualEnv)
-                // don't have global locations - they only exist in workspace folders.
-                // The reporter will filter results to only report the requested kind.
-                if let Some(search_paths) = refresh_options.search_paths {
-                    // Clear workspace directories when explicit search paths are provided.
-                    config.workspace_directories = None;
-                    // Expand any glob patterns in the search paths
-                    let expanded_paths = expand_glob_patterns(&search_paths);
+                let (config, search_scope) = build_refresh_config(&refresh_options, config);
+                if refresh_options.search_paths.is_some() {
                     trace!(
-                        "Expanded {} search paths to {} paths",
-                        search_paths.len(),
-                        expanded_paths.len()
+                        "Expanded search paths to {} workspace dirs, {} executables",
+                        config
+                            .workspace_directories
+                            .as_ref()
+                            .map(|v| v.len())
+                            .unwrap_or(0),
+                        config.executables.as_ref().map(|v| v.len()).unwrap_or(0)
                     );
-                    // These workspace folders are only for this refresh.
-                    config.workspace_directories = Some(
-                        expanded_paths
-                            .iter()
-                            .filter(|p| p.is_dir())
-                            .cloned()
-                            .collect(),
-                    );
-                    config.executables = Some(
-                        expanded_paths
-                            .iter()
-                            .filter(|p| p.is_file())
-                            .cloned()
-                            .collect(),
-                    );
-                    search_scope = Some(SearchScope::Workspace);
+                }
 
-                    // Configure the locators with the modified config.
-                    for locator in context.locators.iter() {
-                        locator.configure(&config);
-                    }
-                } else if let Some(search_kind) = refresh_options.search_kind {
-                    // When only search_kind is provided, keep workspace directories so that
-                    // workspace-based environments (Venv, VirtualEnv, etc.) can be found.
-                    // The search_scope tells find_and_report_envs to filter locators by kind.
-                    search_scope = Some(SearchScope::Global(search_kind));
-
-                    // Re-configure the locators (config unchanged, but ensures consistency).
-                    for locator in context.locators.iter() {
-                        locator.configure(&config);
-                    }
-                } else {
-                    // Re-configure the locators with an un-modified config.
-                    // Possible we congirued the locators with a modified config in the in the previous request.
-                    // & the config was scoped to a particular search folder, executables or kind.
-                    for locator in context.locators.iter() {
-                        locator.configure(&config);
-                    }
+                // Configure the locators with the (possibly modified) config.
+                for locator in context.locators.iter() {
+                    locator.configure(&config);
                 }
 
                 trace!("Start refreshing environments, config: {:?}", config);
@@ -505,4 +466,153 @@ pub fn handle_clear_cache(_context: Arc<Context>, id: u32, _params: Value) {
             send_reply(id, None::<()>);
         }
     });
+}
+
+/// Builds the configuration and search scope based on refresh options.
+/// This is extracted from handle_refresh to enable unit testing.
+///
+/// Returns (modified_config, search_scope)
+pub fn build_refresh_config(
+    refresh_options: &RefreshOptions,
+    mut config: Configuration,
+) -> (Configuration, Option<SearchScope>) {
+    let mut search_scope = None;
+
+    // If search_paths is provided, limit search to those paths.
+    // If only search_kind is provided (without search_paths), we still search
+    // workspace directories because many environment types (like Venv, VirtualEnv)
+    // don't have global locations - they only exist in workspace folders.
+    // The reporter will filter results to only report the requested kind.
+    if let Some(ref search_paths) = refresh_options.search_paths {
+        // Clear workspace directories when explicit search paths are provided.
+        config.workspace_directories = None;
+        // Expand any glob patterns in the search paths
+        let expanded_paths = expand_glob_patterns(search_paths);
+        // These workspace folders are only for this refresh.
+        config.workspace_directories = Some(
+            expanded_paths
+                .iter()
+                .filter(|p| p.is_dir())
+                .cloned()
+                .collect(),
+        );
+        config.executables = Some(
+            expanded_paths
+                .iter()
+                .filter(|p| p.is_file())
+                .cloned()
+                .collect(),
+        );
+        search_scope = Some(SearchScope::Workspace);
+    } else if let Some(search_kind) = refresh_options.search_kind {
+        // When only search_kind is provided, keep workspace directories so that
+        // workspace-based environments (Venv, VirtualEnv, etc.) can be found.
+        // The search_scope tells find_and_report_envs to filter locators by kind.
+        search_scope = Some(SearchScope::Global(search_kind));
+    }
+
+    (config, search_scope)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Test for https://github.com/microsoft/python-environment-tools/issues/151
+    /// Verifies that when searchKind is provided (without searchPaths),
+    /// workspace_directories are NOT cleared.
+    ///
+    /// The bug was that handle_refresh cleared workspace_directories when searchKind
+    /// was provided, preventing discovery of workspace-based environments like venvs.
+    #[test]
+    fn test_search_kind_preserves_workspace_directories() {
+        let workspace = PathBuf::from("/test/workspace");
+        let config = Configuration {
+            workspace_directories: Some(vec![workspace.clone()]),
+            ..Default::default()
+        };
+
+        let refresh_options = RefreshOptions {
+            search_kind: Some(PythonEnvironmentKind::Venv),
+            search_paths: None,
+        };
+
+        let (result_config, search_scope) = build_refresh_config(&refresh_options, config);
+
+        // CRITICAL: workspace_directories must be preserved when only search_kind is provided
+        assert_eq!(
+            result_config.workspace_directories,
+            Some(vec![workspace]),
+            "workspace_directories should NOT be cleared when only searchKind is provided"
+        );
+
+        // search_scope should be Global with the requested kind
+        assert!(
+            matches!(
+                search_scope,
+                Some(SearchScope::Global(PythonEnvironmentKind::Venv))
+            ),
+            "search_scope should be Global(Venv)"
+        );
+    }
+
+    /// Test that when searchPaths is provided, workspace_directories ARE replaced.
+    #[test]
+    fn test_search_paths_replaces_workspace_directories() {
+        let original_workspace = PathBuf::from("/original/workspace");
+        let config = Configuration {
+            workspace_directories: Some(vec![original_workspace]),
+            ..Default::default()
+        };
+
+        // Note: search_paths won't exist as directories in tests, so expanded result will be empty
+        let refresh_options = RefreshOptions {
+            search_kind: None,
+            search_paths: Some(vec![PathBuf::from("/search/path")]),
+        };
+
+        let (result_config, search_scope) = build_refresh_config(&refresh_options, config);
+
+        // workspace_directories should be replaced (empty since paths don't exist)
+        assert_eq!(
+            result_config.workspace_directories,
+            Some(vec![]),
+            "workspace_directories should be replaced by search_paths"
+        );
+
+        assert!(
+            matches!(search_scope, Some(SearchScope::Workspace)),
+            "search_scope should be Workspace"
+        );
+    }
+
+    /// Test that when neither searchKind nor searchPaths is provided,
+    /// configuration is unchanged.
+    #[test]
+    fn test_no_options_preserves_config() {
+        let workspace = PathBuf::from("/test/workspace");
+        let config = Configuration {
+            workspace_directories: Some(vec![workspace.clone()]),
+            ..Default::default()
+        };
+
+        let refresh_options = RefreshOptions {
+            search_kind: None,
+            search_paths: None,
+        };
+
+        let (result_config, search_scope) = build_refresh_config(&refresh_options, config);
+
+        assert_eq!(
+            result_config.workspace_directories,
+            Some(vec![workspace]),
+            "workspace_directories should be preserved when no options provided"
+        );
+
+        assert!(
+            search_scope.is_none(),
+            "search_scope should be None when no options provided"
+        );
+    }
 }
