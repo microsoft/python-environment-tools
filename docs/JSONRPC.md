@@ -97,14 +97,15 @@ _Response_:
 interface RefreshParams {
   /**
    * Limits the search to a specific kind of Python environment.
-   * Ignores workspace folders passed in configuration request.
+   * Workspace folders from the configuration request are still searched
+   * to discover workspace-based environments (e.g., venvs, virtualenvs).
    */
   searchKind?: PythonEnvironmentKind;
 } | {
   /**
    * Limits the search to a specific set of paths.
    * searchPaths can either by directories or Python prefixes/executables or combination of both.
-   * Ignores workspace folders passed in configuration request.
+   * Replaces workspace folders from the configuration request.
    *
    * Glob patterns are supported:
    * - `*` matches any sequence of characters in a path component
