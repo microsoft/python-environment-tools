@@ -13,8 +13,9 @@ use pet_core::{os_environment::EnvironmentApi, reporter::Reporter, Configuration
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
 use pet_python_utils::cache::set_cache_directory;
-use pet_reporter::{self, cache::CacheReporter, stdio};
+use pet_reporter::{self, cache::CacheReporter, collect, stdio};
 use resolve::resolve_environment;
+use serde::Serialize;
 use std::path::PathBuf;
 use std::{collections::BTreeMap, env, sync::Arc, time::SystemTime};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -73,6 +74,7 @@ pub struct FindOptions {
     pub workspace_only: bool,
     pub cache_directory: Option<PathBuf>,
     pub kind: Option<PythonEnvironmentKind>,
+    pub json: bool,
 }
 
 pub fn find_and_report_envs_stdio(options: FindOptions) {
@@ -103,17 +105,29 @@ pub fn find_and_report_envs_stdio(options: FindOptions) {
         locator.configure(&config);
     }
 
-    find_envs(
-        &options,
-        &locators,
-        config,
-        conda_locator.as_ref(),
-        poetry_locator.as_ref(),
-        &environment,
-        search_scope,
-    );
+    if options.json {
+        find_envs_json(
+            &options,
+            &locators,
+            config,
+            conda_locator.as_ref(),
+            poetry_locator.as_ref(),
+            &environment,
+            search_scope,
+        );
+    } else {
+        find_envs(
+            &options,
+            &locators,
+            config,
+            conda_locator.as_ref(),
+            poetry_locator.as_ref(),
+            &environment,
+            search_scope,
+        );
 
-    println!("Completed in {}ms", now.elapsed().unwrap().as_millis())
+        println!("Completed in {}ms", now.elapsed().unwrap().as_millis())
+    }
 }
 
 fn create_config(options: &FindOptions) -> Configuration {
@@ -257,7 +271,62 @@ fn find_envs(
     }
 }
 
-pub fn resolve_report_stdio(executable: PathBuf, verbose: bool, cache_directory: Option<PathBuf>) {
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonOutput {
+    managers: Vec<pet_core::manager::EnvManager>,
+    environments: Vec<pet_core::python_environment::PythonEnvironment>,
+}
+
+fn find_envs_json(
+    options: &FindOptions,
+    locators: &Arc<Vec<Arc<dyn Locator>>>,
+    config: Configuration,
+    conda_locator: &Conda,
+    poetry_locator: &Poetry,
+    environment: &dyn Environment,
+    search_scope: Option<SearchScope>,
+) {
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
+
+    find_and_report_envs(&reporter, config, locators, environment, search_scope);
+    if options.report_missing {
+        let _ = conda_locator.find_and_report_missing_envs(&reporter, None);
+        let _ = poetry_locator.find_and_report_missing_envs(&reporter, None);
+    }
+
+    let managers = collect_reporter
+        .managers
+        .lock()
+        .expect("managers mutex poisoned")
+        .clone();
+    let mut environments = collect_reporter
+        .environments
+        .lock()
+        .expect("environments mutex poisoned")
+        .clone();
+
+    if let Some(kind) = options.kind {
+        environments.retain(|e| e.kind == Some(kind));
+    }
+
+    let output = JsonOutput {
+        managers,
+        environments,
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).expect("failed to serialize environments as JSON")
+    );
+}
+
+pub fn resolve_report_stdio(
+    executable: PathBuf,
+    verbose: bool,
+    cache_directory: Option<PathBuf>,
+    json: bool,
+) {
     // Initialize tracing for performance profiling (includes log compatibility)
     initialize_tracing(verbose);
 
@@ -287,19 +356,29 @@ pub fn resolve_report_stdio(executable: PathBuf, verbose: bool, cache_directory:
     }
 
     if let Some(result) = resolve_environment(&executable, &locators, &environment) {
-        //
-        println!("Environment found for {executable:?}");
         let env = &result.resolved.unwrap_or(result.discovered);
-        if let Some(manager) = &env.manager {
-            reporter.report_manager(manager);
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(env).expect("failed to serialize environment as JSON")
+            );
+        } else {
+            println!("Environment found for {executable:?}");
+            if let Some(manager) = &env.manager {
+                reporter.report_manager(manager);
+            }
+            reporter.report_environment(env);
         }
-        reporter.report_environment(env);
+    } else if json {
+        println!("null");
     } else {
         println!("No environment found for {executable:?}");
     }
 
-    println!(
-        "Resolve completed in {}ms",
-        now.elapsed().unwrap().as_millis()
-    )
+    if !json {
+        println!(
+            "Resolve completed in {}ms",
+            now.elapsed().unwrap().as_millis()
+        )
+    }
 }

@@ -53,6 +53,10 @@ enum Commands {
         /// Will not search in the workspace directories.
         #[arg(short, long, conflicts_with = "workspace")]
         kind: Option<PythonEnvironmentKind>,
+
+        /// Output results as JSON.
+        #[arg(short, long)]
+        json: bool,
     },
     /// Resolves & reports the details of the the environment to the standard output.
     Resolve {
@@ -67,6 +71,10 @@ enum Commands {
         /// Whether to display verbose output (defaults to warnings).
         #[arg(short, long)]
         verbose: bool,
+
+        /// Output results as JSON.
+        #[arg(short, long)]
+        json: bool,
     },
     /// Starts the JSON RPC Server.
     Server,
@@ -83,6 +91,7 @@ fn main() {
         workspace: false,
         cache_directory: None,
         kind: None,
+        json: false,
     }) {
         Commands::Find {
             list,
@@ -92,6 +101,7 @@ fn main() {
             workspace,
             cache_directory,
             kind,
+            json,
         } => {
             let mut workspace_only = workspace;
             if search_paths.clone().is_some()
@@ -113,13 +123,15 @@ fn main() {
                 workspace_only,
                 cache_directory,
                 kind,
+                json,
             });
         }
         Commands::Resolve {
             executable,
             verbose,
             cache_directory,
-        } => resolve_report_stdio(executable, verbose, cache_directory),
+            json,
+        } => resolve_report_stdio(executable, verbose, cache_directory, json),
         Commands::Server => start_jsonrpc_server(),
     }
 }
