@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use glob::{MatchOptions, Pattern};
 use log::trace;
 use pet_core::{
     env::PythonEnv,
@@ -145,66 +146,86 @@ impl Locator for Uv {
             .lock()
             .expect("workspace_directories mutex poisoned")
             .clone();
-        for workspace in workspaces {
-            // TODO: maybe check for workspace in parent folders?
-            for env in list_envs_in_directory(&workspace) {
+        for workspace in &workspaces {
+            for env in list_envs_in_directory(workspace) {
                 reporter.report_environment(&env);
             }
         }
     }
 }
 
-fn find_workspace(path: &Path) -> Option<PythonEnvironment> {
-    for candidate in path.ancestors() {
+/// Walks up from `project_path` looking for a parent workspace that this project belongs to.
+/// Returns the workspace environment if found and the project is a valid member.
+fn find_workspace_for_project(project_path: &Path) -> Option<PythonEnvironment> {
+    let parent = project_path.parent()?;
+    for candidate in parent.ancestors() {
         let pyproject = parse_pyproject_toml_in(candidate);
-        if pyproject
+        let workspace = pyproject
             .as_ref()
             .and_then(|pp| pp.tool.as_ref())
             .and_then(|tool| tool.uv.as_ref())
-            .and_then(|uv| uv.workspace.as_ref())
-            .is_none()
-        {
+            .and_then(|uv| uv.workspace.as_ref());
+        let Some(workspace) = workspace else {
             continue;
-        }
-        // TODO: check for workspace members/excludes
-        trace!("Found workspace at {:?}", candidate);
-        let prefix = candidate.join(".venv");
-        let pyvenv_cfg = prefix.join("pyvenv.cfg");
-        if !pyvenv_cfg.exists() {
+        };
+        if !is_workspace_member(candidate, project_path, workspace) {
             trace!(
-                "Workspace at {} does not have a virtual environment",
+                "Path {} is not a member of workspace at {}",
+                project_path.display(),
                 candidate.display()
             );
+            // The first workspace found walking upward is the authoritative one;
+            // if the project isn't a member, it's not part of any workspace.
             return None;
         }
-        let unix_executable = prefix.join("bin/python");
-        let windows_executable = prefix.join("Scripts/python.exe");
-        let executable = if unix_executable.exists() {
-            Some(unix_executable)
-        } else if windows_executable.exists() {
-            Some(windows_executable)
-        } else {
-            None
-        };
-        if let Some(uv_venv) = UvVenv::maybe_from_file(&pyvenv_cfg) {
-            return Some(
-                PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::UvWorkspace))
-                    .name(Some(uv_venv.prompt))
-                    .executable(executable)
-                    .version(Some(uv_venv.python_version))
-                    .symlinks(Some(find_executables(&prefix)))
-                    .prefix(Some(prefix))
-                    .build(),
-            );
-        } else {
-            trace!(
-                "Workspace at {} does not have a uv-managed virtual environment",
-                candidate.display()
-            );
-        }
-        return None;
+        trace!(
+            "Found workspace at {:?} for project {:?}",
+            candidate,
+            project_path
+        );
+        return build_workspace_env(candidate);
     }
     None
+}
+
+/// Builds a `PythonEnvironment` for a uv workspace root if it has a `.venv` with a valid
+/// uv-managed pyvenv.cfg.
+fn build_workspace_env(workspace_root: &Path) -> Option<PythonEnvironment> {
+    let prefix = workspace_root.join(".venv");
+    let pyvenv_cfg = prefix.join("pyvenv.cfg");
+    if !pyvenv_cfg.exists() {
+        trace!(
+            "Workspace at {} does not have a virtual environment",
+            workspace_root.display()
+        );
+        return None;
+    }
+    let unix_executable = prefix.join("bin/python");
+    let windows_executable = prefix.join("Scripts/python.exe");
+    let executable = if unix_executable.exists() {
+        Some(unix_executable)
+    } else if windows_executable.exists() {
+        Some(windows_executable)
+    } else {
+        None
+    };
+    if let Some(uv_venv) = UvVenv::maybe_from_file(&pyvenv_cfg) {
+        Some(
+            PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::UvWorkspace))
+                .name(Some(uv_venv.prompt))
+                .executable(executable)
+                .version(Some(uv_venv.python_version))
+                .symlinks(Some(find_executables(&prefix)))
+                .prefix(Some(prefix))
+                .build(),
+        )
+    } else {
+        trace!(
+            "Workspace at {} does not have a uv-managed virtual environment",
+            workspace_root.display()
+        );
+        None
+    }
 }
 
 fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
@@ -263,7 +284,7 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
         } else {
             trace!("No uv-managed venv found in {}", path.display());
         }
-        if let Some(workspace) = path.parent().and_then(find_workspace) {
+        if let Some(workspace) = find_workspace_for_project(path) {
             envs.push(workspace);
         }
     }
@@ -274,6 +295,75 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
 fn parse_pyproject_toml_in(path: &Path) -> Option<PyProjectToml> {
     let contents = fs::read_to_string(path.join("pyproject.toml")).ok()?;
     toml::from_str(&contents).ok()
+}
+
+/// Checks whether `project_path` is a workspace member of the workspace rooted at
+/// `workspace_root` according to the given `members` and `exclude` globs.
+///
+/// If `members` is empty (or absent), uv treats all subdirectories as implicit members.
+/// A project that matches an `exclude` pattern is never a member.
+///
+/// Patterns are evaluated relative to the workspace root. For example,
+/// `members = ["packages/*"]` matches `<workspace_root>/packages/foo`.
+fn is_workspace_member(
+    workspace_root: &Path,
+    project_path: &Path,
+    workspace: &UvWorkspace,
+) -> bool {
+    // The project must be underneath the workspace root
+    let relative = match project_path.strip_prefix(workspace_root) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+
+    // Normalise to forward slashes for glob matching
+    let relative_str = relative.to_string_lossy().replace('\\', "/");
+
+    // Use require_literal_separator so `*` matches a single path component only
+    let match_options = MatchOptions {
+        require_literal_separator: true,
+        ..MatchOptions::new()
+    };
+
+    // Check excludes first — an excluded path is never a member
+    for exclude in &workspace.exclude {
+        match Pattern::new(exclude) {
+            Ok(pattern) => {
+                if pattern.matches_with(&relative_str, match_options) {
+                    trace!(
+                        "Path {} excluded from workspace by pattern '{}'",
+                        project_path.display(),
+                        exclude
+                    );
+                    return false;
+                }
+            }
+            Err(e) => {
+                trace!("Invalid exclude glob pattern '{}': {}", exclude, e);
+            }
+        }
+    }
+
+    // If no members are specified, all subdirectories are implicit members
+    if workspace.members.is_empty() {
+        return true;
+    }
+
+    // Check if the path matches any member pattern
+    for member in &workspace.members {
+        match Pattern::new(member) {
+            Ok(pattern) => {
+                if pattern.matches_with(&relative_str, match_options) {
+                    return true;
+                }
+            }
+            Err(e) => {
+                trace!("Invalid member glob pattern '{}': {}", member, e);
+            }
+        }
+    }
+
+    false
 }
 
 #[derive(Deserialize, Debug)]
@@ -294,7 +384,15 @@ struct Tool {
 
 #[derive(Deserialize, Debug)]
 struct ToolUv {
-    workspace: Option<serde::de::IgnoredAny>,
+    workspace: Option<UvWorkspace>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct UvWorkspace {
+    #[serde(default)]
+    members: Vec<String>,
+    #[serde(default)]
+    exclude: Vec<String>,
 }
 
 #[cfg(test)]
@@ -568,5 +666,157 @@ name = "my-project""#;
 
         let envs = list_envs_in_directory(project_path);
         assert_eq!(envs.len(), 0);
+    }
+
+    #[test]
+    fn test_is_workspace_member_matches_glob() {
+        let root = Path::new("/workspace");
+        let project = Path::new("/workspace/packages/foo");
+        let ws = UvWorkspace {
+            members: vec!["packages/*".to_string()],
+            exclude: vec![],
+        };
+        assert!(is_workspace_member(root, project, &ws));
+    }
+
+    #[test]
+    fn test_is_workspace_member_no_match() {
+        let root = Path::new("/workspace");
+        let project = Path::new("/workspace/other/bar");
+        let ws = UvWorkspace {
+            members: vec!["packages/*".to_string()],
+            exclude: vec![],
+        };
+        assert!(!is_workspace_member(root, project, &ws));
+    }
+
+    #[test]
+    fn test_is_workspace_member_excluded() {
+        let root = Path::new("/workspace");
+        let project = Path::new("/workspace/packages/excluded");
+        let ws = UvWorkspace {
+            members: vec!["packages/*".to_string()],
+            exclude: vec!["packages/excluded".to_string()],
+        };
+        assert!(!is_workspace_member(root, project, &ws));
+    }
+
+    #[test]
+    fn test_is_workspace_member_empty_members_implies_all() {
+        let root = Path::new("/workspace");
+        let project = Path::new("/workspace/anything/here");
+        let ws = UvWorkspace {
+            members: vec![],
+            exclude: vec![],
+        };
+        assert!(is_workspace_member(root, project, &ws));
+    }
+
+    #[test]
+    fn test_is_workspace_member_outside_workspace() {
+        let root = Path::new("/workspace");
+        let project = Path::new("/other/project");
+        let ws = UvWorkspace {
+            members: vec!["packages/*".to_string()],
+            exclude: vec![],
+        };
+        assert!(!is_workspace_member(root, project, &ws));
+    }
+
+    #[test]
+    fn test_is_workspace_member_exclude_takes_precedence() {
+        let root = Path::new("/workspace");
+        let project = Path::new("/workspace/packages/foo");
+        let ws = UvWorkspace {
+            members: vec!["packages/*".to_string()],
+            exclude: vec!["packages/foo".to_string()],
+        };
+        assert!(!is_workspace_member(root, project, &ws));
+    }
+
+    #[test]
+    fn test_find_workspace_for_project_discovers_parent() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path();
+
+        // Create workspace pyproject.toml
+        let pyproject_contents = r#"[project]
+name = "my-workspace"
+
+[tool.uv.workspace]
+members = ["packages/*"]"#;
+        std::fs::write(workspace_root.join("pyproject.toml"), pyproject_contents).unwrap();
+
+        // Create workspace .venv with uv pyvenv.cfg
+        let venv_path = workspace_root.join(".venv");
+        std::fs::create_dir_all(&venv_path).unwrap();
+        let pyvenv_contents = r#"uv = 0.5.0
+version_info = 3.12.0
+prompt = my-workspace"#;
+        std::fs::write(venv_path.join("pyvenv.cfg"), pyvenv_contents).unwrap();
+
+        // Create a member project directory
+        let member_path = workspace_root.join("packages").join("foo");
+        std::fs::create_dir_all(&member_path).unwrap();
+
+        // find_workspace_for_project should find the workspace
+        let env = find_workspace_for_project(&member_path);
+        assert!(env.is_some());
+        let env = env.unwrap();
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::UvWorkspace));
+        assert_eq!(env.name, Some("my-workspace".to_string()));
+    }
+
+    #[test]
+    fn test_find_workspace_for_project_excluded_member() {
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path();
+
+        // Create workspace pyproject.toml that excludes our project
+        let pyproject_contents = r#"[project]
+name = "my-workspace"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+exclude = ["packages/excluded"]"#;
+        std::fs::write(workspace_root.join("pyproject.toml"), pyproject_contents).unwrap();
+
+        // Create workspace .venv
+        let venv_path = workspace_root.join(".venv");
+        std::fs::create_dir_all(&venv_path).unwrap();
+        let pyvenv_contents = r#"uv = 0.5.0
+version_info = 3.12.0
+prompt = my-workspace"#;
+        std::fs::write(venv_path.join("pyvenv.cfg"), pyvenv_contents).unwrap();
+
+        // Create the excluded project
+        let excluded_path = workspace_root.join("packages").join("excluded");
+        std::fs::create_dir_all(&excluded_path).unwrap();
+
+        // Should NOT find a workspace for the excluded project
+        let env = find_workspace_for_project(&excluded_path);
+        assert!(env.is_none());
+    }
+
+    #[test]
+    fn test_parse_workspace_members_and_excludes() {
+        let temp_dir = TempDir::new().unwrap();
+        let pyproject_path = temp_dir.path().join("pyproject.toml");
+
+        let contents = r#"[project]
+name = "my-workspace"
+
+[tool.uv.workspace]
+members = ["packages/*", "libs/*"]
+exclude = ["packages/legacy"]"#;
+
+        std::fs::write(&pyproject_path, contents).unwrap();
+
+        let pyproject = parse_pyproject_toml_in(temp_dir.path());
+        assert!(pyproject.is_some());
+        let pyproject = pyproject.unwrap();
+        let workspace = pyproject.tool.unwrap().uv.unwrap().workspace.unwrap();
+        assert_eq!(workspace.members, vec!["packages/*", "libs/*"]);
+        assert_eq!(workspace.exclude, vec!["packages/legacy"]);
     }
 }
