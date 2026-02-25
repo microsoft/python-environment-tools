@@ -95,3 +95,107 @@ fn are_versions_different(actual: &str, expected: &str) -> Option<bool> {
     let expected = expected.get(1)?.as_str().to_string();
     Some(actual != expected)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::{
+        manager::EnvManager,
+        python_environment::{PythonEnvironmentBuilder, PythonEnvironmentKind},
+        telemetry::TelemetryEvent,
+    };
+    use std::path::PathBuf;
+
+    struct NoopReporter;
+    impl Reporter for NoopReporter {
+        fn report_manager(&self, _: &EnvManager) {}
+        fn report_environment(&self, _: &PythonEnvironment) {}
+        fn report_telemetry(&self, _: &TelemetryEvent) {}
+    }
+
+    fn make_env(
+        executable: PathBuf,
+        prefix: PathBuf,
+        version: &str,
+        symlinks: Vec<PathBuf>,
+    ) -> PythonEnvironment {
+        PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+            .executable(Some(executable))
+            .prefix(Some(prefix))
+            .version(Some(version.to_string()))
+            .symlinks(Some(symlinks))
+            .build()
+    }
+
+    #[test]
+    fn same_prefix_is_not_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe = prefix.join("bin").join("python");
+
+        let env = make_env(exe.clone(), prefix.clone(), "3.12.7", vec![exe.clone()]);
+        let resolved = make_env(exe.clone(), prefix, "3.12.7", vec![exe]);
+
+        // Should not warn — prefixes are identical
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        assert!(result.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_prefix_is_not_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_prefix = dir.path().join("versioned").join("myvenv-1.0.51");
+        std::fs::create_dir_all(&real_prefix).unwrap();
+        let symlink_prefix = dir.path().join("myvenv");
+        std::os::unix::fs::symlink(&real_prefix, &symlink_prefix).unwrap();
+
+        let exe = symlink_prefix.join("bin").join("python");
+
+        // Discovery sees the symlink path as prefix
+        let env = make_env(exe.clone(), symlink_prefix, "3.12.7", vec![exe.clone()]);
+        // Resolution (spawning Python) returns the canonical path
+        let resolved = make_env(exe.clone(), real_prefix, "3.12.7", vec![exe]);
+
+        // Should NOT warn — both paths resolve to the same directory
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn different_prefix_is_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix_a = dir.path().join("env_a");
+        let prefix_b = dir.path().join("env_b");
+        std::fs::create_dir_all(&prefix_a).unwrap();
+        std::fs::create_dir_all(&prefix_b).unwrap();
+
+        let exe = prefix_a.join("bin").join("python");
+
+        let env = make_env(exe.clone(), prefix_a, "3.12.7", vec![exe.clone()]);
+        let resolved = make_env(exe.clone(), prefix_b, "3.12.7", vec![exe]);
+
+        // Should warn — prefixes are genuinely different
+        // The function still returns Some(()), but the warn! macro fires internally.
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn none_prefix_is_not_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe = prefix.join("bin").join("python");
+
+        // env has no prefix
+        let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+            .executable(Some(exe.clone()))
+            .version(Some("3.12.7".to_string()))
+            .symlinks(Some(vec![exe.clone()]))
+            .build();
+        let resolved = make_env(exe.clone(), prefix, "3.12.7", vec![exe]);
+
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        assert!(result.is_some());
+    }
+}

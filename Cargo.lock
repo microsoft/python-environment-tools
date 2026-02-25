@@ -730,6 +730,7 @@ dependencies = [
  "pet-fs",
  "pet-python-utils",
  "regex",
+ "tempfile",
 ]
 
 [[package]]
