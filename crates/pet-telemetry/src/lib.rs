@@ -39,10 +39,21 @@ pub fn report_inaccuracies_identified_after_resolving(
         executable_not_in_symlinks = false;
     }
 
-    let mut invalid_prefix = env.prefix.clone().unwrap_or_default() != resolved.prefix.clone()?;
-    if env.prefix.clone().is_none() {
-        invalid_prefix = false;
-    }
+    let invalid_prefix = if let Some(ref env_prefix) = env.prefix {
+        let resolved_prefix = resolved.prefix.clone()?;
+        // Canonicalize both paths to handle symlinks — a venv prefix like
+        // /usr/local/venvs/myvenv may be a symlink to /usr/local/venvs/versioned/myvenv-1.0.51,
+        // and sys.prefix returns the resolved target. Without this, the comparison
+        // produces a false positive "Prefix is incorrect" warning. (See #358)
+        // Wrap in norm_case to handle Windows UNC prefix (`\\?\`) from canonicalize.
+        let env_canonical =
+            norm_case(std::fs::canonicalize(env_prefix).unwrap_or(env_prefix.clone()));
+        let resolved_canonical =
+            norm_case(std::fs::canonicalize(&resolved_prefix).unwrap_or(resolved_prefix));
+        env_canonical != resolved_canonical
+    } else {
+        false
+    };
 
     let mut invalid_arch = env.arch.clone() != resolved.arch.clone();
     if env.arch.clone().is_none() {
