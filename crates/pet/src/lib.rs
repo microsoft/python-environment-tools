@@ -10,6 +10,7 @@ use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Locator;
 use pet_core::{os_environment::EnvironmentApi, reporter::Reporter, Configuration};
+use pet_fs::glob::expand_glob_patterns;
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
 use pet_python_utils::cache::set_cache_directory;
@@ -138,8 +139,8 @@ fn create_config(options: &FindOptions) -> Configuration {
     let mut config = Configuration::default();
 
     let mut search_paths = vec![];
-    if let Some(dirs) = options.search_paths.clone() {
-        search_paths.extend(dirs);
+    if let Some(dirs) = options.search_paths.as_ref() {
+        search_paths.extend(expand_glob_patterns(dirs));
     }
     // If workspace folders have been provided do not add cwd.
     if search_paths.is_empty() {
@@ -168,10 +169,12 @@ fn create_config(options: &FindOptions) -> Configuration {
     config.conda_executable = options.conda_executable.clone();
     config.pipenv_executable = options.pipenv_executable.clone();
     config.poetry_executable = options.poetry_executable.clone();
-    config.environment_directories = options
-        .environment_directories
-        .clone()
-        .map(|dirs| dirs.into_iter().filter(|p| p.is_dir()).collect());
+    config.environment_directories = options.environment_directories.as_ref().map(|dirs| {
+        expand_glob_patterns(dirs)
+            .into_iter()
+            .filter(|p| p.is_dir())
+            .collect()
+    });
 
     config
 }
