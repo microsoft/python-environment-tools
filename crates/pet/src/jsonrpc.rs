@@ -115,35 +115,23 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
         Ok(configure_options) => {
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
-                info!("Received configure request");
-                let now = SystemTime::now();
-
-                // Expand glob patterns before acquiring the write lock so we
-                // don't block readers/writers while traversing the filesystem.
-                let workspace_directories = configure_options.workspace_directories.map(|dirs| {
-                    trace!("Expanding workspace directory patterns: {:?}", dirs);
+                let mut cfg = context.configuration.write().unwrap();
+                // Expand glob patterns in workspace_directories
+                cfg.workspace_directories = configure_options.workspace_directories.map(|dirs| {
                     expand_glob_patterns(&dirs)
                         .into_iter()
                         .filter(|p| p.is_dir())
                         .collect()
                 });
-                let environment_directories =
+                cfg.conda_executable = configure_options.conda_executable;
+                // Expand glob patterns in environment_directories
+                cfg.environment_directories =
                     configure_options.environment_directories.map(|dirs| {
-                        trace!("Expanding environment directory patterns: {:?}", dirs);
                         expand_glob_patterns(&dirs)
                             .into_iter()
                             .filter(|p| p.is_dir())
                             .collect()
                     });
-                trace!(
-                    "Glob expansion completed in {:?}",
-                    now.elapsed().unwrap_or_default()
-                );
-
-                let mut cfg = context.configuration.write().unwrap();
-                cfg.workspace_directories = workspace_directories;
-                cfg.conda_executable = configure_options.conda_executable;
-                cfg.environment_directories = environment_directories;
                 cfg.pipenv_executable = configure_options.pipenv_executable;
                 cfg.poetry_executable = configure_options.poetry_executable;
                 // We will not support changing the cache directories once set.
@@ -158,10 +146,6 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                 for locator in context.locators.iter() {
                     locator.configure(&config);
                 }
-                info!(
-                    "Configure completed in {:?}",
-                    now.elapsed().unwrap_or_default()
-                );
                 send_reply(id, None::<()>);
             });
         }
