@@ -75,6 +75,10 @@ pub struct FindOptions {
     pub cache_directory: Option<PathBuf>,
     pub kind: Option<PythonEnvironmentKind>,
     pub json: bool,
+    pub conda_executable: Option<PathBuf>,
+    pub pipenv_executable: Option<PathBuf>,
+    pub poetry_executable: Option<PathBuf>,
+    pub environment_directories: Option<Vec<PathBuf>>,
 }
 
 pub fn find_and_report_envs_stdio(options: FindOptions) {
@@ -161,6 +165,14 @@ fn create_config(options: &FindOptions) -> Configuration {
             .collect(),
     );
 
+    config.conda_executable = options.conda_executable.clone();
+    config.pipenv_executable = options.pipenv_executable.clone();
+    config.poetry_executable = options.poetry_executable.clone();
+    config.environment_directories = options
+        .environment_directories
+        .clone()
+        .map(|dirs| dirs.into_iter().filter(|p| p.is_dir()).collect());
+
     config
 }
 
@@ -185,8 +197,10 @@ fn find_envs(
         // By now all conda envs have been found
         // Spawn conda
         // & see if we can find more environments by spawning conda.
-        let _ = conda_locator.find_and_report_missing_envs(&reporter, None);
-        let _ = poetry_locator.find_and_report_missing_envs(&reporter, None);
+        let _ =
+            conda_locator.find_and_report_missing_envs(&reporter, options.conda_executable.clone());
+        let _ = poetry_locator
+            .find_and_report_missing_envs(&reporter, options.poetry_executable.clone());
     }
 
     if options.print_summary {
@@ -292,8 +306,10 @@ fn find_envs_json(
 
     find_and_report_envs(&reporter, config, locators, environment, search_scope);
     if options.report_missing {
-        let _ = conda_locator.find_and_report_missing_envs(&reporter, None);
-        let _ = poetry_locator.find_and_report_missing_envs(&reporter, None);
+        let _ =
+            conda_locator.find_and_report_missing_envs(&reporter, options.conda_executable.clone());
+        let _ = poetry_locator
+            .find_and_report_missing_envs(&reporter, options.poetry_executable.clone());
     }
 
     let managers = collect_reporter

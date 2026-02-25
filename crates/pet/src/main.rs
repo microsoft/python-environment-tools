@@ -33,7 +33,7 @@ enum Commands {
         list: bool,
 
         /// Directory to cache the environment information after spawning Python.
-        #[arg(short, long)]
+        #[arg(short, long, env = "PET_CACHE_DIRECTORY")]
         cache_directory: Option<PathBuf>,
 
         /// Display verbose output (defaults to warnings).
@@ -57,6 +57,23 @@ enum Commands {
         /// Output results as JSON.
         #[arg(short, long)]
         json: bool,
+
+        /// Path to the conda or mamba executable.
+        #[arg(long, env = "PET_CONDA_EXECUTABLE")]
+        conda_executable: Option<PathBuf>,
+
+        /// Path to the pipenv executable.
+        #[arg(long, env = "PET_PIPENV_EXECUTABLE")]
+        pipenv_executable: Option<PathBuf>,
+
+        /// Path to the poetry executable.
+        #[arg(long, env = "PET_POETRY_EXECUTABLE")]
+        poetry_executable: Option<PathBuf>,
+
+        /// Additional directories where virtual environments can be found.
+        /// Use comma-separated values when setting via the environment variable.
+        #[arg(long, env = "PET_ENVIRONMENT_DIRECTORIES", value_delimiter = ',')]
+        environment_directories: Option<Vec<PathBuf>>,
     },
     /// Resolves & reports the details of the the environment to the standard output.
     Resolve {
@@ -65,7 +82,7 @@ enum Commands {
         executable: PathBuf,
 
         /// Directory to cache the environment information after spawning Python.
-        #[arg(short, long)]
+        #[arg(short, long, env = "PET_CACHE_DIRECTORY")]
         cache_directory: Option<PathBuf>,
 
         /// Whether to display verbose output (defaults to warnings).
@@ -92,6 +109,10 @@ fn main() {
         cache_directory: None,
         kind: None,
         json: false,
+        conda_executable: None,
+        pipenv_executable: None,
+        poetry_executable: None,
+        environment_directories: None,
     }) {
         Commands::Find {
             list,
@@ -102,6 +123,10 @@ fn main() {
             cache_directory,
             kind,
             json,
+            conda_executable,
+            pipenv_executable,
+            poetry_executable,
+            environment_directories,
         } => {
             let mut workspace_only = workspace;
             if search_paths.clone().is_some()
@@ -124,6 +149,10 @@ fn main() {
                 cache_directory,
                 kind,
                 json,
+                conda_executable,
+                pipenv_executable,
+                poetry_executable,
+                environment_directories,
             });
         }
         Commands::Resolve {
