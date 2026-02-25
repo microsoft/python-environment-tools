@@ -21,7 +21,7 @@ pub fn report_inaccuracies_identified_after_resolving(
     _reporter: &dyn Reporter,
     env: &PythonEnvironment,
     resolved: &PythonEnvironment,
-) -> Option<()> {
+) -> Option<InaccuratePythonEnvironmentInfo> {
     let known_symlinks = env.symlinks.clone().unwrap_or_default();
     let resolved_executable = &resolved.executable.clone()?;
     let norm_cased_executable = norm_case(resolved_executable);
@@ -84,8 +84,9 @@ pub fn report_inaccuracies_identified_after_resolving(
             env, resolved, event
         );
         // reporter.report_telemetry(TelemetryEvent::InaccuratePythonEnvironmentInfo(event));
+        return Some(event);
     }
-    Option::Some(())
+    None
 }
 
 fn are_versions_different(actual: &str, expected: &str) -> Option<bool> {
@@ -136,9 +137,8 @@ mod tests {
         let env = make_env(exe.clone(), prefix.clone(), "3.12.7", vec![exe.clone()]);
         let resolved = make_env(exe.clone(), prefix, "3.12.7", vec![exe]);
 
-        // Should not warn — prefixes are identical
         let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
-        assert!(result.is_some());
+        assert!(result.is_none(), "identical prefixes should not be flagged");
     }
 
     #[cfg(unix)]
@@ -157,9 +157,11 @@ mod tests {
         // Resolution (spawning Python) returns the canonical path
         let resolved = make_env(exe.clone(), real_prefix, "3.12.7", vec![exe]);
 
-        // Should NOT warn — both paths resolve to the same directory
         let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
-        assert!(result.is_some());
+        assert!(
+            result.is_none(),
+            "symlinked prefix to the same directory should not be flagged"
+        );
     }
 
     #[test]
@@ -175,10 +177,9 @@ mod tests {
         let env = make_env(exe.clone(), prefix_a, "3.12.7", vec![exe.clone()]);
         let resolved = make_env(exe.clone(), prefix_b, "3.12.7", vec![exe]);
 
-        // Should warn — prefixes are genuinely different
-        // The function still returns Some(()), but the warn! macro fires internally.
         let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
-        assert!(result.is_some());
+        let event = result.expect("genuinely different prefixes should be flagged");
+        assert_eq!(event.invalid_prefix, Some(true));
     }
 
     #[test]
@@ -196,6 +197,9 @@ mod tests {
         let resolved = make_env(exe.clone(), prefix, "3.12.7", vec![exe]);
 
         let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
-        assert!(result.is_some());
+        assert!(
+            result.is_none(),
+            "None prefix should not cause any inaccuracy flag"
+        );
     }
 }
