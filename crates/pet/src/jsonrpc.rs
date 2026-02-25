@@ -46,7 +46,7 @@ use std::{
     path::PathBuf,
     sync::{Arc, RwLock},
     thread,
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 use tracing::info_span;
 
@@ -120,26 +120,38 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
             info!("Received configure request");
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
-                let now = SystemTime::now();
+                let now = Instant::now();
 
                 // Expand glob patterns before acquiring the write lock so we
                 // don't block readers/writers while traversing the filesystem.
                 let workspace_directories = configure_options.workspace_directories.map(|dirs| {
-                    trace!("Expanding workspace directory patterns: {:?}", dirs);
-                    expand_glob_patterns(&dirs)
+                    let start = Instant::now();
+                    let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
                         .into_iter()
                         .filter(|p| p.is_dir())
-                        .collect()
+                        .collect();
+                    trace!(
+                        "Expanded workspace directory patterns ({:?}) in {:?}",
+                        dirs,
+                        start.elapsed()
+                    );
+                    result
                 });
                 let environment_directories =
                     configure_options.environment_directories.map(|dirs| {
-                        trace!("Expanding environment directory patterns: {:?}", dirs);
-                        expand_glob_patterns(&dirs)
+                        let start = Instant::now();
+                        let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
                             .into_iter()
                             .filter(|p| p.is_dir())
-                            .collect()
+                            .collect();
+                        trace!(
+                            "Expanded environment directory patterns ({:?}) in {:?}",
+                            dirs,
+                            start.elapsed()
+                        );
+                        result
                     });
-                let glob_elapsed = now.elapsed().unwrap_or_default();
+                let glob_elapsed = now.elapsed();
                 trace!("Glob expansion completed in {:?}", glob_elapsed);
                 if glob_elapsed >= GLOB_EXPANSION_WARN_THRESHOLD {
                     warn!(
@@ -166,10 +178,7 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                 for locator in context.locators.iter() {
                     locator.configure(&config);
                 }
-                info!(
-                    "Configure completed in {:?}",
-                    now.elapsed().unwrap_or_default()
-                );
+                info!("Configure completed in {:?}", now.elapsed());
                 send_reply(id, None::<()>);
             });
         }
@@ -414,7 +423,7 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
     thread::spawn(
         move || match serde_json::from_value::<FindOptions>(params.clone()) {
             Ok(find_options) => {
-                let now = SystemTime::now();
+                let now = Instant::now();
                 trace!("Finding environments in {:?}", find_options.search_path);
                 let global_env_search_paths: Vec<PathBuf> =
                     get_search_paths_from_env_variables(context.os_environment.as_ref());
@@ -452,7 +461,7 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                     .clone();
                 trace!(
                     "Find completed in {:?}, found {} environments in {:?}",
-                    now.elapsed().unwrap_or_default(),
+                    now.elapsed(),
                     envs.len(),
                     find_options.search_path
                 );
