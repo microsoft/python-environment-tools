@@ -7,7 +7,7 @@ use crate::find::identify_python_executables_using_locators;
 use crate::find::SearchScope;
 use crate::locators::create_locators;
 use lazy_static::lazy_static;
-use log::{error, info, trace};
+use log::{error, info, trace, warn};
 use pet::initialize_tracing;
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
@@ -110,28 +110,48 @@ pub struct ConfigureOptions {
     pub cache_directory: Option<PathBuf>,
 }
 
+/// Threshold for glob expansion duration before emitting a warning.
+/// The client has a 30-second timeout for configure requests.
+const GLOB_EXPANSION_WARN_THRESHOLD: Duration = Duration::from_secs(5);
+
 pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
     match serde_json::from_value::<ConfigureOptions>(params.clone()) {
         Ok(configure_options) => {
+            info!("Received configure request");
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
-                let mut cfg = context.configuration.write().unwrap();
-                // Expand glob patterns in workspace_directories
-                cfg.workspace_directories = configure_options.workspace_directories.map(|dirs| {
+                let now = SystemTime::now();
+
+                // Expand glob patterns before acquiring the write lock so we
+                // don't block readers/writers while traversing the filesystem.
+                let workspace_directories = configure_options.workspace_directories.map(|dirs| {
+                    trace!("Expanding workspace directory patterns: {:?}", dirs);
                     expand_glob_patterns(&dirs)
                         .into_iter()
                         .filter(|p| p.is_dir())
                         .collect()
                 });
-                cfg.conda_executable = configure_options.conda_executable;
-                // Expand glob patterns in environment_directories
-                cfg.environment_directories =
+                let environment_directories =
                     configure_options.environment_directories.map(|dirs| {
+                        trace!("Expanding environment directory patterns: {:?}", dirs);
                         expand_glob_patterns(&dirs)
                             .into_iter()
                             .filter(|p| p.is_dir())
                             .collect()
                     });
+                let glob_elapsed = now.elapsed().unwrap_or_default();
+                trace!("Glob expansion completed in {:?}", glob_elapsed);
+                if glob_elapsed >= GLOB_EXPANSION_WARN_THRESHOLD {
+                    warn!(
+                        "Glob expansion took {:?}, this may cause client timeouts",
+                        glob_elapsed
+                    );
+                }
+
+                let mut cfg = context.configuration.write().unwrap();
+                cfg.workspace_directories = workspace_directories;
+                cfg.conda_executable = configure_options.conda_executable;
+                cfg.environment_directories = environment_directories;
                 cfg.pipenv_executable = configure_options.pipenv_executable;
                 cfg.poetry_executable = configure_options.poetry_executable;
                 // We will not support changing the cache directories once set.
@@ -146,6 +166,10 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                 for locator in context.locators.iter() {
                     locator.configure(&config);
                 }
+                info!(
+                    "Configure completed in {:?}",
+                    now.elapsed().unwrap_or_default()
+                );
                 send_reply(id, None::<()>);
             });
         }
@@ -390,6 +414,8 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
     thread::spawn(
         move || match serde_json::from_value::<FindOptions>(params.clone()) {
             Ok(find_options) => {
+                let now = SystemTime::now();
+                trace!("Finding environments in {:?}", find_options.search_path);
                 let global_env_search_paths: Vec<PathBuf> =
                     get_search_paths_from_env_variables(context.os_environment.as_ref());
 
@@ -424,6 +450,12 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                     .lock()
                     .expect("environments mutex poisoned")
                     .clone();
+                trace!(
+                    "Find completed in {:?}, found {} environments in {:?}",
+                    now.elapsed().unwrap_or_default(),
+                    envs.len(),
+                    find_options.search_path
+                );
                 if envs.is_empty() {
                     send_reply(id, None::<Vec<PythonEnvironment>>);
                 } else {
@@ -444,6 +476,7 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
 
 pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
     thread::spawn(move || {
+        trace!("Gathering conda telemetry");
         let conda_locator = context.conda_locator.clone();
         let conda_executable = context
             .configuration
@@ -452,6 +485,7 @@ pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
             .conda_executable
             .clone();
         let info = conda_locator.get_info_for_telemetry(conda_executable);
+        trace!("Conda telemetry complete");
         send_reply(id, info.into());
     });
 }
