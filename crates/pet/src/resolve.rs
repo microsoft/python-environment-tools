@@ -12,7 +12,10 @@ use pet_core::{
     Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
-use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executable};
+use pet_python_utils::{
+    env::ResolvedPythonEnv,
+    executable::{find_executable, is_python_executable_name},
+};
 
 use crate::locators::identify_python_environment_using_locators;
 
@@ -49,6 +52,16 @@ pub fn resolve_environment(
             executable
         );
     }
+    // Validate that the executable filename looks like a Python executable
+    // before proceeding with the locator chain or spawning.
+    if executable.is_file() && !is_python_executable_name(&executable) {
+        warn!(
+            "Path {:?} does not look like a Python executable, skipping resolve",
+            executable
+        );
+        return None;
+    }
+
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);
     trace!(
