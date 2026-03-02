@@ -132,7 +132,7 @@ pub fn expand_glob_pattern(pattern: &str) -> Vec<PathBuf> {
                     match entry {
                         Ok(path) => {
                             count += 1;
-                            if count % 100 == 0 {
+                            if count.is_multiple_of(100) {
                                 log::trace!(
                                     "Glob '{}': found {} matches so far ({:?} elapsed)",
                                     pat,
