@@ -113,11 +113,13 @@ interface RefreshParams {
    * - `?` matches any single character
    * - `**` matches any sequence of path components (recursive)
    * - `[...]` matches any character inside the brackets
+   * - `{a,b}` matches either `a` or `b` (brace expansion)
    *
    * Examples:
    * - "/home/user/projects/*" - all directories under projects
    * - "/home/user/**/venv" - all venv directories recursively
    * - "/home/user/project[0-9]" - project0, project1, etc.
+   * - "./**/{bin,Scripts}/python{,.exe}" - Python executables in bin or Scripts dirs
    */
   searchPaths?: string[];
 }
