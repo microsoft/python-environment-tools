@@ -154,11 +154,12 @@ impl Locator for Uv {
     }
 }
 
-/// Walks up from `project_path` looking for a parent workspace that this project belongs to.
+/// Walks up from `project_path` looking for a workspace that this project belongs to.
+/// Starts from `project_path` itself because a project can also define `[tool.uv.workspace]`
+/// alongside `[project]` (i.e. the workspace root is itself a package).
 /// Returns the workspace environment if found and the project is a valid member.
 fn find_workspace_for_project(project_path: &Path) -> Option<PythonEnvironment> {
-    let parent = project_path.parent()?;
-    for candidate in parent.ancestors() {
+    for candidate in project_path.ancestors() {
         let pyproject = parse_pyproject_toml_in(candidate);
         let workspace = pyproject
             .as_ref()
@@ -315,6 +316,11 @@ fn is_workspace_member(
         Ok(r) => r,
         Err(_) => return false,
     };
+
+    // The workspace root itself is always a member of its own workspace
+    if relative.as_os_str().is_empty() {
+        return true;
+    }
 
     // Normalise to forward slashes for glob matching
     let relative_str = relative.to_string_lossy().replace('\\', "/");
@@ -724,6 +730,16 @@ name = "my-project""#;
     }
 
     #[test]
+    fn test_is_workspace_member_workspace_root_is_always_member() {
+        let root = Path::new("/workspace");
+        let ws = UvWorkspace {
+            members: vec!["packages/*".to_string()],
+            exclude: vec![],
+        };
+        assert!(is_workspace_member(root, root, &ws));
+    }
+
+    #[test]
     fn test_is_workspace_member_exclude_takes_precedence() {
         let root = Path::new("/workspace");
         let project = Path::new("/workspace/packages/foo");
@@ -765,6 +781,39 @@ prompt = my-workspace"#;
         let env = env.unwrap();
         assert_eq!(env.kind, Some(PythonEnvironmentKind::UvWorkspace));
         assert_eq!(env.name, Some("my-workspace".to_string()));
+    }
+
+    #[test]
+    fn test_find_workspace_for_project_self_workspace() {
+        // Edge case: project_path itself defines both [project] and [tool.uv.workspace]
+        let temp_dir = TempDir::new().unwrap();
+        let workspace_root = temp_dir.path();
+
+        // Create pyproject.toml with both [project] and [tool.uv.workspace]
+        let pyproject_contents = r#"[project]
+name = "mono-repo"
+
+[tool.uv.workspace]
+members = ["packages/*"]"#;
+        std::fs::write(workspace_root.join("pyproject.toml"), pyproject_contents).unwrap();
+
+        // Create workspace .venv with uv pyvenv.cfg
+        let venv_path = workspace_root.join(".venv");
+        std::fs::create_dir_all(&venv_path).unwrap();
+        let pyvenv_contents = r#"uv = 0.5.0
+version_info = 3.12.0
+prompt = mono-repo"#;
+        std::fs::write(venv_path.join("pyvenv.cfg"), pyvenv_contents).unwrap();
+
+        // find_workspace_for_project should find the workspace at project_path itself
+        let env = find_workspace_for_project(workspace_root);
+        assert!(
+            env.is_some(),
+            "Should discover workspace at project_path itself"
+        );
+        let env = env.unwrap();
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::UvWorkspace));
+        assert_eq!(env.name, Some("mono-repo".to_string()));
     }
 
     #[test]
