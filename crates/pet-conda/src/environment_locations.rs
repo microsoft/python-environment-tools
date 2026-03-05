@@ -20,6 +20,48 @@ use std::{
 
 const APP_NAME: &str = "conda";
 
+/// Checks whether the current environment is Windows Subsystem for Linux.
+/// Result is cached after the first call.
+#[cfg(unix)]
+fn is_wsl() -> bool {
+    use std::sync::OnceLock;
+    static IS_WSL: OnceLock<bool> = OnceLock::new();
+    *IS_WSL.get_or_init(|| {
+        std::fs::read_to_string("/proc/version")
+            .map(|v| v.to_lowercase().contains("microsoft"))
+            .unwrap_or(false)
+    })
+}
+
+/// Returns true if the path is a Windows drive mounted via WSL (e.g. `/mnt/c/...`).
+/// These paths contain Windows PE executables that cannot be run from Linux.
+#[cfg(unix)]
+fn is_wsl_windows_drive_path(path: &Path) -> bool {
+    if !is_wsl() {
+        return false;
+    }
+    is_windows_drive_mount(path)
+}
+
+/// Checks if a path matches the WSL Windows drive mount pattern `/mnt/<drive_letter>/`.
+#[cfg(unix)]
+fn is_windows_drive_mount(path: &Path) -> bool {
+    if let Some(path_str) = path.to_str() {
+        if let Some(rest) = path_str.strip_prefix("/mnt/") {
+            let mut chars = rest.chars();
+            if let Some(drive_letter) = chars.next() {
+                if drive_letter.is_ascii_alphabetic() {
+                    match chars.next() {
+                        None | Some('/') => return true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 pub fn get_conda_environment_paths(
     env_vars: &EnvVariables,
     conda_executable: &Option<PathBuf>,
@@ -43,6 +85,24 @@ pub fn get_conda_environment_paths(
     env_paths = env_paths.iter().map(norm_case).collect();
     env_paths.sort();
     env_paths.dedup();
+
+    // On WSL, filter out paths on Windows drive mounts (/mnt/<drive>/) since they
+    // contain Windows PE executables that cannot be run from Linux.
+    #[cfg(unix)]
+    {
+        env_paths.retain(|p| {
+            if is_wsl_windows_drive_path(p) {
+                trace!(
+                    "Skipping conda path on Windows drive (not usable from WSL): {:?}",
+                    p
+                );
+                false
+            } else {
+                true
+            }
+        });
+    }
+
     // For each env, check if we have a conda install directory in them and
     // & then iterate through the list of envs in the envs directory.
     let mut result: Vec<PathBuf> = env_paths
@@ -497,4 +557,33 @@ pub fn get_conda_dir_from_exe(conda_executable: &Option<PathBuf>) -> Option<Path
         }
     }
     None
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_windows_drive_mount_detection() {
+        // Typical WSL Windows drive mount paths
+        assert!(is_windows_drive_mount(Path::new("/mnt/c/")));
+        assert!(is_windows_drive_mount(Path::new("/mnt/c/Users")));
+        assert!(is_windows_drive_mount(Path::new(
+            "/mnt/d/Tools/Anaconda/envs/myenv"
+        )));
+        assert!(is_windows_drive_mount(Path::new("/mnt/C/Users")));
+        assert!(is_windows_drive_mount(Path::new("/mnt/D/Tools")));
+
+        // Just the drive letter with no trailing content
+        assert!(is_windows_drive_mount(Path::new("/mnt/c")));
+
+        // Not a Windows drive mount
+        assert!(!is_windows_drive_mount(Path::new("/home/user/miniconda3")));
+        assert!(!is_windows_drive_mount(Path::new("/opt/conda")));
+        assert!(!is_windows_drive_mount(Path::new("/mnt/data/conda")));
+        assert!(!is_windows_drive_mount(Path::new("/mnt/cdrom/something")));
+        assert!(!is_windows_drive_mount(Path::new("/mnt/")));
+        assert!(!is_windows_drive_mount(Path::new("/mnt")));
+        assert!(!is_windows_drive_mount(Path::new("/mnt/12/path")));
+    }
 }
