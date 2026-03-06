@@ -737,6 +737,7 @@ dependencies = [
 name = "pet-uv"
 version = "0.1.0"
 dependencies = [
+ "glob",
  "log",
  "pet-core",
  "pet-python-utils",
