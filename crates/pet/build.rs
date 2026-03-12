@@ -4,6 +4,9 @@
 fn main() {
     #[cfg(target_os = "windows")]
     {
+        if std::env::var("CARGO_BIN_NAME").is_err() {
+            return;
+        }
         let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".to_string());
 
         let mut res = winresource::WindowsResource::new();
