@@ -203,10 +203,16 @@ mod tests {
             exe_name
         );
         let resolved = result.unwrap();
+        // Compare filenames only — on Windows CI, temp paths may use 8.3 short
+        // names (e.g., RUNNER~1) while the discovered path uses the long form.
         assert_eq!(
-            resolved.discovered.executable,
-            Some(fake_exe),
-            "discovered executable should match the provided path"
+            resolved
+                .discovered
+                .executable
+                .as_ref()
+                .and_then(|p| p.file_name().map(|f| f.to_owned())),
+            Some(std::ffi::OsString::from(exe_name)),
+            "discovered executable filename should match"
         );
     }
 
