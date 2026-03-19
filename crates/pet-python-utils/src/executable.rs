@@ -345,6 +345,36 @@ mod tests {
     }
 
     #[test]
+    fn embedded_python_executables_are_not_python_names() {
+        // DCC tools like Maya and Houdini embed Python under non-standard names.
+        // These should NOT match is_python_executable_name (they are excluded from
+        // automatic discovery), but they can still be resolved via the resolve API
+        // when a user explicitly provides the path (see issue #375).
+        #[cfg(windows)]
+        {
+            assert!(!is_python_executable_name(
+                PathBuf::from("mayapy.exe").as_path()
+            ));
+            assert!(!is_python_executable_name(
+                PathBuf::from("hython.exe").as_path()
+            ));
+            assert!(!is_python_executable_name(
+                PathBuf::from("bpy.exe").as_path()
+            ));
+        }
+        #[cfg(unix)]
+        {
+            assert!(!is_python_executable_name(
+                PathBuf::from("mayapy").as_path()
+            ));
+            assert!(!is_python_executable_name(
+                PathBuf::from("hython").as_path()
+            ));
+            assert!(!is_python_executable_name(PathBuf::from("bpy").as_path()));
+        }
+    }
+
+    #[test]
     fn test_is_pyenv_shims_dir() {
         // Standard pyenv location
         assert!(is_pyenv_shims_dir(

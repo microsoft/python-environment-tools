@@ -12,10 +12,7 @@ use pet_core::{
     Locator,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
-use pet_python_utils::{
-    env::ResolvedPythonEnv,
-    executable::{find_executable, is_python_executable_name},
-};
+use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executable};
 
 use crate::locators::identify_python_environment_using_locators;
 
@@ -52,16 +49,6 @@ pub fn resolve_environment(
             executable
         );
     }
-    // Validate that the executable filename looks like a Python executable
-    // before proceeding with the locator chain or spawning.
-    if executable.is_file() && !is_python_executable_name(&executable) {
-        warn!(
-            "Path {:?} does not look like a Python executable, skipping resolve",
-            executable
-        );
-        return None;
-    }
-
     // First check if this is a known environment
     let env = PythonEnv::new(executable.to_owned(), None, None);
     trace!(
@@ -132,5 +119,123 @@ pub fn resolve_environment(
     } else {
         warn!("Unknown Python Env {:?}", executable);
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::{
+        env::PythonEnv,
+        os_environment::Environment,
+        python_environment::{PythonEnvironment, PythonEnvironmentKind},
+        reporter::Reporter,
+        Locator, LocatorKind,
+    };
+
+    struct EmptyEnvironment;
+    impl Environment for EmptyEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_env_var(&self, _key: String) -> Option<String> {
+            None
+        }
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            vec![]
+        }
+    }
+
+    /// A test locator that recognizes any executable as a known environment.
+    struct AcceptAllLocator;
+    impl Locator for AcceptAllLocator {
+        fn get_kind(&self) -> LocatorKind {
+            LocatorKind::LinuxGlobal
+        }
+        fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+            vec![PythonEnvironmentKind::GlobalPaths]
+        }
+        fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
+            Some(
+                PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::GlobalPaths))
+                    .executable(Some(env.executable.clone()))
+                    .build(),
+            )
+        }
+        fn find(&self, _reporter: &dyn Reporter) {}
+    }
+
+    #[test]
+    fn resolve_does_not_reject_non_standard_executable_names() {
+        // Issue #375: DCC tools like mayapy.exe and hython.exe should not be
+        // rejected by resolve_environment based on filename alone.
+        let temp_dir =
+            std::env::temp_dir().join(format!("pet_resolve_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let exe_name = if cfg!(windows) {
+            "mayapy.exe"
+        } else {
+            "mayapy"
+        };
+        let fake_exe = temp_dir.join(exe_name);
+        std::fs::write(&fake_exe, "fake").unwrap();
+
+        let locators: Arc<Vec<Arc<dyn Locator>>> =
+            Arc::new(vec![Arc::new(AcceptAllLocator) as Arc<dyn Locator>]);
+        let env = EmptyEnvironment;
+
+        let result = resolve_environment(&fake_exe, &locators, &env);
+
+        // Clean up before assertions to ensure cleanup on test failure.
+        let _ = std::fs::remove_file(&fake_exe);
+        let _ = std::fs::remove_dir(&temp_dir);
+
+        // The locator recognizes it, so we should get a result back
+        // (resolved will be None because there's no real Python to spawn,
+        // but the environment should be discovered).
+        assert!(
+            result.is_some(),
+            "resolve_environment should not reject non-standard executable names like {:?}",
+            exe_name
+        );
+        let resolved = result.unwrap();
+        // Compare filenames only — on Windows CI, temp paths may use 8.3 short
+        // names (e.g., RUNNER~1) while the discovered path uses the long form.
+        assert_eq!(
+            resolved
+                .discovered
+                .executable
+                .as_ref()
+                .and_then(|p| p.file_name().map(|f| f.to_owned())),
+            Some(std::ffi::OsString::from(exe_name)),
+            "discovered executable filename should match"
+        );
+    }
+
+    #[test]
+    fn resolve_nonexistent_non_standard_name_reaches_locator_chain() {
+        // With AcceptAllLocator, even a non-existent file with a non-standard
+        // name should reach the locator chain (not be rejected by name check).
+        let nonexistent = PathBuf::from(if cfg!(windows) {
+            r"C:\nonexistent\hython.exe"
+        } else {
+            "/nonexistent/hython"
+        });
+
+        let locators: Arc<Vec<Arc<dyn Locator>>> =
+            Arc::new(vec![Arc::new(AcceptAllLocator) as Arc<dyn Locator>]);
+        let env = EmptyEnvironment;
+
+        // AcceptAllLocator returns Some for any executable, proving the
+        // locator chain was reached despite the non-standard name.
+        let result = resolve_environment(&nonexistent, &locators, &env);
+        assert!(
+            result.is_some(),
+            "non-standard executable name should reach the locator chain"
+        );
     }
 }
