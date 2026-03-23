@@ -53,12 +53,12 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
     let locator = Conda::from(&environment);
     let path = resolve_test_path(&[
         "unix",
-        "conda_env_without_manager_but_found_in_history",
+        "conda_hist",
         "env_python_3",
     ]);
     let conda_dir = resolve_test_path(&[
         "unix",
-        "conda_env_without_manager_but_found_in_history",
+        "conda_hist",
         "some_other_location",
         "conda_install",
     ]);
