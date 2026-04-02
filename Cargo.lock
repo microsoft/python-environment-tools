@@ -740,6 +740,7 @@ dependencies = [
  "glob",
  "log",
  "pet-core",
+ "pet-fs",
  "pet-python-utils",
  "serde",
  "tempfile",
