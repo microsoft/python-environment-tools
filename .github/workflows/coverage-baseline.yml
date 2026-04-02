@@ -148,12 +148,15 @@ jobs:
       - name: Ensure Git bash is on PATH (Windows)
         if: startsWith(matrix.os, 'windows')
         run: |
-          $gitCmd = Get-Command git -ErrorAction SilentlyContinue
-          if ($gitCmd) {
-            $bashDir = Join-Path (Split-Path (Split-Path $gitCmd.Source)) 'bin'
-            if (Test-Path $bashDir) {
-              echo "$bashDir" >> $env:GITHUB_PATH
-            }
+          # Git for Windows is always installed on GitHub-hosted runners.
+          # Add its bin dir so taiki-e/install-action can find bash.exe.
+          # See https://github.com/actions/partner-runner-images/issues/169
+          $gitBin = 'C:\Program Files\Git\bin'
+          if (Test-Path (Join-Path $gitBin 'bash.exe')) {
+            echo $gitBin >> $env:GITHUB_PATH
+            Write-Output "Added $gitBin to PATH"
+          } else {
+            Write-Warning "bash.exe not found at $gitBin"
           }
         shell: pwsh
 
