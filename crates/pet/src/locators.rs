@@ -65,7 +65,7 @@ pub fn create_locators(
     // 7. Support for Virtual Envs
     // The order of these matter.
     // Basically PipEnv is a superset of VirtualEnvWrapper, which is a superset of Venv, which is a superset of VirtualEnv.
-    locators.push(Arc::new(Uv::new()));
+    locators.push(Arc::new(Uv::from(environment)));
     locators.push(poetry_locator);
     locators.push(Arc::new(PipEnv::from(environment)));
     locators.push(Arc::new(VirtualEnvWrapper::from(environment)));
