@@ -51,17 +51,9 @@ fn find_conda_env_without_manager_but_detect_manager_from_history() {
 
     let environment = create_test_environment(HashMap::new(), None, vec![], None);
     let locator = Conda::from(&environment);
-    let path = resolve_test_path(&[
-        "unix",
-        "conda_env_without_manager_but_found_in_history",
-        "env_python_3",
-    ]);
-    let conda_dir = resolve_test_path(&[
-        "unix",
-        "conda_env_without_manager_but_found_in_history",
-        "some_other_location",
-        "conda_install",
-    ]);
+    let path = resolve_test_path(&["unix", "conda_hist", "env_python_3"]);
+    let conda_dir =
+        resolve_test_path(&["unix", "conda_hist", "some_other_location", "conda_install"]);
     let history_file = path.join("conda-meta").join("history");
     let history_file_template = path.join("conda-meta").join("history_template");
     let history_contents = fs::read_to_string(&history_file_template)
