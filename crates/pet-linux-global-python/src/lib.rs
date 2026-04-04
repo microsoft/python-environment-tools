@@ -15,7 +15,7 @@ use pet_core::{
     env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator, LocatorKind,
+    Locator, LocatorKind, RefreshStatePersistence,
 };
 use pet_fs::path::resolve_symlink;
 use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executables};
@@ -61,6 +61,9 @@ impl Default for LinuxGlobalPython {
 impl Locator for LinuxGlobalPython {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::LinuxGlobal
+    }
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SelfHydratingCache
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::LinuxGlobal]

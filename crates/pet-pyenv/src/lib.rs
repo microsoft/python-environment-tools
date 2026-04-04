@@ -19,7 +19,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator, LocatorKind,
+    Locator, LocatorKind, RefreshStatePersistence,
 };
 use pet_python_utils::executable::find_executable;
 
@@ -83,6 +83,9 @@ impl PyEnv {
 impl Locator for PyEnv {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::PyEnv
+    }
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SelfHydratingCache
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![
