@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use pet_fs::path::norm_case;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -79,6 +80,10 @@ fn cache_dir(root: &TempDir) -> PathBuf {
     root.path().join("cache")
 }
 
+fn normalized_notification_path(path: &Option<String>) -> Option<PathBuf> {
+    path.as_ref().map(|path| norm_case(PathBuf::from(path)))
+}
+
 fn assert_single_environment(
     environments: &[EnvironmentNotification],
     expected_executable: &Path,
@@ -95,16 +100,12 @@ fn assert_single_environment(
     assert_eq!(environment.kind.as_deref(), Some("Venv"));
     assert_eq!(environment.name.as_deref(), Some(expected_name));
     assert_eq!(
-        environment
-            .executable
-            .as_ref()
-            .map(PathBuf::from)
-            .as_deref(),
-        Some(expected_executable)
+        normalized_notification_path(&environment.executable).as_deref(),
+        Some(norm_case(expected_executable)).as_deref()
     );
     assert_eq!(
-        environment.prefix.as_ref().map(PathBuf::from).as_deref(),
-        Some(expected_prefix)
+        normalized_notification_path(&environment.prefix).as_deref(),
+        Some(norm_case(expected_prefix)).as_deref()
     );
     assert_eq!(environment.error, None);
 }
@@ -212,15 +213,14 @@ fn concurrent_identical_refresh_requests_share_one_notification_stream() {
     expected_names.sort();
     assert_eq!(names, expected_names);
     for venv in venvs {
-        let expected_executable =
-            python_executable_path(&venv.join(if cfg!(windows) { "Scripts" } else { "bin" }));
+        let expected_executable = norm_case(python_executable_path(&venv.join(if cfg!(windows) {
+            "Scripts"
+        } else {
+            "bin"
+        })));
         assert!(
             environments.iter().any(|environment| {
-                environment
-                    .executable
-                    .as_ref()
-                    .map(PathBuf::from)
-                    .as_deref()
+                normalized_notification_path(&environment.executable).as_deref()
                     == Some(expected_executable.as_path())
             }),
             "expected to find notification for {:?}; notifications: {:?}; stderr: {}",
@@ -292,27 +292,27 @@ fn concurrent_distinct_refresh_requests_run_separately() {
     assert_eq!(environments[0].kind.as_deref(), Some("Venv"));
     assert_eq!(environments[0].name.as_deref(), Some("first-env"));
     assert_eq!(
-        environments[0]
-            .executable
-            .as_ref()
-            .map(PathBuf::from)
-            .as_deref(),
+        normalized_notification_path(&environments[0].executable).as_deref(),
         Some(
-            python_executable_path(&venv_a.join(if cfg!(windows) { "Scripts" } else { "bin" }))
-                .as_path()
+            norm_case(python_executable_path(&venv_a.join(if cfg!(windows) {
+                "Scripts"
+            } else {
+                "bin"
+            }),))
+            .as_path()
         )
     );
     assert_eq!(environments[1].kind.as_deref(), Some("Venv"));
     assert_eq!(environments[1].name.as_deref(), Some("second-env"));
     assert_eq!(
-        environments[1]
-            .executable
-            .as_ref()
-            .map(PathBuf::from)
-            .as_deref(),
+        normalized_notification_path(&environments[1].executable).as_deref(),
         Some(
-            python_executable_path(&venv_b.join(if cfg!(windows) { "Scripts" } else { "bin" }))
-                .as_path()
+            norm_case(python_executable_path(&venv_b.join(if cfg!(windows) {
+                "Scripts"
+            } else {
+                "bin"
+            }),))
+            .as_path()
         )
     );
     assert_eq!(
