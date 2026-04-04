@@ -18,7 +18,7 @@ use pet_core::telemetry::TelemetryEvent;
 use pet_core::{
     os_environment::{Environment, EnvironmentApi},
     reporter::Reporter,
-    Configuration, Locator,
+    Configuration, Locator, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_fs::glob::expand_glob_patterns;
@@ -316,7 +316,6 @@ pub struct Context {
     configuration: RwLock<ConfigurationState>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<Conda>,
-    poetry_locator: Arc<Poetry>,
     os_environment: Arc<dyn Environment>,
     refresh_coordinator: RefreshCoordinator,
 }
@@ -336,7 +335,6 @@ pub fn start_jsonrpc_server() {
     let context = Context {
         locators: create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         conda_locator,
-        poetry_locator,
         configuration: RwLock::new(ConfigurationState::default()),
         os_environment: Arc::new(environment),
         refresh_coordinator: RefreshCoordinator::default(),
@@ -522,23 +520,44 @@ fn create_refresh_locators(environment: &dyn Environment) -> RefreshLocators {
     }
 }
 
-fn sync_conda_locator_state(target: &Conda, source: &Conda) {
-    target.environments.clear();
-    target
-        .environments
-        .insert_many(source.environments.clone_map());
+fn sync_refresh_locator_state(
+    target_locators: &[Arc<dyn Locator>],
+    source_locators: &[Arc<dyn Locator>],
+    search_scope: Option<&SearchScope>,
+) {
+    let sync_scope = refresh_state_sync_scope(search_scope);
 
-    target.managers.clear();
-    target.managers.insert_many(source.managers.clone_map());
+    assert_eq!(
+        target_locators.len(),
+        source_locators.len(),
+        "refresh locator graphs drifted"
+    );
 
-    target.mamba_managers.clear();
-    target
-        .mamba_managers
-        .insert_many(source.mamba_managers.clone_map());
+    for (target, source) in target_locators.iter().zip(source_locators.iter()) {
+        assert_eq!(
+            target.get_kind(),
+            source.get_kind(),
+            "refresh locator order drifted"
+        );
+
+        if !matches!(target.refresh_state(), RefreshStatePersistence::Stateless) {
+            trace!(
+                "Applying refresh state contract for locator {:?}: {:?}",
+                target.get_kind(),
+                target.refresh_state()
+            );
+        }
+
+        target.sync_refresh_state_from(source.as_ref(), &sync_scope);
+    }
 }
 
-fn sync_poetry_locator_state(target: &Poetry, source: &Poetry) {
-    target.sync_search_result_from(source);
+fn refresh_state_sync_scope(search_scope: Option<&SearchScope>) -> RefreshStateSyncScope {
+    match search_scope {
+        Some(SearchScope::Workspace) => RefreshStateSyncScope::Workspace,
+        Some(SearchScope::Global(kind)) => RefreshStateSyncScope::GlobalFiltered(*kind),
+        None => RefreshStateSyncScope::Full,
+    }
 }
 
 fn execute_refresh(
@@ -577,7 +596,7 @@ fn execute_refresh(
         config,
         &refresh_locators.locators,
         context.os_environment.deref(),
-        search_scope,
+        search_scope.clone(),
     );
     let summary = summary.lock().expect("summary mutex poisoned");
     for locator in summary.locators.iter() {
@@ -588,15 +607,12 @@ fn execute_refresh(
     }
     trace!("Finished refreshing environments in {:?}", summary.total);
 
-    // Refresh runs on a transient locator graph, so copy back any discovery state
-    // that later JSONRPC requests rely on from the long-lived shared locators.
-    sync_conda_locator_state(
-        context.conda_locator.as_ref(),
-        refresh_locators.conda_locator.as_ref(),
-    );
-    sync_poetry_locator_state(
-        context.poetry_locator.as_ref(),
-        refresh_locators.poetry_locator.as_ref(),
+    // Refresh runs on a transient locator graph, so apply each locator's refresh-state
+    // contract back into the long-lived shared locator graph.
+    sync_refresh_locator_state(
+        context.locators.as_ref(),
+        refresh_locators.locators.as_ref(),
+        search_scope.as_ref(),
     );
 
     let perf = RefreshPerformance {
@@ -946,6 +962,7 @@ mod tests {
     use super::*;
     use pet_conda::manager::CondaManager;
     use pet_core::manager::EnvManagerType;
+    use pet_core::RefreshStatePersistence;
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::thread;
@@ -1057,7 +1074,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_conda_locator_state_replaces_shared_caches() {
+    fn test_conda_refresh_state_sync_replaces_shared_caches() {
         let environment = EnvironmentApi::new();
         let shared = Conda::from(&environment);
         let refreshed = Conda::from(&environment);
@@ -1127,7 +1144,12 @@ mod tests {
             },
         );
 
-        sync_conda_locator_state(&shared, &refreshed);
+        assert_eq!(
+            shared.refresh_state(),
+            RefreshStatePersistence::SyncedDiscoveryState
+        );
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
 
         assert_eq!(shared.environments.len(), 1);
         assert!(!shared.environments.contains_key(&stale_env_path));
@@ -1140,6 +1162,88 @@ mod tests {
         assert_eq!(shared.mamba_managers.len(), 1);
         assert!(!shared.mamba_managers.contains_key(&stale_mamba_path));
         assert!(shared.mamba_managers.contains_key(&fresh_mamba_path));
+    }
+
+    #[test]
+    fn test_workspace_refresh_does_not_replace_shared_conda_state() {
+        let environment = EnvironmentApi::new();
+        let shared = Arc::new(Conda::from(&environment));
+        let refreshed = Arc::new(Conda::from(&environment));
+
+        let stale_env_path = PathBuf::from("/stale/env");
+        let fresh_env_path = PathBuf::from("/fresh/env");
+
+        shared.environments.insert(
+            stale_env_path.clone(),
+            PythonEnvironment::new(
+                Some(stale_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(stale_env_path.clone()),
+                None,
+                Some("3.10.0".to_string()),
+            ),
+        );
+        refreshed.environments.insert(
+            fresh_env_path.clone(),
+            PythonEnvironment::new(
+                Some(fresh_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(fresh_env_path.clone()),
+                None,
+                Some("3.11.0".to_string()),
+            ),
+        );
+
+        sync_refresh_locator_state(
+            &[shared.clone() as Arc<dyn Locator>],
+            &[refreshed as Arc<dyn Locator>],
+            Some(&SearchScope::Workspace),
+        );
+
+        assert_eq!(shared.environments.len(), 1);
+        assert!(shared.environments.contains_key(&stale_env_path));
+        assert!(!shared.environments.contains_key(&fresh_env_path));
+    }
+
+    #[test]
+    fn test_kind_filtered_refresh_skips_unrelated_conda_state_sync() {
+        let environment = EnvironmentApi::new();
+        let shared = Arc::new(Conda::from(&environment));
+        let refreshed = Arc::new(Conda::from(&environment));
+
+        let stale_env_path = PathBuf::from("/stale/env");
+        let fresh_env_path = PathBuf::from("/fresh/env");
+
+        shared.environments.insert(
+            stale_env_path.clone(),
+            PythonEnvironment::new(
+                Some(stale_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(stale_env_path.clone()),
+                None,
+                Some("3.10.0".to_string()),
+            ),
+        );
+        refreshed.environments.insert(
+            fresh_env_path.clone(),
+            PythonEnvironment::new(
+                Some(fresh_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(fresh_env_path.clone()),
+                None,
+                Some("3.11.0".to_string()),
+            ),
+        );
+
+        sync_refresh_locator_state(
+            &[shared.clone() as Arc<dyn Locator>],
+            &[refreshed as Arc<dyn Locator>],
+            Some(&SearchScope::Global(PythonEnvironmentKind::Venv)),
+        );
+
+        assert_eq!(shared.environments.len(), 1);
+        assert!(shared.environments.contains_key(&stale_env_path));
+        assert!(!shared.environments.contains_key(&fresh_env_path));
     }
 
     #[test]

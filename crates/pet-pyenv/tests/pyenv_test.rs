@@ -546,3 +546,45 @@ fn resolve_pyenv_environment() {
     assert!(result.is_some());
     assert_eq!(result.unwrap().kind, Some(PythonEnvironmentKind::Conda));
 }
+
+#[test]
+#[cfg(unix)]
+fn pyenv_refresh_state_self_hydrates_without_sync() {
+    use crate::common::create_test_environment;
+    use common::resolve_test_path;
+    use pet_conda::Conda;
+    use pet_core::{
+        env::PythonEnv, python_environment::PythonEnvironmentKind, Locator, RefreshStatePersistence,
+    };
+    use pet_pyenv::PyEnv;
+    use pet_reporter::{cache::CacheReporter, collect};
+    use std::{collections::HashMap, sync::Arc};
+
+    let home = resolve_test_path(&["unix", "pyenv", "user_home"]);
+    let homebrew_bin = resolve_test_path(&["unix", "pyenv", "home", "opt", "homebrew", "bin"]);
+    let environment =
+        create_test_environment(HashMap::new(), Some(home.clone()), vec![homebrew_bin], None);
+
+    let shared_conda = Arc::new(Conda::from(&environment));
+    let shared = PyEnv::from(&environment, shared_conda.clone());
+    let refreshed = PyEnv::from(&environment, shared_conda);
+
+    assert_eq!(
+        shared.refresh_state(),
+        RefreshStatePersistence::SelfHydratingCache
+    );
+
+    let reporter = Arc::new(collect::create_reporter());
+    refreshed.find(&CacheReporter::new(reporter));
+
+    let executable =
+        resolve_test_path(&[home.to_str().unwrap(), ".pyenv/versions/3.9.9/bin/python"]);
+    let prefix = resolve_test_path(&[home.to_str().unwrap(), ".pyenv/versions/3.9.9"]);
+
+    let resolved = shared.try_from(&PythonEnv::new(executable, Some(prefix.clone()), None));
+
+    assert!(resolved.is_some());
+    let resolved = resolved.unwrap();
+    assert_eq!(resolved.kind, Some(PythonEnvironmentKind::Pyenv));
+    assert_eq!(resolved.prefix, Some(prefix));
+}

@@ -16,7 +16,7 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator, LocatorKind,
+    Locator, LocatorKind, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use pet_fs::path::norm_case;
 use rayon::prelude::*;
@@ -216,11 +216,39 @@ impl Locator for Conda {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::Conda
     }
-    fn configure(&self, config: &pet_core::Configuration) {
-        if let Some(ref conda_exe) = config.conda_executable {
-            let mut conda_executable = self.conda_executable.write().unwrap();
-            conda_executable.replace(conda_exe.clone());
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SyncedDiscoveryState
+    }
+    fn sync_refresh_state_from(&self, source: &dyn Locator, scope: &RefreshStateSyncScope) {
+        let source = source.as_any().downcast_ref::<Conda>().unwrap_or_else(|| {
+            panic!("attempted to sync Conda state from {:?}", source.get_kind())
+        });
+
+        match scope {
+            RefreshStateSyncScope::Full => {}
+            RefreshStateSyncScope::GlobalFiltered(kind)
+                if self.supported_categories().contains(kind) => {}
+            RefreshStateSyncScope::GlobalFiltered(_) | RefreshStateSyncScope::Workspace => {
+                return;
+            }
         }
+
+        self.environments.clear();
+        self.environments
+            .insert_many(source.environments.clone_map());
+
+        self.managers.clear();
+        self.managers.insert_many(source.managers.clone_map());
+
+        self.mamba_managers.clear();
+        self.mamba_managers
+            .insert_many(source.mamba_managers.clone_map());
+    }
+    fn configure(&self, config: &pet_core::Configuration) {
+        self.conda_executable
+            .write()
+            .unwrap()
+            .clone_from(&config.conda_executable);
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::Conda]

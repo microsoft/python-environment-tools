@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
+use std::{any::Any, path::PathBuf};
 
 use env::PythonEnv;
 use manager::EnvManager;
@@ -61,7 +61,26 @@ pub enum LocatorKind {
     WindowsStore,
 }
 
-pub trait Locator: Send + Sync {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshStatePersistence {
+    /// The locator keeps no mutable state across requests.
+    Stateless,
+    /// The locator keeps configured inputs only; refresh must not copy them back.
+    ConfiguredOnly,
+    /// The locator keeps cache-like state, but later requests can repopulate it on demand.
+    SelfHydratingCache,
+    /// The locator keeps refresh-discovered state that later requests depend on for correctness.
+    SyncedDiscoveryState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefreshStateSyncScope {
+    Full,
+    GlobalFiltered(PythonEnvironmentKind),
+    Workspace,
+}
+
+pub trait Locator: Any + Send + Sync {
     /// Returns the name of the locator.
     fn get_kind(&self) -> LocatorKind;
     /// Configures the locator with the given configuration.
@@ -100,6 +119,21 @@ pub trait Locator: Send + Sync {
     fn configure(&self, _config: &Configuration) {
         //
     }
+    /// Describes what mutable state, if any, must survive a refresh boundary.
+    ///
+    /// Refresh runs execute against transient locator graphs and then invoke
+    /// `sync_refresh_state_from()` on the long-lived shared locators.
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::Stateless
+    }
+    /// Copies correctness-critical post-refresh state from a transient locator into this
+    /// long-lived shared locator.
+    ///
+    /// Override this only when `refresh_state()` returns
+    /// `RefreshStatePersistence::SyncedDiscoveryState`.
+    fn sync_refresh_state_from(&self, _source: &dyn Locator, _scope: &RefreshStateSyncScope) {
+        //
+    }
     /// Returns a list of supported categories for this locator.
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind>;
     /// Given a Python executable, and some optional data like prefix,
@@ -111,4 +145,10 @@ pub trait Locator: Send + Sync {
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment>;
     /// Finds all environments specific to this locator.
     fn find(&self, reporter: &dyn Reporter);
+}
+
+impl dyn Locator {
+    pub fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
