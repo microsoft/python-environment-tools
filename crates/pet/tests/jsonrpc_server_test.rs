@@ -254,7 +254,7 @@ fn concurrent_distinct_refresh_requests_run_separately() {
         }))
         .expect("configure request failed");
 
-    let _ = temp_dir_b;
+    let _temp_dir_b = temp_dir_b;
     client.clear_notifications();
 
     let client_a = client.clone();
