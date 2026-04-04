@@ -143,6 +143,15 @@ impl Poetry {
     pub fn from(environment: &dyn Environment) -> Poetry {
         Poetry::new(environment)
     }
+
+    pub fn sync_search_result_from(&self, source: &Poetry) {
+        let search_result = source.search_result.read().unwrap().clone();
+        self.search_result
+            .write()
+            .unwrap()
+            .clone_from(&search_result);
+    }
+
     fn find_with_cache(&self) -> Option<LocatorResult> {
         // First check if we have cached results
         {
@@ -292,5 +301,52 @@ impl Locator for Poetry {
                 reporter.report_environment(&found_env);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::os_environment::EnvironmentApi;
+
+    #[test]
+    fn test_sync_search_result_from_replaces_cached_result() {
+        let environment = EnvironmentApi::new();
+        let target = Poetry::from(&environment);
+        let source = Poetry::from(&environment);
+
+        target
+            .search_result
+            .write()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("stale".to_string()),
+                    kind: Some(PythonEnvironmentKind::Poetry),
+                    ..Default::default()
+                }],
+            });
+
+        source
+            .search_result
+            .write()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("fresh".to_string()),
+                    kind: Some(PythonEnvironmentKind::Poetry),
+                    ..Default::default()
+                }],
+            });
+
+        target.sync_search_result_from(&source);
+
+        let result = target.search_result.read().unwrap().clone();
+        assert_eq!(
+            result.unwrap().environments[0].name.as_deref(),
+            Some("fresh")
+        );
     }
 }
