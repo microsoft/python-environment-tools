@@ -12,7 +12,9 @@ use pet_core::env::PythonEnv;
 use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
 use pet_core::reporter::Reporter;
 use pet_core::LocatorKind;
-use pet_core::{os_environment::Environment, Locator};
+use pet_core::{
+    os_environment::Environment, Locator, RefreshStatePersistence, RefreshStateSyncScope,
+};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
@@ -52,11 +54,40 @@ impl WindowsStore {
     fn clear(&self) {
         self.environments.write().unwrap().take();
     }
+
+    fn sync_environments_from(&self, source: &WindowsStore) {
+        let environments = source.environments.read().unwrap().clone();
+        self.environments.write().unwrap().clone_from(&environments);
+    }
 }
 
 impl Locator for WindowsStore {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::WindowsStore
+    }
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SyncedDiscoveryState
+    }
+    fn sync_refresh_state_from(&self, source: &dyn Locator, scope: &RefreshStateSyncScope) {
+        let source = source
+            .as_any()
+            .downcast_ref::<WindowsStore>()
+            .unwrap_or_else(|| {
+                panic!(
+                    "attempted to sync WindowsStore state from {:?}",
+                    source.get_kind()
+                )
+            });
+
+        match scope {
+            RefreshStateSyncScope::Full => self.sync_environments_from(source),
+            RefreshStateSyncScope::GlobalFiltered(kind)
+                if self.supported_categories().contains(kind) =>
+            {
+                self.sync_environments_from(source)
+            }
+            RefreshStateSyncScope::GlobalFiltered(_) | RefreshStateSyncScope::Workspace => {}
+        }
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![PythonEnvironmentKind::WindowsStore]
@@ -139,5 +170,69 @@ impl Locator for WindowsStore {
     #[cfg(unix)]
     fn find(&self, _reporter: &dyn Reporter) {
         //
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::os_environment::EnvironmentApi;
+
+    #[test]
+    fn test_full_refresh_sync_replaces_store_cache() {
+        let environment = EnvironmentApi::new();
+        let shared = WindowsStore::from(&environment);
+        let refreshed = WindowsStore::from(&environment);
+
+        shared
+            .environments
+            .write()
+            .unwrap()
+            .replace(vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }]);
+        refreshed
+            .environments
+            .write()
+            .unwrap()
+            .replace(vec![PythonEnvironment {
+                name: Some("fresh".to_string()),
+                ..Default::default()
+            }]);
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+
+        let result = shared.environments.read().unwrap().clone().unwrap();
+        assert_eq!(result[0].name.as_deref(), Some("fresh"));
+    }
+
+    #[test]
+    fn test_workspace_scope_does_not_replace_store_cache() {
+        let environment = EnvironmentApi::new();
+        let shared = WindowsStore::from(&environment);
+        let refreshed = WindowsStore::from(&environment);
+
+        shared
+            .environments
+            .write()
+            .unwrap()
+            .replace(vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }]);
+        refreshed
+            .environments
+            .write()
+            .unwrap()
+            .replace(vec![PythonEnvironment {
+                name: Some("fresh".to_string()),
+                ..Default::default()
+            }]);
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Workspace);
+
+        let result = shared.environments.read().unwrap().clone().unwrap();
+        assert_eq!(result[0].name.as_deref(), Some("stale"));
     }
 }

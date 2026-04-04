@@ -11,7 +11,8 @@ use pet_core::{
     os_environment::Environment,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Configuration, Locator, LocatorKind, LocatorResult,
+    Configuration, Locator, LocatorKind, LocatorResult, RefreshStatePersistence,
+    RefreshStateSyncScope,
 };
 use pet_virtualenv::is_virtualenv;
 use regex::Regex;
@@ -137,12 +138,48 @@ impl Poetry {
         }
     }
     fn clear(&self) {
-        self.poetry_executable.write().unwrap().take();
         self.search_result.write().unwrap().take();
     }
     pub fn from(environment: &dyn Environment) -> Poetry {
         Poetry::new(environment)
     }
+
+    pub fn sync_search_result_from(&self, source: &Poetry) {
+        let search_result = source.search_result.read().unwrap().clone();
+        self.search_result
+            .write()
+            .unwrap()
+            .clone_from(&search_result);
+    }
+
+    pub fn merge_search_result_from(&self, source: &Poetry) {
+        let source_search_result = source.search_result.read().unwrap().clone();
+        let Some(source_search_result) = source_search_result else {
+            return;
+        };
+
+        let mut merged = self
+            .search_result
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or(LocatorResult {
+                managers: vec![],
+                environments: vec![],
+            });
+        merged.managers.extend(source_search_result.managers);
+        merged.managers.sort();
+        merged.managers.dedup();
+
+        merged
+            .environments
+            .extend(source_search_result.environments);
+        merged.environments.sort();
+        merged.environments.dedup();
+
+        self.search_result.write().unwrap().replace(merged);
+    }
+
     fn find_with_cache(&self) -> Option<LocatorResult> {
         // First check if we have cached results
         {
@@ -217,17 +254,39 @@ impl Locator for Poetry {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::Poetry
     }
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SyncedDiscoveryState
+    }
+    fn sync_refresh_state_from(&self, source: &dyn Locator, scope: &RefreshStateSyncScope) {
+        let source = source.as_any().downcast_ref::<Poetry>().unwrap_or_else(|| {
+            panic!(
+                "attempted to sync Poetry state from {:?}",
+                source.get_kind()
+            )
+        });
+        match scope {
+            RefreshStateSyncScope::Full => self.sync_search_result_from(source),
+            RefreshStateSyncScope::GlobalFiltered(kind)
+                if self.supported_categories().contains(kind) =>
+            {
+                self.sync_search_result_from(source)
+            }
+            RefreshStateSyncScope::Workspace => self.merge_search_result_from(source),
+            RefreshStateSyncScope::GlobalFiltered(_) => {}
+        }
+    }
     fn configure(&self, config: &Configuration) {
+        let mut ws_dirs = self.workspace_directories.write().unwrap();
+        ws_dirs.clear();
         if let Some(workspace_directories) = &config.workspace_directories {
-            let mut ws_dirs = self.workspace_directories.write().unwrap();
-            ws_dirs.clear();
             if !workspace_directories.is_empty() {
                 ws_dirs.extend(workspace_directories.clone());
             }
         }
-        if let Some(exe) = &config.poetry_executable {
-            self.poetry_executable.write().unwrap().replace(exe.clone());
-        }
+        self.poetry_executable
+            .write()
+            .unwrap()
+            .clone_from(&config.poetry_executable);
     }
 
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
@@ -292,5 +351,139 @@ impl Locator for Poetry {
                 reporter.report_environment(&found_env);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::os_environment::EnvironmentApi;
+
+    #[test]
+    fn test_sync_search_result_from_replaces_cached_result() {
+        let environment = EnvironmentApi::new();
+        let target = Poetry::from(&environment);
+        let source = Poetry::from(&environment);
+
+        target
+            .search_result
+            .write()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("stale".to_string()),
+                    kind: Some(PythonEnvironmentKind::Poetry),
+                    ..Default::default()
+                }],
+            });
+
+        source
+            .search_result
+            .write()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("fresh".to_string()),
+                    kind: Some(PythonEnvironmentKind::Poetry),
+                    ..Default::default()
+                }],
+            });
+
+        target.sync_search_result_from(&source);
+
+        let result = target.search_result.read().unwrap().clone();
+        assert_eq!(
+            result.unwrap().environments[0].name.as_deref(),
+            Some("fresh")
+        );
+    }
+
+    #[test]
+    fn test_workspace_scope_merges_search_results() {
+        let environment = EnvironmentApi::new();
+        let target = Poetry::from(&environment);
+        let source = Poetry::from(&environment);
+
+        target
+            .search_result
+            .write()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("existing".to_string()),
+                    kind: Some(PythonEnvironmentKind::Poetry),
+                    ..Default::default()
+                }],
+            });
+
+        source
+            .search_result
+            .write()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("workspace".to_string()),
+                    kind: Some(PythonEnvironmentKind::Poetry),
+                    ..Default::default()
+                }],
+            });
+
+        target.sync_refresh_state_from(&source, &RefreshStateSyncScope::Workspace);
+
+        let result = target.search_result.read().unwrap().clone().unwrap();
+        let mut names = result
+            .environments
+            .iter()
+            .map(|environment| environment.name.clone().unwrap())
+            .collect::<Vec<String>>();
+        names.sort();
+
+        assert_eq!(names, vec!["existing".to_string(), "workspace".to_string()]);
+    }
+
+    #[test]
+    fn test_clear_preserves_configured_poetry_executable() {
+        let environment = EnvironmentApi::new();
+        let poetry = Poetry::from(&environment);
+        let configured = PathBuf::from("/configured/poetry");
+
+        poetry.configure(&Configuration {
+            poetry_executable: Some(configured.clone()),
+            ..Default::default()
+        });
+        poetry
+            .search_result
+            .write()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![],
+            });
+
+        poetry.clear();
+
+        assert_eq!(
+            poetry.poetry_executable.read().unwrap().clone(),
+            Some(configured)
+        );
+        assert!(poetry.search_result.read().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_configure_clears_poetry_executable_when_unset() {
+        let environment = EnvironmentApi::new();
+        let poetry = Poetry::from(&environment);
+
+        poetry.configure(&Configuration {
+            poetry_executable: Some(PathBuf::from("/configured/poetry")),
+            ..Default::default()
+        });
+        poetry.configure(&Configuration::default());
+
+        assert!(poetry.poetry_executable.read().unwrap().is_none());
     }
 }

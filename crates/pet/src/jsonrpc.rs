@@ -6,7 +6,6 @@ use crate::find::find_python_environments_in_workspace_folder_recursive;
 use crate::find::identify_python_executables_using_locators;
 use crate::find::SearchScope;
 use crate::locators::create_locators;
-use lazy_static::lazy_static;
 use log::{error, info, trace, warn};
 use pet::initialize_tracing;
 use pet::resolve::resolve_environment;
@@ -19,10 +18,11 @@ use pet_core::telemetry::TelemetryEvent;
 use pet_core::{
     os_environment::{Environment, EnvironmentApi},
     reporter::Reporter,
-    Configuration, Locator,
+    Configuration, Locator, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_fs::glob::expand_glob_patterns;
+use pet_fs::path::norm_case;
 use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
@@ -39,28 +39,285 @@ use serde_json::json;
 use serde_json::{self, Value};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 use std::time::Duration;
 use std::{
     ops::Deref,
+    panic::{self, AssertUnwindSafe},
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{Arc, Condvar, Mutex, RwLock},
     thread,
     time::{Instant, SystemTime},
 };
 use tracing::info_span;
 
-lazy_static! {
-    /// Used to ensure we can have only one refreh at a time.
-    static ref REFRESH_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
+#[derive(Debug, Clone, Default)]
+struct ConfigurationState {
+    generation: u64,
+    config: Configuration,
 }
 
-pub struct Context {
-    configuration: RwLock<Configuration>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RefreshKey {
+    options: RefreshOptions,
+    config_generation: u64,
+}
+
+impl RefreshKey {
+    fn new(options: &RefreshOptions, config_generation: u64) -> Self {
+        Self {
+            options: options.clone(),
+            config_generation,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ActiveRefresh {
+    key: RefreshKey,
+    request_ids: Vec<u32>,
+}
+
+#[derive(Debug, Default)]
+enum RefreshCoordinatorState {
+    #[default]
+    Idle,
+    Running(ActiveRefresh),
+    Completing(ActiveRefresh),
+}
+
+#[derive(Debug, Default)]
+struct RefreshCoordinator {
+    state: Mutex<RefreshCoordinatorState>,
+    changed: Condvar,
+}
+
+enum RefreshRegistration {
+    Start,
+    Joined,
+    Wait,
+}
+
+impl RefreshCoordinator {
+    fn register_request(&self, request_id: u32, key: RefreshKey) -> RefreshRegistration {
+        let mut state = self
+            .state
+            .lock()
+            .expect("refresh coordinator mutex poisoned");
+        match &mut *state {
+            RefreshCoordinatorState::Idle => {
+                *state = RefreshCoordinatorState::Running(ActiveRefresh {
+                    key,
+                    request_ids: vec![request_id],
+                });
+                RefreshRegistration::Start
+            }
+            RefreshCoordinatorState::Running(active) if active.key == key => {
+                active.request_ids.push(request_id);
+                RefreshRegistration::Joined
+            }
+            RefreshCoordinatorState::Completing(active) if active.key == key => {
+                active.request_ids.push(request_id);
+                RefreshRegistration::Joined
+            }
+            RefreshCoordinatorState::Running(_) | RefreshCoordinatorState::Completing(_) => {
+                RefreshRegistration::Wait
+            }
+        }
+    }
+
+    fn wait_until_idle(&self) {
+        let state = self
+            .state
+            .lock()
+            .expect("refresh coordinator mutex poisoned");
+        let _guard = self
+            .changed
+            .wait_while(state, |state| {
+                !matches!(state, RefreshCoordinatorState::Idle)
+            })
+            .expect("refresh coordinator condvar poisoned");
+    }
+
+    fn begin_completion(&self, key: &RefreshKey) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("refresh coordinator mutex poisoned");
+        match std::mem::replace(&mut *state, RefreshCoordinatorState::Idle) {
+            RefreshCoordinatorState::Running(active) if active.key == *key => {
+                *state = RefreshCoordinatorState::Completing(active);
+            }
+            RefreshCoordinatorState::Running(active) => {
+                *state = RefreshCoordinatorState::Running(active);
+                panic!("attempted to finish refresh with unexpected key");
+            }
+            RefreshCoordinatorState::Completing(active) => {
+                *state = RefreshCoordinatorState::Completing(active);
+                panic!("attempted to begin refresh completion while already completing")
+            }
+            RefreshCoordinatorState::Idle => {
+                panic!("attempted to finish refresh while coordinator was idle")
+            }
+        }
+    }
+
+    fn drain_completing_request_ids(&self, key: &RefreshKey) -> Vec<u32> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("refresh coordinator mutex poisoned");
+        match &mut *state {
+            RefreshCoordinatorState::Completing(active) if active.key == *key => {
+                std::mem::take(&mut active.request_ids)
+            }
+            RefreshCoordinatorState::Completing(_) => {
+                panic!("attempted to drain completion requests with unexpected key")
+            }
+            RefreshCoordinatorState::Running(_) => {
+                panic!("attempted to drain completion requests before beginning completion")
+            }
+            RefreshCoordinatorState::Idle => Vec::new(),
+        }
+    }
+
+    fn complete_request(&self, key: &RefreshKey) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("refresh coordinator mutex poisoned");
+        match &mut *state {
+            RefreshCoordinatorState::Completing(active) if active.key == *key => {
+                if active.request_ids.is_empty() {
+                    *state = RefreshCoordinatorState::Idle;
+                    self.changed.notify_all();
+                    true
+                } else {
+                    false
+                }
+            }
+            RefreshCoordinatorState::Completing(_) => {
+                panic!("attempted to complete refresh with unexpected key")
+            }
+            RefreshCoordinatorState::Running(_) => {
+                panic!("attempted to complete refresh before beginning completion")
+            }
+            RefreshCoordinatorState::Idle => {
+                panic!("attempted to complete refresh while coordinator was idle")
+            }
+        }
+    }
+
+    fn force_complete_request(&self, key: &RefreshKey) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("refresh coordinator mutex poisoned");
+        match &*state {
+            RefreshCoordinatorState::Completing(active) if active.key == *key => {
+                *state = RefreshCoordinatorState::Idle;
+                self.changed.notify_all();
+            }
+            RefreshCoordinatorState::Idle => {}
+            _ => {}
+        }
+    }
+}
+
+struct RefreshLocators {
     locators: Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<Conda>,
     poetry_locator: Arc<Poetry>,
+}
+
+struct RefreshExecution {
+    result: RefreshResult,
+    perf: RefreshPerformance,
+    reporter: Arc<CacheReporter>,
+    conda_locator: Arc<Conda>,
+    poetry_locator: Arc<Poetry>,
+    conda_executable: Option<PathBuf>,
+    poetry_executable: Option<PathBuf>,
+}
+
+struct RefreshCompletionGuard<'a> {
+    coordinator: &'a RefreshCoordinator,
+    key: RefreshKey,
+    completed: bool,
+}
+
+impl<'a> RefreshCompletionGuard<'a> {
+    fn begin(coordinator: &'a RefreshCoordinator, key: &RefreshKey) -> Self {
+        coordinator.begin_completion(key);
+        Self {
+            coordinator,
+            key: key.clone(),
+            completed: false,
+        }
+    }
+
+    fn drain_request_ids(&self) -> Vec<u32> {
+        self.coordinator.drain_completing_request_ids(&self.key)
+    }
+
+    fn finish_if_no_pending(&mut self) -> bool {
+        let completed = self.coordinator.complete_request(&self.key);
+        if completed {
+            self.completed = true;
+        }
+        completed
+    }
+}
+
+impl Drop for RefreshCompletionGuard<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.coordinator.force_complete_request(&self.key);
+        }
+    }
+}
+
+fn send_refresh_replies_for_waiters(
+    completion_guard: &RefreshCompletionGuard<'_>,
+    result: &RefreshResult,
+) {
+    for request_id in completion_guard.drain_request_ids() {
+        send_reply(request_id, Some(result.clone()));
+    }
+}
+
+fn send_refresh_errors_for_waiters(completion_guard: &RefreshCompletionGuard<'_>, message: &str) {
+    for request_id in completion_guard.drain_request_ids() {
+        send_error(Some(request_id), -4, message.to_string());
+    }
+}
+
+fn finish_refresh_replies(
+    completion_guard: &mut RefreshCompletionGuard<'_>,
+    result: &RefreshResult,
+) {
+    loop {
+        send_refresh_replies_for_waiters(completion_guard, result);
+        if completion_guard.finish_if_no_pending() {
+            return;
+        }
+    }
+}
+
+fn finish_refresh_errors(completion_guard: &mut RefreshCompletionGuard<'_>, message: &str) {
+    loop {
+        send_refresh_errors_for_waiters(completion_guard, message);
+        if completion_guard.finish_if_no_pending() {
+            return;
+        }
+    }
+}
+
+pub struct Context {
+    configuration: RwLock<ConfigurationState>,
+    locators: Arc<Vec<Arc<dyn Locator>>>,
+    conda_locator: Arc<Conda>,
     os_environment: Arc<dyn Environment>,
+    refresh_coordinator: RefreshCoordinator,
 }
 
 static MISSING_ENVS_REPORTED: AtomicBool = AtomicBool::new(false);
@@ -78,9 +335,9 @@ pub fn start_jsonrpc_server() {
     let context = Context {
         locators: create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         conda_locator,
-        poetry_locator,
-        configuration: RwLock::new(Configuration::default()),
+        configuration: RwLock::new(ConfigurationState::default()),
         os_environment: Arc::new(environment),
+        refresh_coordinator: RefreshCoordinator::default(),
     };
 
     let mut handlers = HandlersKeyedByMethodName::new(Arc::new(context));
@@ -160,24 +417,28 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                     );
                 }
 
-                let mut cfg = context.configuration.write().unwrap();
-                cfg.workspace_directories = workspace_directories;
-                cfg.conda_executable = configure_options.conda_executable;
-                cfg.environment_directories = environment_directories;
-                cfg.pipenv_executable = configure_options.pipenv_executable;
-                cfg.poetry_executable = configure_options.poetry_executable;
-                // We will not support changing the cache directories once set.
-                // No point, supporting such a use case.
-                if let Some(cache_directory) = configure_options.cache_directory {
-                    set_cache_directory(cache_directory.clone());
-                    cfg.cache_directory = Some(cache_directory);
-                }
-                trace!("Configuring locators: {:?}", cfg);
-                drop(cfg);
-                let config = context.configuration.read().unwrap().clone();
-                for locator in context.locators.iter() {
-                    locator.configure(&config);
-                }
+                let config = {
+                    let mut state = context.configuration.write().unwrap();
+                    state.config.workspace_directories = workspace_directories;
+                    state.config.conda_executable = configure_options.conda_executable;
+                    state.config.environment_directories = environment_directories;
+                    state.config.pipenv_executable = configure_options.pipenv_executable;
+                    state.config.poetry_executable = configure_options.poetry_executable;
+                    // We will not support changing the cache directories once set.
+                    // No point, supporting such a use case.
+                    if let Some(cache_directory) = configure_options.cache_directory {
+                        set_cache_directory(cache_directory.clone());
+                        state.config.cache_directory = Some(cache_directory);
+                    }
+                    state.generation += 1;
+                    trace!(
+                        "Configuring locators with generation {}: {:?}",
+                        state.generation,
+                        state.config
+                    );
+                    state.config.clone()
+                };
+                configure_locators(&context.locators, &config);
                 info!("Configure completed in {:?}", now.elapsed());
                 send_reply(id, None::<()>);
             });
@@ -189,7 +450,7 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshOptions {
     /// If provided, then limit the search to this kind of environments.
@@ -214,18 +475,204 @@ impl RefreshResult {
     }
 }
 
-pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
-    let params = match params {
+fn normalize_refresh_params(params: Value) -> Value {
+    match params {
         Value::Null => json!({}),
-        Value::Array(_) => json!({}),
+        Value::Array(values) if values.is_empty() => json!({}),
         _ => params,
+    }
+}
+
+fn canonicalize_refresh_options(mut options: RefreshOptions) -> RefreshOptions {
+    if let Some(search_paths) = options.search_paths.take() {
+        let mut expanded = expand_glob_patterns(&search_paths)
+            .into_iter()
+            .map(norm_case)
+            .collect::<Vec<PathBuf>>();
+        expanded.sort();
+        expanded.dedup();
+        options.search_paths = Some(expanded);
+    }
+
+    options
+}
+
+fn parse_refresh_options(params: Value) -> Result<RefreshOptions, serde_json::Error> {
+    serde_json::from_value::<Option<RefreshOptions>>(normalize_refresh_params(params))
+        .map(|options| canonicalize_refresh_options(options.unwrap_or_default()))
+}
+
+fn configure_locators(locators: &Arc<Vec<Arc<dyn Locator>>>, config: &Configuration) {
+    for locator in locators.iter() {
+        locator.configure(config);
+    }
+}
+
+fn create_refresh_locators(environment: &dyn Environment) -> RefreshLocators {
+    let conda_locator = Arc::new(Conda::from(environment));
+    let poetry_locator = Arc::new(Poetry::from(environment));
+    let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), environment);
+
+    RefreshLocators {
+        locators,
+        conda_locator,
+        poetry_locator,
+    }
+}
+
+fn sync_refresh_locator_state(
+    target_locators: &[Arc<dyn Locator>],
+    source_locators: &[Arc<dyn Locator>],
+    search_scope: Option<&SearchScope>,
+) {
+    let sync_scope = refresh_state_sync_scope(search_scope);
+
+    assert_eq!(
+        target_locators.len(),
+        source_locators.len(),
+        "refresh locator graphs drifted"
+    );
+
+    for (target, source) in target_locators.iter().zip(source_locators.iter()) {
+        assert_eq!(
+            target.get_kind(),
+            source.get_kind(),
+            "refresh locator order drifted"
+        );
+
+        if !matches!(target.refresh_state(), RefreshStatePersistence::Stateless) {
+            trace!(
+                "Applying refresh state contract for locator {:?}: {:?}",
+                target.get_kind(),
+                target.refresh_state()
+            );
+        }
+
+        target.sync_refresh_state_from(source.as_ref(), &sync_scope);
+    }
+}
+
+fn refresh_state_sync_scope(search_scope: Option<&SearchScope>) -> RefreshStateSyncScope {
+    match search_scope {
+        Some(SearchScope::Workspace) => RefreshStateSyncScope::Workspace,
+        Some(SearchScope::Global(kind)) => RefreshStateSyncScope::GlobalFiltered(*kind),
+        None => RefreshStateSyncScope::Full,
+    }
+}
+
+fn execute_refresh(
+    context: &Context,
+    refresh_options: &RefreshOptions,
+    configuration_state: &ConfigurationState,
+) -> RefreshExecution {
+    let refresh_locators = create_refresh_locators(context.os_environment.deref());
+    let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter(
+        refresh_options.search_kind,
+    ))));
+
+    let (config, search_scope) =
+        build_refresh_config(refresh_options, configuration_state.config.clone());
+    if refresh_options.search_paths.is_some() {
+        trace!(
+            "Expanded search paths to {} workspace dirs, {} executables",
+            config
+                .workspace_directories
+                .as_ref()
+                .map(|v| v.len())
+                .unwrap_or(0),
+            config.executables.as_ref().map(|v| v.len()).unwrap_or(0)
+        );
+    }
+
+    configure_locators(&refresh_locators.locators, &config);
+
+    trace!(
+        "Start refreshing environments, generation: {}, config: {:?}",
+        configuration_state.generation,
+        config
+    );
+    let summary = find_and_report_envs(
+        reporter.as_ref(),
+        config,
+        &refresh_locators.locators,
+        context.os_environment.deref(),
+        search_scope.clone(),
+    );
+    let summary = summary.lock().expect("summary mutex poisoned");
+    for locator in summary.locators.iter() {
+        info!("Locator {:?} took {:?}", locator.0, locator.1);
+    }
+    for item in summary.breakdown.iter() {
+        info!("Locator {} took {:?}", item.0, item.1);
+    }
+    trace!("Finished refreshing environments in {:?}", summary.total);
+
+    // Refresh runs on a transient locator graph, so apply each locator's refresh-state
+    // contract back into the long-lived shared locator graph.
+    sync_refresh_locator_state(
+        context.locators.as_ref(),
+        refresh_locators.locators.as_ref(),
+        search_scope.as_ref(),
+    );
+
+    let perf = RefreshPerformance {
+        total: summary.total.as_millis(),
+        locators: summary
+            .locators
+            .clone()
+            .iter()
+            .map(|(k, v)| (format!("{k:?}"), v.as_millis()))
+            .collect::<BTreeMap<String, u128>>(),
+        breakdown: summary
+            .breakdown
+            .clone()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.as_millis()))
+            .collect::<BTreeMap<String, u128>>(),
     };
-    match serde_json::from_value::<Option<RefreshOptions>>(params.clone()) {
+
+    RefreshExecution {
+        result: RefreshResult::new(summary.total),
+        perf,
+        reporter,
+        conda_locator: refresh_locators.conda_locator,
+        poetry_locator: refresh_locators.poetry_locator,
+        conda_executable: configuration_state.config.conda_executable.clone(),
+        poetry_executable: configuration_state.config.poetry_executable.clone(),
+    }
+}
+
+fn report_refresh_follow_up(execution: RefreshExecution) {
+    execution
+        .reporter
+        .report_telemetry(&TelemetryEvent::RefreshPerformance(execution.perf));
+
+    if MISSING_ENVS_REPORTED
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .ok()
+        .unwrap_or_default()
+    {
+        let conda_locator = execution.conda_locator.clone();
+        let conda_executable = execution.conda_executable.clone();
+        let reporter_ref = execution.reporter.clone();
+        thread::spawn(move || {
+            conda_locator.find_and_report_missing_envs(reporter_ref.as_ref(), conda_executable);
+            Some(())
+        });
+
+        let poetry_locator = execution.poetry_locator.clone();
+        let poetry_executable = execution.poetry_executable.clone();
+        let reporter_ref = execution.reporter.clone();
+        thread::spawn(move || {
+            poetry_locator.find_and_report_missing_envs(reporter_ref.as_ref(), poetry_executable);
+            Some(())
+        });
+    }
+}
+
+pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
+    match parse_refresh_options(params.clone()) {
         Ok(refresh_options) => {
-            let refresh_options = refresh_options.unwrap_or(RefreshOptions {
-                search_kind: None,
-                search_paths: None,
-            });
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 let _span = info_span!("handle_refresh",
@@ -234,110 +681,61 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                 )
                 .entered();
 
-                // Ensure we can have only one refresh at a time.
-                let lock = REFRESH_LOCK.lock().expect("REFRESH_LOCK mutex poisoned");
+                loop {
+                    let configuration_state = context.configuration.read().unwrap().clone();
+                    let refresh_key =
+                        RefreshKey::new(&refresh_options, configuration_state.generation);
 
-                let config = context.configuration.read().unwrap().clone();
-                let reporter = Arc::new(CacheReporter::new(Arc::new(jsonrpc::create_reporter(
-                    refresh_options.search_kind,
-                ))));
+                    match context
+                        .refresh_coordinator
+                        .register_request(id, refresh_key.clone())
+                    {
+                        RefreshRegistration::Joined => return,
+                        RefreshRegistration::Wait => {
+                            context.refresh_coordinator.wait_until_idle();
+                        }
+                        RefreshRegistration::Start => {
+                            let refresh_result = panic::catch_unwind(AssertUnwindSafe(|| {
+                                execute_refresh(
+                                    context.as_ref(),
+                                    &refresh_options,
+                                    &configuration_state,
+                                )
+                            }));
 
-                let (config, search_scope) = build_refresh_config(&refresh_options, config);
-                if refresh_options.search_paths.is_some() {
-                    trace!(
-                        "Expanded search paths to {} workspace dirs, {} executables",
-                        config
-                            .workspace_directories
-                            .as_ref()
-                            .map(|v| v.len())
-                            .unwrap_or(0),
-                        config.executables.as_ref().map(|v| v.len()).unwrap_or(0)
-                    );
+                            match refresh_result {
+                                Ok(execution) => {
+                                    let refresh_result = execution.result.clone();
+                                    let mut completion_guard = RefreshCompletionGuard::begin(
+                                        &context.refresh_coordinator,
+                                        &refresh_key,
+                                    );
+                                    send_refresh_replies_for_waiters(
+                                        &completion_guard,
+                                        &refresh_result,
+                                    );
+                                    finish_refresh_replies(&mut completion_guard, &refresh_result);
+                                    report_refresh_follow_up(execution);
+                                }
+                                Err(_) => {
+                                    error!(
+                                        "Refresh panicked for generation {} and options {:?}",
+                                        configuration_state.generation, refresh_options
+                                    );
+                                    let mut completion_guard = RefreshCompletionGuard::begin(
+                                        &context.refresh_coordinator,
+                                        &refresh_key,
+                                    );
+                                    finish_refresh_errors(
+                                        &mut completion_guard,
+                                        "Refresh failed unexpectedly",
+                                    );
+                                }
+                            }
+                            return;
+                        }
+                    }
                 }
-
-                // Configure the locators with the (possibly modified) config.
-                for locator in context.locators.iter() {
-                    locator.configure(&config);
-                }
-
-                trace!("Start refreshing environments, config: {:?}", config);
-                let summary = find_and_report_envs(
-                    reporter.as_ref(),
-                    config,
-                    &context.locators,
-                    context.os_environment.deref(),
-                    search_scope,
-                );
-                let summary = summary.lock().expect("summary mutex poisoned");
-                for locator in summary.locators.iter() {
-                    info!("Locator {:?} took {:?}", locator.0, locator.1);
-                }
-                for item in summary.breakdown.iter() {
-                    info!("Locator {} took {:?}", item.0, item.1);
-                }
-                trace!("Finished refreshing environments in {:?}", summary.total);
-                send_reply(id, Some(RefreshResult::new(summary.total)));
-
-                let perf = RefreshPerformance {
-                    total: summary.total.as_millis(),
-                    locators: summary
-                        .locators
-                        .clone()
-                        .iter()
-                        .map(|(k, v)| (format!("{k:?}"), v.as_millis()))
-                        .collect::<BTreeMap<String, u128>>(),
-                    breakdown: summary
-                        .breakdown
-                        .clone()
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.as_millis()))
-                        .collect::<BTreeMap<String, u128>>(),
-                };
-                reporter.report_telemetry(&TelemetryEvent::RefreshPerformance(perf));
-                // Find an report missing envs for the first launch of this process.
-                if MISSING_ENVS_REPORTED
-                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                    .ok()
-                    .unwrap_or_default()
-                {
-                    // By now all conda envs have been found
-                    // Spawn conda  in a separate thread.
-                    // & see if we can find more environments by spawning conda.
-                    // But we will not wait for this to complete.
-                    let conda_locator = context.conda_locator.clone();
-                    let conda_executable = context
-                        .configuration
-                        .read()
-                        .unwrap()
-                        .conda_executable
-                        .clone();
-                    let reporter_ref = reporter.clone();
-                    thread::spawn(move || {
-                        conda_locator
-                            .find_and_report_missing_envs(reporter_ref.as_ref(), conda_executable);
-                        Some(())
-                    });
-
-                    // By now all poetry envs have been found
-                    // Spawn poetry exe in a separate thread.
-                    // & see if we can find more environments by spawning poetry.
-                    // But we will not wait for this to complete.
-                    let poetry_locator = context.poetry_locator.clone();
-                    let poetry_executable = context
-                        .configuration
-                        .read()
-                        .unwrap()
-                        .poetry_executable
-                        .clone();
-                    let reporter_ref = reporter.clone();
-                    thread::spawn(move || {
-                        poetry_locator
-                            .find_and_report_missing_envs(reporter_ref.as_ref(), poetry_executable);
-                        Some(())
-                    });
-                }
-
-                drop(lock);
             });
         }
         Err(e) => {
@@ -447,6 +845,7 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
                             .configuration
                             .read()
                             .unwrap()
+                            .config
                             .clone()
                             .environment_directories
                             .as_deref()
@@ -491,6 +890,7 @@ pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
             .configuration
             .read()
             .unwrap()
+            .config
             .conda_executable
             .clone();
         let info = conda_locator.get_info_for_telemetry(conda_executable);
@@ -560,7 +960,442 @@ pub(crate) fn build_refresh_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pet_conda::manager::CondaManager;
+    use pet_core::manager::EnvManagerType;
+    use pet_core::RefreshStatePersistence;
     use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::thread;
+
+    fn make_refresh_key(generation: u64, options: RefreshOptions) -> RefreshKey {
+        RefreshKey::new(&options, generation)
+    }
+
+    #[test]
+    fn test_parse_refresh_options_normalizes_null_and_array() {
+        assert_eq!(
+            parse_refresh_options(Value::Null).unwrap(),
+            RefreshOptions::default()
+        );
+        assert_eq!(
+            parse_refresh_options(Value::Array(vec![])).unwrap(),
+            RefreshOptions::default()
+        );
+    }
+
+    #[test]
+    fn test_parse_refresh_options_rejects_non_empty_array() {
+        assert!(parse_refresh_options(json!([{"searchKind": "Conda"}])).is_err());
+    }
+
+    #[test]
+    fn test_parse_refresh_options_canonicalizes_search_paths() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let alpha = temp_dir.path().join("alpha");
+        let beta = temp_dir.path().join("beta");
+        std::fs::create_dir(&alpha).unwrap();
+        std::fs::create_dir(&beta).unwrap();
+
+        let options = canonicalize_refresh_options(RefreshOptions {
+            search_kind: Some(PythonEnvironmentKind::Venv),
+            search_paths: Some(vec![beta.clone(), temp_dir.path().join("*"), alpha.clone()]),
+        });
+
+        assert_eq!(
+            options,
+            RefreshOptions {
+                search_kind: Some(PythonEnvironmentKind::Venv),
+                search_paths: Some(vec![norm_case(alpha), norm_case(beta)]),
+            }
+        );
+    }
+
+    #[test]
+    fn test_refresh_coordinator_joins_identical_requests() {
+        let coordinator = RefreshCoordinator::default();
+        let key = make_refresh_key(3, RefreshOptions::default());
+
+        assert!(matches!(
+            coordinator.register_request(1, key.clone()),
+            RefreshRegistration::Start
+        ));
+        assert!(matches!(
+            coordinator.register_request(2, key.clone()),
+            RefreshRegistration::Joined
+        ));
+        let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &key);
+        assert_eq!(completion_guard.drain_request_ids(), vec![1, 2]);
+        assert!(completion_guard.finish_if_no_pending());
+    }
+
+    #[test]
+    fn test_refresh_coordinator_serializes_incompatible_requests() {
+        let coordinator = Arc::new(RefreshCoordinator::default());
+        let first_key = make_refresh_key(1, RefreshOptions::default());
+        let second_key = make_refresh_key(
+            1,
+            RefreshOptions {
+                search_kind: Some(PythonEnvironmentKind::Venv),
+                search_paths: None,
+            },
+        );
+
+        assert!(matches!(
+            coordinator.register_request(1, first_key.clone()),
+            RefreshRegistration::Start
+        ));
+
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let worker = {
+            let coordinator = coordinator.clone();
+            let second_key = second_key.clone();
+            thread::spawn(move || {
+                let action = coordinator.register_request(2, second_key.clone());
+                waiting_tx.send(()).unwrap();
+                assert!(matches!(action, RefreshRegistration::Wait));
+
+                coordinator.wait_until_idle();
+                assert!(matches!(
+                    coordinator.register_request(2, second_key.clone()),
+                    RefreshRegistration::Start
+                ));
+                let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &second_key);
+                let request_ids = completion_guard.drain_request_ids();
+                assert!(completion_guard.finish_if_no_pending());
+                request_ids
+            })
+        };
+
+        waiting_rx.recv().unwrap();
+        let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &first_key);
+        assert_eq!(completion_guard.drain_request_ids(), vec![1]);
+        assert!(completion_guard.finish_if_no_pending());
+        assert_eq!(worker.join().unwrap(), vec![2]);
+    }
+
+    #[test]
+    fn test_conda_refresh_state_sync_replaces_shared_caches() {
+        let environment = EnvironmentApi::new();
+        let shared = Conda::from(&environment);
+        let refreshed = Conda::from(&environment);
+
+        let stale_env_path = PathBuf::from("/stale/env");
+        let fresh_env_path = PathBuf::from("/fresh/env");
+        let stale_manager_path = PathBuf::from("/stale/conda");
+        let fresh_manager_path = PathBuf::from("/fresh/conda");
+        let stale_mamba_path = PathBuf::from("/stale/mamba");
+        let fresh_mamba_path = PathBuf::from("/fresh/mamba");
+
+        shared.environments.insert(
+            stale_env_path.clone(),
+            PythonEnvironment::new(
+                Some(stale_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(stale_env_path.clone()),
+                None,
+                Some("3.10.0".to_string()),
+            ),
+        );
+        shared.managers.insert(
+            stale_manager_path.clone(),
+            CondaManager {
+                executable: stale_manager_path.clone(),
+                version: Some("23.1.0".to_string()),
+                conda_dir: Some(PathBuf::from("/stale")),
+                manager_type: EnvManagerType::Conda,
+            },
+        );
+        shared.mamba_managers.insert(
+            stale_mamba_path.clone(),
+            CondaManager {
+                executable: stale_mamba_path.clone(),
+                version: Some("1.5.0".to_string()),
+                conda_dir: Some(PathBuf::from("/stale")),
+                manager_type: EnvManagerType::Mamba,
+            },
+        );
+
+        refreshed.environments.insert(
+            fresh_env_path.clone(),
+            PythonEnvironment::new(
+                Some(fresh_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(fresh_env_path.clone()),
+                None,
+                Some("3.11.0".to_string()),
+            ),
+        );
+        refreshed.managers.insert(
+            fresh_manager_path.clone(),
+            CondaManager {
+                executable: fresh_manager_path.clone(),
+                version: Some("24.1.0".to_string()),
+                conda_dir: Some(PathBuf::from("/fresh")),
+                manager_type: EnvManagerType::Conda,
+            },
+        );
+        refreshed.mamba_managers.insert(
+            fresh_mamba_path.clone(),
+            CondaManager {
+                executable: fresh_mamba_path.clone(),
+                version: Some("2.0.0".to_string()),
+                conda_dir: Some(PathBuf::from("/fresh")),
+                manager_type: EnvManagerType::Mamba,
+            },
+        );
+
+        assert_eq!(
+            shared.refresh_state(),
+            RefreshStatePersistence::SyncedDiscoveryState
+        );
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+
+        assert_eq!(shared.environments.len(), 1);
+        assert!(!shared.environments.contains_key(&stale_env_path));
+        assert!(shared.environments.contains_key(&fresh_env_path));
+
+        assert_eq!(shared.managers.len(), 1);
+        assert!(!shared.managers.contains_key(&stale_manager_path));
+        assert!(shared.managers.contains_key(&fresh_manager_path));
+
+        assert_eq!(shared.mamba_managers.len(), 1);
+        assert!(!shared.mamba_managers.contains_key(&stale_mamba_path));
+        assert!(shared.mamba_managers.contains_key(&fresh_mamba_path));
+    }
+
+    #[test]
+    fn test_workspace_refresh_does_not_replace_shared_conda_state() {
+        let environment = EnvironmentApi::new();
+        let shared = Arc::new(Conda::from(&environment));
+        let refreshed = Arc::new(Conda::from(&environment));
+
+        let stale_env_path = PathBuf::from("/stale/env");
+        let fresh_env_path = PathBuf::from("/fresh/env");
+
+        shared.environments.insert(
+            stale_env_path.clone(),
+            PythonEnvironment::new(
+                Some(stale_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(stale_env_path.clone()),
+                None,
+                Some("3.10.0".to_string()),
+            ),
+        );
+        refreshed.environments.insert(
+            fresh_env_path.clone(),
+            PythonEnvironment::new(
+                Some(fresh_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(fresh_env_path.clone()),
+                None,
+                Some("3.11.0".to_string()),
+            ),
+        );
+
+        sync_refresh_locator_state(
+            &[shared.clone() as Arc<dyn Locator>],
+            &[refreshed as Arc<dyn Locator>],
+            Some(&SearchScope::Workspace),
+        );
+
+        assert_eq!(shared.environments.len(), 1);
+        assert!(shared.environments.contains_key(&stale_env_path));
+        assert!(!shared.environments.contains_key(&fresh_env_path));
+    }
+
+    #[test]
+    fn test_kind_filtered_refresh_skips_unrelated_conda_state_sync() {
+        let environment = EnvironmentApi::new();
+        let shared = Arc::new(Conda::from(&environment));
+        let refreshed = Arc::new(Conda::from(&environment));
+
+        let stale_env_path = PathBuf::from("/stale/env");
+        let fresh_env_path = PathBuf::from("/fresh/env");
+
+        shared.environments.insert(
+            stale_env_path.clone(),
+            PythonEnvironment::new(
+                Some(stale_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(stale_env_path.clone()),
+                None,
+                Some("3.10.0".to_string()),
+            ),
+        );
+        refreshed.environments.insert(
+            fresh_env_path.clone(),
+            PythonEnvironment::new(
+                Some(fresh_env_path.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(fresh_env_path.clone()),
+                None,
+                Some("3.11.0".to_string()),
+            ),
+        );
+
+        sync_refresh_locator_state(
+            &[shared.clone() as Arc<dyn Locator>],
+            &[refreshed as Arc<dyn Locator>],
+            Some(&SearchScope::Global(PythonEnvironmentKind::Venv)),
+        );
+
+        assert_eq!(shared.environments.len(), 1);
+        assert!(shared.environments.contains_key(&stale_env_path));
+        assert!(!shared.environments.contains_key(&fresh_env_path));
+    }
+
+    #[test]
+    fn test_refresh_coordinator_does_not_join_different_generations() {
+        let coordinator = RefreshCoordinator::default();
+        let options = RefreshOptions::default();
+        let first_key = make_refresh_key(1, options.clone());
+        let second_key = make_refresh_key(2, options);
+
+        assert!(matches!(
+            coordinator.register_request(10, first_key.clone()),
+            RefreshRegistration::Start
+        ));
+        assert!(matches!(
+            coordinator.register_request(11, second_key.clone()),
+            RefreshRegistration::Wait
+        ));
+        let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &first_key);
+        assert_eq!(completion_guard.drain_request_ids(), vec![10]);
+        assert!(completion_guard.finish_if_no_pending());
+        assert!(matches!(
+            coordinator.register_request(11, second_key.clone()),
+            RefreshRegistration::Start
+        ));
+        let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &second_key);
+        assert_eq!(completion_guard.drain_request_ids(), vec![11]);
+        assert!(completion_guard.finish_if_no_pending());
+    }
+
+    #[test]
+    fn test_refresh_coordinator_reuses_same_key_during_completion() {
+        let coordinator = RefreshCoordinator::default();
+        let key = make_refresh_key(1, RefreshOptions::default());
+
+        assert!(matches!(
+            coordinator.register_request(1, key.clone()),
+            RefreshRegistration::Start
+        ));
+
+        let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &key);
+        assert_eq!(completion_guard.drain_request_ids(), vec![1]);
+
+        assert!(matches!(
+            coordinator.register_request(2, key.clone()),
+            RefreshRegistration::Joined
+        ));
+        assert_eq!(completion_guard.drain_request_ids(), vec![2]);
+        assert!(completion_guard.finish_if_no_pending());
+    }
+
+    #[test]
+    fn test_refresh_coordinator_waits_for_completion_boundary() {
+        let coordinator = Arc::new(RefreshCoordinator::default());
+        let first_key = make_refresh_key(1, RefreshOptions::default());
+        let second_key = make_refresh_key(
+            1,
+            RefreshOptions {
+                search_kind: Some(PythonEnvironmentKind::Venv),
+                search_paths: None,
+            },
+        );
+
+        assert!(matches!(
+            coordinator.register_request(1, first_key.clone()),
+            RefreshRegistration::Start
+        ));
+        let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &first_key);
+        assert_eq!(completion_guard.drain_request_ids(), vec![1]);
+
+        let (state_tx, state_rx) = mpsc::channel();
+        let worker = {
+            let coordinator = coordinator.clone();
+            let second_key = second_key.clone();
+            thread::spawn(move || {
+                assert!(matches!(
+                    coordinator.register_request(2, second_key.clone()),
+                    RefreshRegistration::Wait
+                ));
+                state_tx.send("waiting").unwrap();
+                coordinator.wait_until_idle();
+                state_tx.send("idle").unwrap();
+                assert!(matches!(
+                    coordinator.register_request(2, second_key.clone()),
+                    RefreshRegistration::Start
+                ));
+                let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &second_key);
+                let request_ids = completion_guard.drain_request_ids();
+                assert!(completion_guard.finish_if_no_pending());
+                request_ids
+            })
+        };
+
+        assert_eq!(state_rx.recv().unwrap(), "waiting");
+        assert!(state_rx.try_recv().is_err());
+
+        assert!(completion_guard.finish_if_no_pending());
+
+        assert_eq!(state_rx.recv().unwrap(), "idle");
+        assert_eq!(worker.join().unwrap(), vec![2]);
+    }
+
+    #[test]
+    fn test_refresh_completion_guard_releases_waiters_on_unwind() {
+        let coordinator = Arc::new(RefreshCoordinator::default());
+        let first_key = make_refresh_key(1, RefreshOptions::default());
+        let second_key = make_refresh_key(
+            1,
+            RefreshOptions {
+                search_kind: Some(PythonEnvironmentKind::Venv),
+                search_paths: None,
+            },
+        );
+
+        assert!(matches!(
+            coordinator.register_request(1, first_key.clone()),
+            RefreshRegistration::Start
+        ));
+
+        let (state_tx, state_rx) = mpsc::channel();
+        let waiter = {
+            let coordinator = coordinator.clone();
+            let second_key = second_key.clone();
+            thread::spawn(move || {
+                assert!(matches!(
+                    coordinator.register_request(2, second_key.clone()),
+                    RefreshRegistration::Wait
+                ));
+                state_tx.send("waiting").unwrap();
+                coordinator.wait_until_idle();
+                state_tx.send("idle").unwrap();
+                assert!(matches!(
+                    coordinator.register_request(2, second_key.clone()),
+                    RefreshRegistration::Start
+                ));
+                let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &second_key);
+                let request_ids = completion_guard.drain_request_ids();
+                assert!(completion_guard.finish_if_no_pending());
+                request_ids
+            })
+        };
+
+        assert_eq!(state_rx.recv().unwrap(), "waiting");
+        let panic_result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let completion_guard = RefreshCompletionGuard::begin(coordinator.as_ref(), &first_key);
+            assert_eq!(completion_guard.drain_request_ids(), vec![1]);
+            panic!("forced completion panic");
+        }));
+        assert!(panic_result.is_err());
+
+        assert_eq!(state_rx.recv().unwrap(), "idle");
+        assert_eq!(waiter.join().unwrap(), vec![2]);
+    }
 
     /// Test for https://github.com/microsoft/python-environment-tools/issues/151
     /// Verifies that when searchKind is provided (without searchPaths),

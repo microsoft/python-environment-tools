@@ -8,7 +8,7 @@ use pet_core::{
     env::PythonEnv,
     python_environment::{PythonEnvironment, PythonEnvironmentKind},
     reporter::Reporter,
-    Locator, LocatorKind, LocatorResult,
+    Locator, LocatorKind, LocatorResult, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use pet_virtualenv::is_virtualenv;
 use std::sync::{Arc, Mutex};
@@ -52,11 +52,47 @@ impl WindowsRegistry {
             .expect("search_result mutex poisoned");
         search_result.take();
     }
+
+    fn sync_search_result_from(&self, source: &WindowsRegistry) {
+        let search_result = source
+            .search_result
+            .lock()
+            .expect("search_result mutex poisoned")
+            .clone();
+        self.search_result
+            .lock()
+            .expect("search_result mutex poisoned")
+            .clone_from(&search_result);
+    }
 }
 
 impl Locator for WindowsRegistry {
     fn get_kind(&self) -> LocatorKind {
         LocatorKind::WindowsRegistry
+    }
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::SyncedDiscoveryState
+    }
+    fn sync_refresh_state_from(&self, source: &dyn Locator, scope: &RefreshStateSyncScope) {
+        let source = source
+            .as_any()
+            .downcast_ref::<WindowsRegistry>()
+            .unwrap_or_else(|| {
+                panic!(
+                    "attempted to sync WindowsRegistry state from {:?}",
+                    source.get_kind()
+                )
+            });
+
+        match scope {
+            RefreshStateSyncScope::Full => self.sync_search_result_from(source),
+            RefreshStateSyncScope::GlobalFiltered(kind)
+                if self.supported_categories().contains(kind) =>
+            {
+                self.sync_search_result_from(source)
+            }
+            RefreshStateSyncScope::GlobalFiltered(_) | RefreshStateSyncScope::Workspace => {}
+        }
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![
@@ -102,5 +138,74 @@ impl Locator for WindowsRegistry {
     #[cfg(unix)]
     fn find(&self, _reporter: &dyn Reporter) {
         //
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_conda::Conda;
+    use pet_core::os_environment::EnvironmentApi;
+
+    #[test]
+    fn test_full_refresh_sync_replaces_registry_cache() {
+        let environment = EnvironmentApi::new();
+        let shared = WindowsRegistry::from(Arc::new(Conda::from(&environment)));
+        let refreshed = WindowsRegistry::from(Arc::new(Conda::from(&environment)));
+
+        shared.search_result.lock().unwrap().replace(LocatorResult {
+            managers: vec![],
+            environments: vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }],
+        });
+        refreshed
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("fresh".to_string()),
+                    ..Default::default()
+                }],
+            });
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+
+        let result = shared.search_result.lock().unwrap().clone().unwrap();
+        assert_eq!(result.environments[0].name.as_deref(), Some("fresh"));
+    }
+
+    #[test]
+    fn test_workspace_scope_does_not_replace_registry_cache() {
+        let environment = EnvironmentApi::new();
+        let shared = WindowsRegistry::from(Arc::new(Conda::from(&environment)));
+        let refreshed = WindowsRegistry::from(Arc::new(Conda::from(&environment)));
+
+        shared.search_result.lock().unwrap().replace(LocatorResult {
+            managers: vec![],
+            environments: vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }],
+        });
+        refreshed
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("fresh".to_string()),
+                    ..Default::default()
+                }],
+            });
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Workspace);
+
+        let result = shared.search_result.lock().unwrap().clone().unwrap();
+        assert_eq!(result.environments[0].name.as_deref(), Some("stale"));
     }
 }

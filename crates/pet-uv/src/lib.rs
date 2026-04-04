@@ -12,7 +12,7 @@ use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     pyvenv_cfg::PyVenvCfg,
     reporter::Reporter,
-    Configuration, Locator, LocatorKind,
+    Configuration, Locator, LocatorKind, RefreshStatePersistence,
 };
 use pet_fs::path::norm_case;
 use pet_python_utils::executable::{find_executable, find_executables};
@@ -85,6 +85,10 @@ impl Locator for Uv {
         LocatorKind::Uv
     }
 
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::ConfiguredOnly
+    }
+
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
         vec![
             PythonEnvironmentKind::Uv,
@@ -93,12 +97,12 @@ impl Locator for Uv {
     }
 
     fn configure(&self, config: &Configuration) {
+        let mut ws = self
+            .workspace_directories
+            .lock()
+            .expect("workspace_directories mutex poisoned");
+        ws.clear();
         if let Some(workspace_directories) = config.workspace_directories.as_ref() {
-            let mut ws = self
-                .workspace_directories
-                .lock()
-                .expect("workspace_directories mutex poisoned");
-            ws.clear();
             ws.extend(workspace_directories.iter().cloned());
         }
     }

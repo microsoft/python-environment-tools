@@ -11,7 +11,7 @@ use pet_core::LocatorKind;
 use pet_core::{
     python_environment::{PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind},
     reporter::Reporter,
-    Configuration, Locator,
+    Configuration, Locator, RefreshStatePersistence,
 };
 use pet_fs::path::norm_case;
 use pet_python_utils::executable::find_executables;
@@ -418,10 +418,15 @@ impl Locator for PipEnv {
         LocatorKind::PipEnv
     }
 
+    fn refresh_state(&self) -> RefreshStatePersistence {
+        RefreshStatePersistence::ConfiguredOnly
+    }
+
     fn configure(&self, config: &Configuration) {
-        if let Some(exe) = &config.pipenv_executable {
-            self.pipenv_executable.write().unwrap().replace(exe.clone());
-        }
+        self.pipenv_executable
+            .write()
+            .unwrap()
+            .clone_from(&config.pipenv_executable);
     }
 
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
