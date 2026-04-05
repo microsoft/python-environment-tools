@@ -211,7 +211,10 @@ mod tests {
             Some(pet_fs::path::norm_case(executable))
         );
         assert_eq!(virtualenvwrapper_env.version, Some("3.12.1".to_string()));
-        assert_eq!(virtualenvwrapper_env.prefix, Some(prefix.clone()));
+        assert_eq!(
+            virtualenvwrapper_env.prefix,
+            Some(pet_fs::path::norm_case(prefix.clone()))
+        );
         assert_eq!(
             virtualenvwrapper_env.project,
             Some(pet_fs::path::norm_case(project_root.clone()))
