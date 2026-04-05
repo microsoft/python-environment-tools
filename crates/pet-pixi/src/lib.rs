@@ -156,7 +156,15 @@ mod tests {
 
         assert_eq!(pixi_env.kind, Some(PythonEnvironmentKind::Pixi));
         assert_eq!(pixi_env.name, Some("pixi-env".to_string()));
-        assert_eq!(pixi_env.prefix, Some(prefix.clone()));
+        assert_eq!(
+            pixi_env
+                .prefix
+                .as_deref()
+                .map(fs::canonicalize)
+                .transpose()
+                .unwrap(),
+            Some(fs::canonicalize(prefix.clone()).unwrap())
+        );
         assert_eq!(pixi_env.executable, Some(executable));
 
         fs::remove_dir_all(prefix.parent().unwrap()).unwrap();
@@ -179,7 +187,15 @@ mod tests {
         let pixi_env = locator.try_from(&env).unwrap();
 
         assert_eq!(pixi_env.kind, Some(PythonEnvironmentKind::Pixi));
-        assert_eq!(pixi_env.prefix, Some(prefix.clone()));
+        assert_eq!(
+            pixi_env
+                .prefix
+                .as_deref()
+                .map(fs::canonicalize)
+                .transpose()
+                .unwrap(),
+            Some(fs::canonicalize(prefix.clone()).unwrap())
+        );
 
         fs::remove_dir_all(prefix.parent().unwrap()).unwrap();
     }
