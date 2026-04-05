@@ -203,7 +203,13 @@ mod tests {
             Some(PythonEnvironmentKind::VirtualEnvWrapper)
         );
         assert_eq!(virtualenvwrapper_env.name, Some("wrapped-env".to_string()));
-        assert_eq!(virtualenvwrapper_env.executable, Some(executable));
+        assert_eq!(
+            virtualenvwrapper_env
+                .executable
+                .as_ref()
+                .map(pet_fs::path::norm_case),
+            Some(pet_fs::path::norm_case(executable))
+        );
         assert_eq!(virtualenvwrapper_env.version, Some("3.12.1".to_string()));
         assert_eq!(virtualenvwrapper_env.prefix, Some(prefix.clone()));
         assert_eq!(
