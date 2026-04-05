@@ -170,3 +170,127 @@ impl Locator for Homebrew {
         });
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestEnvironment {
+        homebrew_prefix: Option<String>,
+    }
+
+    impl Environment for TestEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_env_var(&self, key: String) -> Option<String> {
+            if key == "HOMEBREW_PREFIX" {
+                self.homebrew_prefix.clone()
+            } else {
+                None
+            }
+        }
+
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            vec![]
+        }
+    }
+
+    fn create_test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "pet-homebrew-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    #[test]
+    fn homebrew_locator_reports_kind_and_supported_category() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+
+        assert_eq!(locator.get_kind(), LocatorKind::Homebrew);
+        assert_eq!(
+            locator.supported_categories(),
+            vec![PythonEnvironmentKind::Homebrew]
+        );
+    }
+
+    #[test]
+    fn try_from_identifies_linuxbrew_python_executable() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+        let env = PythonEnv::new(
+            PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12"),
+            None,
+            None,
+        );
+
+        let homebrew_env = locator.try_from(&env).unwrap();
+
+        assert_eq!(homebrew_env.kind, Some(PythonEnvironmentKind::Homebrew));
+        assert_eq!(
+            homebrew_env.executable,
+            Some(PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.12"))
+        );
+        assert_eq!(homebrew_env.version, Some("3.12.4".to_string()));
+        assert_eq!(homebrew_env.prefix, None);
+        assert!(homebrew_env
+            .symlinks
+            .as_ref()
+            .unwrap()
+            .contains(&PathBuf::from(
+                "/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12"
+            )));
+    }
+
+    #[test]
+    fn try_from_rejects_non_homebrew_python() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+        let env = PythonEnv::new(PathBuf::from("/usr/bin/python3.12"), None, None);
+
+        assert!(locator.try_from(&env).is_none());
+    }
+
+    #[test]
+    fn try_from_rejects_virtualenv_and_conda_prefixes() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+
+        let venv_root = create_test_dir("venv-reject");
+        let venv_bin = venv_root.join("bin");
+        fs::create_dir_all(&venv_bin).unwrap();
+        fs::write(venv_bin.join("activate"), b"").unwrap();
+        let venv_executable = venv_bin.join("python3.12");
+        fs::write(&venv_executable, b"").unwrap();
+        let venv = PythonEnv::new(venv_executable, Some(venv_root.clone()), None);
+        assert!(locator.try_from(&venv).is_none());
+
+        let conda_root = create_test_dir("conda-reject");
+        fs::create_dir_all(conda_root.join("conda-meta")).unwrap();
+        let conda_executable = conda_root.join("bin").join("python3.12");
+        fs::create_dir_all(conda_executable.parent().unwrap()).unwrap();
+        fs::write(&conda_executable, b"").unwrap();
+        let conda = PythonEnv::new(conda_executable, Some(conda_root.clone()), None);
+        assert!(locator.try_from(&conda).is_none());
+
+        fs::remove_dir_all(venv_root).unwrap();
+        fs::remove_dir_all(conda_root).unwrap();
+    }
+}

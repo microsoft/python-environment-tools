@@ -243,3 +243,39 @@ pub fn get_known_symlinks_impl(
         vec![]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn homebrew_python_paths_are_recognized_across_supported_prefixes() {
+        assert!(is_homebrew_python(Path::new(
+            "/opt/homebrew/Cellar/python@3.12/3.12.4/bin/python3.12"
+        )));
+        assert!(is_homebrew_python(Path::new(
+            "/usr/local/Cellar/python@3.11/3.11.9/bin/python3.11"
+        )));
+        assert!(is_homebrew_python(Path::new(
+            "/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12"
+        )));
+        assert!(!is_homebrew_python(Path::new("/usr/bin/python3.12")));
+    }
+
+    #[test]
+    fn known_symlink_templates_include_expected_paths_for_linuxbrew() {
+        let resolved_exe =
+            PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12");
+        let symlinks = get_known_symlinks_impl(&resolved_exe, &"3.12.4".to_string());
+
+        assert!(symlinks.contains(&resolved_exe));
+    }
+
+    #[test]
+    fn known_symlink_templates_return_empty_for_unrecognized_paths() {
+        assert!(
+            get_known_symlinks_impl(Path::new("/usr/bin/python3.12"), &"3.12.4".to_string())
+                .is_empty()
+        );
+    }
+}
