@@ -165,7 +165,15 @@ mod tests {
                 .unwrap(),
             Some(fs::canonicalize(prefix.clone()).unwrap())
         );
-        assert_eq!(pixi_env.executable, Some(executable));
+        assert_eq!(
+            pixi_env
+                .executable
+                .as_deref()
+                .map(fs::canonicalize)
+                .transpose()
+                .unwrap(),
+            Some(fs::canonicalize(executable).unwrap())
+        );
 
         fs::remove_dir_all(prefix.parent().unwrap()).unwrap();
     }
