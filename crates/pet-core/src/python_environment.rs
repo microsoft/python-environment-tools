@@ -415,13 +415,16 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
     if let Some(exe) = &env.executable {
         Some(exe.clone())
     } else if let Some(prefix) = &env.prefix {
-        // If this is a conda env without Python, then the exe will be prefix/bin/python
+        // If this is a conda env without Python, use the platform's default interpreter path.
         if env.kind == Some(PythonEnvironmentKind::Conda) {
-            Some(prefix.join("bin").join(if cfg!(windows) {
-                "python.exe"
-            } else {
-                "python"
-            }))
+            #[cfg(windows)]
+            {
+                Some(prefix.join("python.exe"))
+            }
+            #[cfg(not(windows))]
+            {
+                Some(prefix.join("bin").join("python"))
+            }
         } else {
             Some(prefix.clone())
         }
@@ -436,10 +439,11 @@ pub fn get_environment_key(env: &PythonEnvironment) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(windows)]
-    use super::{get_shortest_executable, PythonEnvironmentKind};
-    #[cfg(windows)]
+    use super::{get_environment_key, PythonEnvironment, PythonEnvironmentKind};
     use std::path::PathBuf;
+
+    #[cfg(windows)]
+    use super::get_shortest_executable;
 
     #[test]
     #[cfg(windows)]
@@ -458,5 +462,65 @@ mod tests {
                 "C:\\Users\\user\\AppData\\Local\\Microsoft\\WindowsApps\\Python3.12.exe"
             ))
         );
+    }
+
+    #[test]
+    fn environment_key_uses_executable_when_available() {
+        let executable = PathBuf::from(if cfg!(windows) {
+            r"C:\env\Scripts\python.exe"
+        } else {
+            "/env/bin/python"
+        });
+        let prefix = PathBuf::from(if cfg!(windows) { r"C:\env" } else { "/env" });
+        let environment = PythonEnvironment {
+            executable: Some(executable.clone()),
+            prefix: Some(prefix),
+            kind: Some(PythonEnvironmentKind::Venv),
+            ..Default::default()
+        };
+
+        assert_eq!(get_environment_key(&environment), Some(executable));
+    }
+
+    #[test]
+    fn environment_key_uses_conda_default_python_when_executable_is_missing() {
+        let prefix = PathBuf::from(if cfg!(windows) {
+            r"C:\conda-env"
+        } else {
+            "/conda-env"
+        });
+        let environment = PythonEnvironment {
+            executable: None,
+            prefix: Some(prefix.clone()),
+            kind: Some(PythonEnvironmentKind::Conda),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            get_environment_key(&environment),
+            Some(if cfg!(windows) {
+                prefix.join("python.exe")
+            } else {
+                prefix.join("bin").join("python")
+            })
+        );
+    }
+
+    #[test]
+    fn environment_key_uses_non_conda_prefix_when_executable_is_missing() {
+        let prefix = PathBuf::from(if cfg!(windows) { r"C:\env" } else { "/env" });
+        let environment = PythonEnvironment {
+            executable: None,
+            prefix: Some(prefix.clone()),
+            kind: Some(PythonEnvironmentKind::Venv),
+            ..Default::default()
+        };
+
+        assert_eq!(get_environment_key(&environment), Some(prefix));
+    }
+
+    #[test]
+    fn environment_key_returns_none_without_executable_or_prefix() {
+        assert_eq!(get_environment_key(&PythonEnvironment::default()), None);
     }
 }
