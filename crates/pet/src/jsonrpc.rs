@@ -225,11 +225,22 @@ impl RefreshCoordinator {
                 self.changed.notify_all();
             }
             RefreshCoordinatorState::Idle => {}
-            _ => {
+            RefreshCoordinatorState::Completing(active) => {
                 // Mismatched key — another refresh owns this state. Log and
                 // leave it alone; the owning refresh will clean up.
                 error!(
-                    "force_complete_request called with mismatched key; current state not owned by caller"
+                    "force_complete_request called with mismatched key while coordinator was Completing; caller key: {:?}, active key: {:?}",
+                    key,
+                    active.key
+                );
+            }
+            RefreshCoordinatorState::Running(active) => {
+                // Mismatched key — another refresh owns this state. Log and
+                // leave it alone; the owning refresh will clean up.
+                error!(
+                    "force_complete_request called with mismatched key while coordinator was Running; caller key: {:?}, active key: {:?}",
+                    key,
+                    active.key
                 );
             }
         }
@@ -943,10 +954,10 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                             // (including begin_completion), force the
                             // coordinator back to Idle so waiters are not
                             // stuck forever.
-                            let mut safety_guard = RefreshSafetyGuard::new(
-                                &context.refresh_coordinator,
-                                refresh_key.clone(),
-                            );
+                            // Move refresh_key into the guard to avoid an
+                            // extra clone of potentially large search_paths.
+                            let mut safety_guard =
+                                RefreshSafetyGuard::new(&context.refresh_coordinator, refresh_key);
 
                             let refresh_result = panic::catch_unwind(AssertUnwindSafe(|| {
                                 execute_refresh(
@@ -961,7 +972,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                                     let refresh_result = execution.result.clone();
                                     let mut completion_guard = RefreshCompletionGuard::begin(
                                         &context.refresh_coordinator,
-                                        &refresh_key,
+                                        &safety_guard.key,
                                     );
                                     safety_guard.disarm();
                                     finish_refresh_replies(&mut completion_guard, &refresh_result);
@@ -974,7 +985,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
                                     );
                                     let mut completion_guard = RefreshCompletionGuard::begin(
                                         &context.refresh_coordinator,
-                                        &refresh_key,
+                                        &safety_guard.key,
                                     );
                                     safety_guard.disarm();
                                     finish_refresh_errors(
