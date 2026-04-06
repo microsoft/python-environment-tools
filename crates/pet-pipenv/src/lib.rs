@@ -495,15 +495,15 @@ impl Locator for PipEnv {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn unique_temp_dir() -> PathBuf {
         let mut dir = std::env::temp_dir();
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        dir.push(format!("pet_pipenv_test_{}", nanos));
+        let id = std::process::id();
+        let counter = TEST_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        dir.push(format!("pet_pipenv_test_{}_{}", id, counter));
         dir
     }
 
