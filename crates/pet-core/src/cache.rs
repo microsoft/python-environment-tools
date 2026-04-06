@@ -29,19 +29,29 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
 
     /// Returns a cloned value for the given key if it exists in the cache.
     pub fn get(&self, key: &K) -> Option<V> {
-        self.cache.read().unwrap().get(key).cloned()
+        self.cache
+            .read()
+            .expect("locator cache lock poisoned")
+            .get(key)
+            .cloned()
     }
 
     /// Checks if the cache contains the given key.
     pub fn contains_key(&self, key: &K) -> bool {
-        self.cache.read().unwrap().contains_key(key)
+        self.cache
+            .read()
+            .expect("locator cache lock poisoned")
+            .contains_key(key)
     }
 
     /// Inserts a key-value pair into the cache.
     ///
     /// Returns the previous value if the key was already present.
     pub fn insert(&self, key: K, value: V) -> Option<V> {
-        self.cache.write().unwrap().insert(key, value)
+        self.cache
+            .write()
+            .expect("locator cache lock poisoned")
+            .insert(key, value)
     }
 
     /// Inserts multiple key-value pairs into the cache atomically.
@@ -49,7 +59,7 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
     /// This method acquires a single write lock for all insertions, which is more
     /// efficient than calling `insert` multiple times when inserting many entries.
     pub fn insert_many(&self, entries: impl IntoIterator<Item = (K, V)>) {
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache.write().expect("locator cache lock poisoned");
         for (key, value) in entries {
             cache.insert(key, value);
         }
@@ -68,7 +78,7 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
     {
         // First check with read lock
         {
-            let cache = self.cache.read().unwrap();
+            let cache = self.cache.read().expect("locator cache lock poisoned");
             if let Some(value) = cache.get(&key) {
                 return Some(value.clone());
             }
@@ -77,7 +87,7 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
         // Compute the value (outside of any lock)
         if let Some(value) = f() {
             // Acquire write lock and insert
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = self.cache.write().expect("locator cache lock poisoned");
             // Double-check in case another thread inserted while we were computing
             if let Some(existing) = cache.get(&key) {
                 return Some(existing.clone());
@@ -91,22 +101,36 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
 
     /// Clears all entries from the cache.
     pub fn clear(&self) {
-        self.cache.write().unwrap().clear();
+        self.cache
+            .write()
+            .expect("locator cache lock poisoned")
+            .clear();
     }
 
     /// Returns all values in the cache as a vector.
     pub fn values(&self) -> Vec<V> {
-        self.cache.read().unwrap().values().cloned().collect()
+        self.cache
+            .read()
+            .expect("locator cache lock poisoned")
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// Returns the number of entries in the cache.
     pub fn len(&self) -> usize {
-        self.cache.read().unwrap().len()
+        self.cache
+            .read()
+            .expect("locator cache lock poisoned")
+            .len()
     }
 
     /// Returns true if the cache is empty.
     pub fn is_empty(&self) -> bool {
-        self.cache.read().unwrap().is_empty()
+        self.cache
+            .read()
+            .expect("locator cache lock poisoned")
+            .is_empty()
     }
 
     /// Returns all entries in the cache as a HashMap.
@@ -114,7 +138,10 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
     where
         K: Clone,
     {
-        self.cache.read().unwrap().clone()
+        self.cache
+            .read()
+            .expect("locator cache lock poisoned")
+            .clone()
     }
 }
 

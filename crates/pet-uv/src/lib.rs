@@ -345,7 +345,14 @@ fn parse_version_from_uv_dir_name(dir_name: &str) -> Option<String> {
     let _impl = parts.next()?;
     let version = parts.next()?;
     // Verify at minimum X.Y format (e.g., "3.12" or "3.12.3")
-    if version.starts_with(|c: char| c.is_ascii_digit()) && version.split('.').count() >= 2 {
+    // and that each component starts with a digit. Trailing alpha chars are
+    // allowed on the last component to support pre-release versions like "3.14.0a4".
+    let components: Vec<&str> = version.split('.').collect();
+    if components.len() >= 2
+        && components
+            .iter()
+            .all(|c| !c.is_empty() && c.starts_with(|ch: char| ch.is_ascii_digit()))
+    {
         Some(version.to_string())
     } else {
         None
@@ -1105,6 +1112,30 @@ exclude = ["packages/legacy"]"#;
     fn test_parse_version_from_uv_dir_name_rejects_single_number() {
         // "9" is a digit but not a valid X.Y version
         assert_eq!(parse_version_from_uv_dir_name("cpython-9-linux"), None);
+    }
+
+    #[test]
+    fn test_parse_version_from_uv_dir_name_rejects_non_numeric_components() {
+        // Version components must start with a digit — "3.abc.def" should be rejected.
+        assert_eq!(
+            parse_version_from_uv_dir_name("cpython-3.abc.def-linux"),
+            None
+        );
+        // Empty component after dot.
+        assert_eq!(parse_version_from_uv_dir_name("cpython-3.12.-linux"), None);
+    }
+
+    #[test]
+    fn test_parse_version_from_uv_dir_name_accepts_prerelease() {
+        // Pre-release versions like "3.14.0a4" are valid uv install dirs.
+        assert_eq!(
+            parse_version_from_uv_dir_name("cpython-3.14.0a4-linux-x86_64-gnu"),
+            Some("3.14.0a4".to_string())
+        );
+        assert_eq!(
+            parse_version_from_uv_dir_name("cpython-3.13.0rc1-linux-x86_64-gnu"),
+            Some("3.13.0rc1".to_string())
+        );
     }
 
     #[test]
