@@ -85,3 +85,139 @@ impl Locator for Pixi {
 
     fn find(&self, _reporter: &dyn Reporter) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn create_test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("pet-pixi-{name}-{}-{unique}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    fn create_pixi_prefix() -> PathBuf {
+        let prefix = create_test_dir("prefix").join("pixi-env");
+        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+        fs::write(prefix.join("conda-meta").join("pixi"), b"").unwrap();
+        fs::create_dir_all(prefix.join(if cfg!(windows) { "Scripts" } else { "bin" })).unwrap();
+        prefix
+    }
+
+    #[test]
+    fn pixi_locator_reports_kind_and_supported_category() {
+        let locator = Pixi::default();
+
+        assert_eq!(locator.get_kind(), LocatorKind::Pixi);
+        assert_eq!(
+            locator.supported_categories(),
+            vec![PythonEnvironmentKind::Pixi]
+        );
+    }
+
+    #[test]
+    fn is_pixi_env_checks_for_pixi_marker_file() {
+        let prefix = create_pixi_prefix();
+
+        assert!(is_pixi_env(&prefix));
+        assert!(!is_pixi_env(&prefix.join("conda-meta")));
+
+        fs::remove_dir_all(prefix.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn try_from_identifies_pixi_env_from_explicit_prefix() {
+        let prefix = create_pixi_prefix();
+        let executable = prefix
+            .join(if cfg!(windows) { "Scripts" } else { "bin" })
+            .join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            });
+        fs::write(&executable, b"").unwrap();
+        let locator = Pixi::new();
+        let env = PythonEnv::new(
+            executable.clone(),
+            Some(prefix.clone()),
+            Some("3.12.0".to_string()),
+        );
+
+        let pixi_env = locator.try_from(&env).unwrap();
+
+        assert_eq!(pixi_env.kind, Some(PythonEnvironmentKind::Pixi));
+        assert_eq!(pixi_env.name, Some("pixi-env".to_string()));
+        assert_eq!(
+            pixi_env
+                .prefix
+                .as_deref()
+                .map(fs::canonicalize)
+                .transpose()
+                .unwrap(),
+            Some(fs::canonicalize(prefix.clone()).unwrap())
+        );
+        assert_eq!(
+            pixi_env
+                .executable
+                .as_deref()
+                .map(fs::canonicalize)
+                .transpose()
+                .unwrap(),
+            Some(fs::canonicalize(executable).unwrap())
+        );
+
+        fs::remove_dir_all(prefix.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn try_from_derives_pixi_prefix_from_nested_python_executable() {
+        let prefix = create_pixi_prefix();
+        let executable = prefix
+            .join(if cfg!(windows) { "Scripts" } else { "bin" })
+            .join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            });
+        fs::write(&executable, b"").unwrap();
+        let locator = Pixi::new();
+        let env = PythonEnv::new(executable, None, None);
+
+        let pixi_env = locator.try_from(&env).unwrap();
+
+        assert_eq!(pixi_env.kind, Some(PythonEnvironmentKind::Pixi));
+        assert_eq!(
+            pixi_env
+                .prefix
+                .as_deref()
+                .map(fs::canonicalize)
+                .transpose()
+                .unwrap(),
+            Some(fs::canonicalize(prefix.clone()).unwrap())
+        );
+
+        fs::remove_dir_all(prefix.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn try_from_rejects_non_pixi_environments() {
+        let prefix = create_test_dir("plain-prefix");
+        let executable = prefix.join("python");
+        fs::write(&executable, b"").unwrap();
+        let locator = Pixi::new();
+        let env = PythonEnv::new(executable, Some(prefix.clone()), None);
+
+        assert!(locator.try_from(&env).is_none());
+
+        fs::remove_dir_all(prefix).unwrap();
+    }
+}

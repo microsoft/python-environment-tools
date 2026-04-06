@@ -46,3 +46,48 @@ impl Reporter for CollectReporter {
 pub fn create_reporter() -> CollectReporter {
     CollectReporter::new()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::{
+        manager::EnvManagerType, python_environment::PythonEnvironmentKind,
+        telemetry::TelemetryEvent,
+    };
+    use std::{path::PathBuf, time::Duration};
+
+    #[test]
+    fn collect_reporter_accumulates_managers_and_environments() {
+        let reporter = create_reporter();
+        let manager = EnvManager::new(
+            PathBuf::from("/tmp/conda"),
+            EnvManagerType::Conda,
+            Some("24.1.0".to_string()),
+        );
+        let environment = PythonEnvironment::new(
+            Some(PathBuf::from("/tmp/.venv/bin/python")),
+            Some(PythonEnvironmentKind::Venv),
+            Some(PathBuf::from("/tmp/.venv")),
+            Some(manager.clone()),
+            Some("3.12.0".to_string()),
+        );
+
+        reporter.report_manager(&manager);
+        reporter.report_environment(&environment);
+        reporter.report_telemetry(&TelemetryEvent::SearchCompleted(Duration::from_secs(1)));
+
+        assert_eq!(reporter.managers.lock().unwrap().as_slice(), &[manager]);
+        assert_eq!(
+            reporter.environments.lock().unwrap().as_slice(),
+            &[environment]
+        );
+    }
+
+    #[test]
+    fn default_collect_reporter_starts_empty() {
+        let reporter = CollectReporter::default();
+
+        assert!(reporter.managers.lock().unwrap().is_empty());
+        assert!(reporter.environments.lock().unwrap().is_empty());
+    }
+}

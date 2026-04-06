@@ -18,3 +18,49 @@ impl EnvVariables {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestEnvironment {
+        user_home: Option<PathBuf>,
+    }
+
+    impl Environment for TestEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            self.user_home.clone()
+        }
+
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_env_var(&self, _key: String) -> Option<String> {
+            None
+        }
+
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            vec![]
+        }
+    }
+
+    #[test]
+    fn env_variables_reads_home() {
+        let environment = TestEnvironment {
+            user_home: Some(PathBuf::from(r"C:\\Users\\User")),
+        };
+
+        assert_eq!(
+            EnvVariables::from(&environment).home,
+            Some(PathBuf::from(r"C:\\Users\\User"))
+        );
+    }
+
+    #[test]
+    fn env_variables_preserves_missing_home() {
+        let environment = TestEnvironment { user_home: None };
+
+        assert_eq!(EnvVariables::from(&environment).home, None);
+    }
+}

@@ -66,3 +66,92 @@ impl Reporter for CacheReporter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::{
+        manager::EnvManagerType, python_environment::PythonEnvironmentKind,
+        telemetry::TelemetryEvent,
+    };
+    use std::{sync::Mutex, time::Duration};
+
+    #[derive(Default)]
+    struct RecordingReporter {
+        managers: Mutex<Vec<EnvManager>>,
+        environments: Mutex<Vec<PythonEnvironment>>,
+        telemetry_count: Mutex<usize>,
+    }
+
+    impl Reporter for RecordingReporter {
+        fn report_telemetry(&self, _event: &pet_core::telemetry::TelemetryEvent) {
+            *self.telemetry_count.lock().unwrap() += 1;
+        }
+
+        fn report_manager(&self, manager: &EnvManager) {
+            self.managers.lock().unwrap().push(manager.clone());
+        }
+
+        fn report_environment(&self, env: &PythonEnvironment) {
+            self.environments.lock().unwrap().push(env.clone());
+        }
+    }
+
+    #[test]
+    fn cache_reporter_dedupes_managers_by_executable() {
+        let inner = Arc::new(RecordingReporter::default());
+        let reporter = CacheReporter::new(inner.clone());
+        let manager = EnvManager::new(
+            PathBuf::from("/tmp/conda"),
+            EnvManagerType::Conda,
+            Some("24.1.0".to_string()),
+        );
+
+        reporter.report_manager(&manager);
+        reporter.report_manager(&manager);
+
+        assert_eq!(inner.managers.lock().unwrap().as_slice(), &[manager]);
+    }
+
+    #[test]
+    fn cache_reporter_dedupes_environments_by_environment_key() {
+        let inner = Arc::new(RecordingReporter::default());
+        let reporter = CacheReporter::new(inner.clone());
+        let environment = PythonEnvironment::new(
+            Some(PathBuf::from("/tmp/.venv/bin/python")),
+            Some(PythonEnvironmentKind::Venv),
+            Some(PathBuf::from("/tmp/.venv")),
+            None,
+            Some("3.12.0".to_string()),
+        );
+
+        reporter.report_environment(&environment);
+        reporter.report_environment(&environment);
+
+        assert_eq!(
+            inner.environments.lock().unwrap().as_slice(),
+            &[environment]
+        );
+    }
+
+    #[test]
+    fn cache_reporter_ignores_environments_without_a_key() {
+        let inner = Arc::new(RecordingReporter::default());
+        let reporter = CacheReporter::new(inner.clone());
+        let environment = PythonEnvironment::default();
+
+        reporter.report_environment(&environment);
+
+        assert!(inner.environments.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cache_reporter_forwards_telemetry() {
+        let inner = Arc::new(RecordingReporter::default());
+        let reporter = CacheReporter::new(inner.clone());
+
+        reporter.report_telemetry(&TelemetryEvent::SearchCompleted(Duration::from_secs(1)));
+
+        assert_eq!(*inner.telemetry_count.lock().unwrap(), 1);
+    }
+}

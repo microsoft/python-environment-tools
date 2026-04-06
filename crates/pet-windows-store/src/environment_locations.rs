@@ -18,3 +18,31 @@ pub fn get_search_locations(environment: &EnvVariables) -> Option<PathBuf> {
             .join("WindowsApps"),
     )
 }
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_locations_use_windowsapps_under_user_home() {
+        let home = PathBuf::from(r"C:\\Users\\User");
+        let env_variables = EnvVariables {
+            home: Some(home.clone()),
+        };
+
+        assert_eq!(
+            get_search_locations(&env_variables),
+            Some(
+                home.join("AppData")
+                    .join("Local")
+                    .join("Microsoft")
+                    .join("WindowsApps")
+            )
+        );
+    }
+
+    #[test]
+    fn search_locations_return_none_without_home() {
+        assert_eq!(get_search_locations(&EnvVariables { home: None }), None);
+    }
+}

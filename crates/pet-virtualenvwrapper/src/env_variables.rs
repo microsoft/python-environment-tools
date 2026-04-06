@@ -20,3 +20,65 @@ impl EnvVariables {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    struct TestEnvironment {
+        user_home: Option<PathBuf>,
+        workon_home: Option<String>,
+    }
+
+    impl Environment for TestEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            self.user_home.clone()
+        }
+
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_env_var(&self, key: String) -> Option<String> {
+            if key == "WORKON_HOME" {
+                self.workon_home.clone()
+            } else {
+                None
+            }
+        }
+
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            vec![]
+        }
+    }
+
+    #[test]
+    fn env_variables_reads_home_and_workon_home() {
+        let environment = TestEnvironment {
+            user_home: Some(PathBuf::from("/home/user")),
+            workon_home: Some("/tmp/workon-home".to_string()),
+        };
+
+        let env_variables = EnvVariables::from(&environment);
+
+        assert_eq!(env_variables.home, Some(PathBuf::from("/home/user")));
+        assert_eq!(
+            env_variables.workon_home,
+            Some("/tmp/workon-home".to_string())
+        );
+    }
+
+    #[test]
+    fn env_variables_preserves_missing_values() {
+        let environment = TestEnvironment {
+            user_home: None,
+            workon_home: None,
+        };
+
+        let env_variables = EnvVariables::from(&environment);
+
+        assert_eq!(env_variables.home, None);
+        assert_eq!(env_variables.workon_home, None);
+    }
+}

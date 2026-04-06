@@ -146,12 +146,73 @@ mod tests {
     use super::*;
     use pet_conda::Conda;
     use pet_core::os_environment::EnvironmentApi;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn create_test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "pet-windows-registry-{name}-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        directory
+    }
+
+    fn create_virtualenv(prefix: &Path) -> PathBuf {
+        let scripts_dir = prefix.join(if cfg!(windows) { "Scripts" } else { "bin" });
+        fs::create_dir_all(&scripts_dir).unwrap();
+        fs::write(
+            scripts_dir.join(if cfg!(windows) {
+                "activate.bat"
+            } else {
+                "activate"
+            }),
+            b"",
+        )
+        .unwrap();
+        let executable = scripts_dir.join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+        fs::write(&executable, b"").unwrap();
+        executable
+    }
+
+    fn create_locator() -> WindowsRegistry {
+        let environment = EnvironmentApi::new();
+        WindowsRegistry::from(Arc::new(Conda::from(&environment)))
+    }
+
+    #[test]
+    fn test_windows_registry_reports_kind_categories_and_refresh_state() {
+        let locator = create_locator();
+
+        assert_eq!(locator.get_kind(), LocatorKind::WindowsRegistry);
+        assert_eq!(
+            locator.supported_categories(),
+            vec![
+                PythonEnvironmentKind::WindowsRegistry,
+                PythonEnvironmentKind::Conda
+            ]
+        );
+        assert_eq!(
+            locator.refresh_state(),
+            RefreshStatePersistence::SyncedDiscoveryState
+        );
+    }
 
     #[test]
     fn test_full_refresh_sync_replaces_registry_cache() {
-        let environment = EnvironmentApi::new();
-        let shared = WindowsRegistry::from(Arc::new(Conda::from(&environment)));
-        let refreshed = WindowsRegistry::from(Arc::new(Conda::from(&environment)));
+        let shared = create_locator();
+        let refreshed = create_locator();
 
         shared.search_result.lock().unwrap().replace(LocatorResult {
             managers: vec![],
@@ -180,9 +241,8 @@ mod tests {
 
     #[test]
     fn test_workspace_scope_does_not_replace_registry_cache() {
-        let environment = EnvironmentApi::new();
-        let shared = WindowsRegistry::from(Arc::new(Conda::from(&environment)));
-        let refreshed = WindowsRegistry::from(Arc::new(Conda::from(&environment)));
+        let shared = create_locator();
+        let refreshed = create_locator();
 
         shared.search_result.lock().unwrap().replace(LocatorResult {
             managers: vec![],
@@ -207,5 +267,78 @@ mod tests {
 
         let result = shared.search_result.lock().unwrap().clone().unwrap();
         assert_eq!(result.environments[0].name.as_deref(), Some("stale"));
+    }
+
+    #[test]
+    fn test_global_filtered_scope_syncs_supported_kinds_only() {
+        let shared = create_locator();
+        let refreshed = create_locator();
+
+        shared.search_result.lock().unwrap().replace(LocatorResult {
+            managers: vec![],
+            environments: vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }],
+        });
+        refreshed
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("fresh".to_string()),
+                    ..Default::default()
+                }],
+            });
+
+        shared.sync_refresh_state_from(
+            &refreshed,
+            &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::WindowsRegistry),
+        );
+        let result = shared.search_result.lock().unwrap().clone().unwrap();
+        assert_eq!(result.environments[0].name.as_deref(), Some("fresh"));
+
+        shared.search_result.lock().unwrap().replace(LocatorResult {
+            managers: vec![],
+            environments: vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }],
+        });
+
+        shared.sync_refresh_state_from(
+            &refreshed,
+            &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::Venv),
+        );
+        let result = shared.search_result.lock().unwrap().clone().unwrap();
+        assert_eq!(result.environments[0].name.as_deref(), Some("stale"));
+    }
+
+    #[test]
+    fn test_try_from_rejects_virtualenv_before_registry_lookup() {
+        let prefix = create_test_dir("virtualenv");
+        let executable = create_virtualenv(&prefix);
+        let env = PythonEnv::new(executable, Some(prefix.clone()), None);
+        let locator = create_locator();
+
+        assert!(locator.try_from(&env).is_none());
+
+        fs::remove_dir_all(prefix).unwrap();
+    }
+
+    #[test]
+    fn test_try_from_rejects_conda_prefix_before_registry_lookup() {
+        let prefix = create_test_dir("conda-env");
+        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+        let executable = prefix.join("python.exe");
+        fs::write(&executable, b"").unwrap();
+        let env = PythonEnv::new(executable, Some(prefix.clone()), None);
+        let locator = create_locator();
+
+        assert!(locator.try_from(&env).is_none());
+
+        fs::remove_dir_all(prefix).unwrap();
     }
 }

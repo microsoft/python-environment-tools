@@ -19,8 +19,9 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
-    path.to_str().unwrap_or_default().to_string().to_lowercase()[1..]
-        .starts_with(":\\program files\\windowsapps")
+    let path = path.to_str().unwrap_or_default().to_ascii_lowercase();
+    path.get(1..)
+        .is_some_and(|path| path.starts_with(":\\program files\\windowsapps"))
 }
 
 pub struct WindowsStore {
@@ -179,6 +180,33 @@ mod tests {
     use pet_core::os_environment::EnvironmentApi;
 
     #[test]
+    fn windows_store_reports_kind_supported_categories_and_refresh_state() {
+        let environment = EnvironmentApi::new();
+        let locator = WindowsStore::from(&environment);
+
+        assert_eq!(locator.get_kind(), LocatorKind::WindowsStore);
+        assert_eq!(
+            locator.supported_categories(),
+            vec![PythonEnvironmentKind::WindowsStore]
+        );
+        assert_eq!(
+            locator.refresh_state(),
+            RefreshStatePersistence::SyncedDiscoveryState
+        );
+    }
+
+    #[test]
+    fn is_windows_app_folder_in_program_files_handles_windowsapps_paths_and_short_inputs() {
+        assert!(is_windows_app_folder_in_program_files(Path::new(
+            r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0"
+        )));
+        assert!(!is_windows_app_folder_in_program_files(Path::new(
+            r"C:\Users\User\AppData\Local\Microsoft\WindowsApps"
+        )));
+        assert!(!is_windows_app_folder_in_program_files(Path::new("")));
+    }
+
+    #[test]
     fn test_full_refresh_sync_replaces_store_cache() {
         let environment = EnvironmentApi::new();
         let shared = WindowsStore::from(&environment);
@@ -232,6 +260,52 @@ mod tests {
 
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Workspace);
 
+        let result = shared.environments.read().unwrap().clone().unwrap();
+        assert_eq!(result[0].name.as_deref(), Some("stale"));
+    }
+
+    #[test]
+    fn test_global_filtered_scope_syncs_only_for_windows_store_kind() {
+        let environment = EnvironmentApi::new();
+        let shared = WindowsStore::from(&environment);
+        let refreshed = WindowsStore::from(&environment);
+
+        shared
+            .environments
+            .write()
+            .unwrap()
+            .replace(vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }]);
+        refreshed
+            .environments
+            .write()
+            .unwrap()
+            .replace(vec![PythonEnvironment {
+                name: Some("fresh".to_string()),
+                ..Default::default()
+            }]);
+
+        shared.sync_refresh_state_from(
+            &refreshed,
+            &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::WindowsStore),
+        );
+        let result = shared.environments.read().unwrap().clone().unwrap();
+        assert_eq!(result[0].name.as_deref(), Some("fresh"));
+
+        shared
+            .environments
+            .write()
+            .unwrap()
+            .replace(vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }]);
+        shared.sync_refresh_state_from(
+            &refreshed,
+            &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::Conda),
+        );
         let result = shared.environments.read().unwrap().clone().unwrap();
         assert_eq!(result[0].name.as_deref(), Some("stale"));
     }

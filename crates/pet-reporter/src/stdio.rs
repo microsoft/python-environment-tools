@@ -116,3 +116,73 @@ pub struct Log {
 pub fn initialize_logger(log_level: LevelFilter) {
     Builder::new().filter(None, log_level).init();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn create_environment(kind: PythonEnvironmentKind, executable: &str) -> PythonEnvironment {
+        PythonEnvironment::new(
+            Some(PathBuf::from(executable)),
+            Some(kind),
+            Some(PathBuf::from("/tmp/env")),
+            None,
+            Some("3.12.0".to_string()),
+        )
+    }
+
+    #[test]
+    fn stdio_reporter_counts_managers_and_environments() {
+        let reporter = create_reporter(false, None);
+        let manager = EnvManager::new(
+            PathBuf::from("/tmp/conda"),
+            EnvManagerType::Conda,
+            Some("24.1.0".to_string()),
+        );
+        let environment = create_environment(PythonEnvironmentKind::Venv, "/tmp/.venv/bin/python");
+
+        reporter.report_manager(&manager);
+        reporter.report_manager(&manager);
+        reporter.report_environment(&environment);
+        reporter.report_environment(&environment);
+
+        let summary = reporter.get_summary();
+        assert_eq!(summary.managers.get(&EnvManagerType::Conda), Some(&2));
+        assert_eq!(
+            summary.environments.get(&Some(PythonEnvironmentKind::Venv)),
+            Some(&2)
+        );
+        assert_eq!(
+            summary
+                .environment_paths
+                .get(&Some(PythonEnvironmentKind::Venv))
+                .unwrap()
+                .as_slice(),
+            &[environment.clone(), environment]
+        );
+    }
+
+    #[test]
+    fn stdio_reporter_filters_environments_by_requested_kind() {
+        let reporter = create_reporter(false, Some(PythonEnvironmentKind::Poetry));
+        let poetry_environment =
+            create_environment(PythonEnvironmentKind::Poetry, "/tmp/poetry/bin/python");
+        let venv_environment =
+            create_environment(PythonEnvironmentKind::Venv, "/tmp/.venv/bin/python");
+
+        reporter.report_environment(&venv_environment);
+        reporter.report_environment(&poetry_environment);
+
+        let summary = reporter.get_summary();
+        assert!(!summary
+            .environments
+            .contains_key(&Some(PythonEnvironmentKind::Venv)));
+        assert_eq!(
+            summary
+                .environments
+                .get(&Some(PythonEnvironmentKind::Poetry)),
+            Some(&1)
+        );
+    }
+}
