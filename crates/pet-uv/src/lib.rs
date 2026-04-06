@@ -344,19 +344,32 @@ fn parse_version_from_uv_dir_name(dir_name: &str) -> Option<String> {
     let mut parts = dir_name.splitn(3, '-');
     let _impl = parts.next()?;
     let version = parts.next()?;
-    // Verify at minimum X.Y format (e.g., "3.12" or "3.12.3")
-    // and that each component starts with a digit. Trailing alpha chars are
-    // allowed on the last component to support pre-release versions like "3.14.0a4".
-    let components: Vec<&str> = version.split('.').collect();
-    if components.len() >= 2
-        && components
-            .iter()
-            .all(|c| !c.is_empty() && c.starts_with(|ch: char| ch.is_ascii_digit()))
-    {
-        Some(version.to_string())
-    } else {
-        None
+    // Require the platform segment to exist (rejects bare "<impl>-<version>").
+    let platform = parts.next()?;
+    if platform.is_empty() {
+        return None;
     }
+    // Verify at minimum X.Y format (e.g., "3.12" or "3.12.3").
+    // Components before the last must be purely numeric.
+    // The last component may have a pre-release suffix (e.g., "0a4", "0rc1").
+    let components: Vec<&str> = version.split('.').collect();
+    if components.len() < 2 {
+        return None;
+    }
+    // All components except the last must be purely numeric.
+    let all_but_last = &components[..components.len() - 1];
+    if !all_but_last
+        .iter()
+        .all(|c| !c.is_empty() && c.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return None;
+    }
+    // The last component must start with a digit (allows pre-release suffix like "0a4").
+    let last = components.last()?;
+    if last.is_empty() || !last.starts_with(|ch: char| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some(version.to_string())
 }
 
 /// Walks up from `project_path` looking for a workspace that this project belongs to.
@@ -1123,6 +1136,17 @@ exclude = ["packages/legacy"]"#;
         );
         // Empty component after dot.
         assert_eq!(parse_version_from_uv_dir_name("cpython-3.12.-linux"), None);
+        // Non-numeric middle component must be rejected even if it starts with a digit.
+        assert_eq!(
+            parse_version_from_uv_dir_name("cpython-3.12abc.1-linux"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_parse_version_from_uv_dir_name_rejects_missing_platform() {
+        // Bare "<impl>-<version>" without platform segment should be rejected.
+        assert_eq!(parse_version_from_uv_dir_name("cpython-3.12"), None);
     }
 
     #[test]
