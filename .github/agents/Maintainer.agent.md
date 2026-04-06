@@ -203,10 +203,10 @@ git commit -m "feat: add Pixi environment detection (Fixes #42)"
 ## 7. Push & Create PR
 
 ```powershell
-git push origin feature/issue-N
+git push -u origin feature/issue-N
 ```
 
-Create a PR via `github/create_pull_request`:
+Create a Draft PR via `github/create_pull_request`:
 
 - **Title:** Same as commit message (or summarized if multiple commits)
 - **Body:** Keep it concise:
