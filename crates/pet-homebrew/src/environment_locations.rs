@@ -48,3 +48,47 @@ pub fn get_homebrew_prefix_bin(env_vars: &EnvVariables) -> Vec<PathBuf> {
 
     homebrew_prefixes
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn homebrew_prefix_bin_uses_existing_homebrew_prefix_env_var() {
+        let homebrew_prefix = tempdir().unwrap();
+        let homebrew_bin = homebrew_prefix.path().join("bin");
+        fs::create_dir_all(&homebrew_bin).unwrap();
+        let env_vars = EnvVariables {
+            home: None,
+            root: None,
+            path: None,
+            homebrew_prefix: Some(homebrew_prefix.path().to_string_lossy().to_string()),
+            known_global_search_locations: vec![],
+        };
+
+        let prefix_bins = get_homebrew_prefix_bin(&env_vars);
+
+        assert!(prefix_bins.contains(&homebrew_bin));
+    }
+
+    #[test]
+    fn homebrew_prefix_bin_ignores_missing_homebrew_prefix_env_var() {
+        let homebrew_prefix_parent = tempdir().unwrap();
+        let missing_homebrew_prefix = homebrew_prefix_parent.path().join("missing-prefix");
+        let env_vars = EnvVariables {
+            home: None,
+            root: None,
+            path: None,
+            homebrew_prefix: Some(missing_homebrew_prefix.to_string_lossy().to_string()),
+            known_global_search_locations: vec![],
+        };
+
+        let prefix_bins = get_homebrew_prefix_bin(&env_vars);
+
+        assert!(!prefix_bins
+            .iter()
+            .any(|path| path == &missing_homebrew_prefix.join("bin")));
+    }
+}
