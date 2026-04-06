@@ -174,7 +174,7 @@ impl Locator for Homebrew {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use tempfile::tempdir;
 
     struct TestEnvironment {
         homebrew_prefix: Option<String>,
@@ -200,19 +200,6 @@ mod tests {
         fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
             vec![]
         }
-    }
-
-    fn create_test_dir(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "pet-homebrew-{name}-{}-{unique}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        directory
     }
 
     #[test]
@@ -273,24 +260,25 @@ mod tests {
             homebrew_prefix: None,
         });
 
-        let venv_root = create_test_dir("venv-reject");
-        let venv_bin = venv_root.join("bin");
+        let venv_root = tempdir().unwrap();
+        let venv_bin = venv_root.path().join("bin");
         fs::create_dir_all(&venv_bin).unwrap();
         fs::write(venv_bin.join("activate"), b"").unwrap();
         let venv_executable = venv_bin.join("python3.12");
         fs::write(&venv_executable, b"").unwrap();
-        let venv = PythonEnv::new(venv_executable, Some(venv_root.clone()), None);
+        let venv = PythonEnv::new(venv_executable, Some(venv_root.path().to_path_buf()), None);
         assert!(locator.try_from(&venv).is_none());
 
-        let conda_root = create_test_dir("conda-reject");
-        fs::create_dir_all(conda_root.join("conda-meta")).unwrap();
-        let conda_executable = conda_root.join("bin").join("python3.12");
+        let conda_root = tempdir().unwrap();
+        fs::create_dir_all(conda_root.path().join("conda-meta")).unwrap();
+        let conda_executable = conda_root.path().join("bin").join("python3.12");
         fs::create_dir_all(conda_executable.parent().unwrap()).unwrap();
         fs::write(&conda_executable, b"").unwrap();
-        let conda = PythonEnv::new(conda_executable, Some(conda_root.clone()), None);
+        let conda = PythonEnv::new(
+            conda_executable,
+            Some(conda_root.path().to_path_buf()),
+            None,
+        );
         assert!(locator.try_from(&conda).is_none());
-
-        fs::remove_dir_all(venv_root).unwrap();
-        fs::remove_dir_all(conda_root).unwrap();
     }
 }

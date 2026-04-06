@@ -52,45 +52,31 @@ pub fn get_homebrew_prefix_bin(env_vars: &EnvVariables) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        fs,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    fn create_unique_prefix(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        std::env::temp_dir().join(format!(
-            "pet-homebrew-{name}-{}-{unique}",
-            std::process::id()
-        ))
-    }
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn homebrew_prefix_bin_uses_existing_homebrew_prefix_env_var() {
-        let homebrew_prefix = create_unique_prefix("prefix");
-        let homebrew_bin = homebrew_prefix.join("bin");
+        let homebrew_prefix = tempdir().unwrap();
+        let homebrew_bin = homebrew_prefix.path().join("bin");
         fs::create_dir_all(&homebrew_bin).unwrap();
         let env_vars = EnvVariables {
             home: None,
             root: None,
             path: None,
-            homebrew_prefix: Some(homebrew_prefix.to_string_lossy().to_string()),
+            homebrew_prefix: Some(homebrew_prefix.path().to_string_lossy().to_string()),
             known_global_search_locations: vec![],
         };
 
         let prefix_bins = get_homebrew_prefix_bin(&env_vars);
 
         assert!(prefix_bins.contains(&homebrew_bin));
-
-        fs::remove_dir_all(homebrew_prefix).unwrap();
     }
 
     #[test]
     fn homebrew_prefix_bin_ignores_missing_homebrew_prefix_env_var() {
-        let missing_homebrew_prefix = create_unique_prefix("missing-prefix");
+        let homebrew_prefix_parent = tempdir().unwrap();
+        let missing_homebrew_prefix = homebrew_prefix_parent.path().join("missing-prefix");
         let env_vars = EnvVariables {
             home: None,
             root: None,
