@@ -95,8 +95,8 @@ pub struct PetJsonRpcClient {
 
 impl PetJsonRpcClient {
     pub fn spawn() -> Result<Self, String> {
-        let mut process = Command::new(env!("CARGO_BIN_EXE_pet"))
-            .arg("server")
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_pet"));
+        cmd.arg("server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -104,11 +104,14 @@ impl PetJsonRpcClient {
             // configuration from leaking into the test environment, then
             // restore only the minimum required for the OS to function.
             .env_clear()
-            .env("PATH", "")
-            .env(
-                "SYSTEMROOT",
-                std::env::var("SYSTEMROOT").unwrap_or_default(),
-            )
+            .env("PATH", "");
+        // On Windows, SYSTEMROOT is required for basic OS functionality
+        // (crypto, networking, etc.). Only set it when present.
+        #[cfg(windows)]
+        if let Ok(val) = std::env::var("SYSTEMROOT") {
+            cmd.env("SYSTEMROOT", val);
+        }
+        let mut process = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn pet server: {e}"))?;
 
