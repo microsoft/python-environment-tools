@@ -149,21 +149,8 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
     };
-
-    fn create_test_dir(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "pet-windows-registry-{name}-{}-{unique}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        directory
-    }
+    use tempfile::TempDir;
 
     fn create_virtualenv(prefix: &Path) -> PathBuf {
         let scripts_dir = prefix.join(if cfg!(windows) { "Scripts" } else { "bin" });
@@ -318,27 +305,25 @@ mod tests {
 
     #[test]
     fn test_try_from_rejects_virtualenv_before_registry_lookup() {
-        let prefix = create_test_dir("virtualenv");
+        let temp_dir = TempDir::new().unwrap();
+        let prefix = temp_dir.path().to_path_buf();
         let executable = create_virtualenv(&prefix);
-        let env = PythonEnv::new(executable, Some(prefix.clone()), None);
+        let env = PythonEnv::new(executable, Some(prefix), None);
         let locator = create_locator();
 
         assert!(locator.try_from(&env).is_none());
-
-        fs::remove_dir_all(prefix).unwrap();
     }
 
     #[test]
     fn test_try_from_rejects_conda_prefix_before_registry_lookup() {
-        let prefix = create_test_dir("conda-env");
+        let temp_dir = TempDir::new().unwrap();
+        let prefix = temp_dir.path().to_path_buf();
         fs::create_dir_all(prefix.join("conda-meta")).unwrap();
         let executable = prefix.join("python.exe");
         fs::write(&executable, b"").unwrap();
-        let env = PythonEnv::new(executable, Some(prefix.clone()), None);
+        let env = PythonEnv::new(executable, Some(prefix), None);
         let locator = create_locator();
 
         assert!(locator.try_from(&env).is_none());
-
-        fs::remove_dir_all(prefix).unwrap();
     }
 }

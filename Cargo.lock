@@ -650,6 +650,7 @@ dependencies = [
  "pet-conda",
  "pet-core",
  "pet-python-utils",
+ "tempfile",
 ]
 
 [[package]]
@@ -798,6 +799,7 @@ dependencies = [
  "pet-virtualenv",
  "pet-windows-store",
  "regex",
+ "tempfile",
  "winreg",
 ]
 

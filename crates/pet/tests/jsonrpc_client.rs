@@ -100,7 +100,15 @@ impl PetJsonRpcClient {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            // Clear all inherited env vars to prevent host-specific tool
+            // configuration from leaking into the test environment, then
+            // restore only the minimum required for the OS to function.
+            .env_clear()
             .env("PATH", "")
+            .env(
+                "SYSTEMROOT",
+                std::env::var("SYSTEMROOT").unwrap_or_default(),
+            )
             .spawn()
             .map_err(|e| format!("Failed to spawn pet server: {e}"))?;
 
