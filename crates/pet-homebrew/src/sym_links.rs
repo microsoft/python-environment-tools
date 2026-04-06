@@ -263,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn known_symlink_templates_include_expected_paths_for_linuxbrew() {
+    fn known_symlink_templates_include_resolved_executable_for_linuxbrew() {
         let resolved_exe =
             PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12");
         let symlinks = get_known_symlinks_impl(&resolved_exe, &"3.12.4".to_string());
