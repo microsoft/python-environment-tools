@@ -87,15 +87,48 @@ impl Locator for LinuxGlobalPython {
 
         self.find_cached(None);
 
-        // We only support python environments in /bin, /usr/bin, /usr/local/bin
-        if !executable.starts_with("/bin")
-            && !executable.starts_with("/usr/bin")
-            && !executable.starts_with("/usr/local/bin")
-        {
+        // Resolve the canonical path once — used for both the path guard and cache fallback.
+        let canonical = fs::canonicalize(&executable).ok();
+
+        // We only support python environments in /bin, /usr/bin, /usr/local/bin.
+        // Check both the original and canonical paths so that symlinks from other
+        // locations (e.g. /bin → /usr/bin) are still accepted.
+        let dominated = |p: &Path| {
+            p.starts_with("/bin") || p.starts_with("/usr/bin") || p.starts_with("/usr/local/bin")
+        };
+        if !dominated(&executable) && !canonical.as_ref().is_some_and(|c| dominated(c)) {
             return None;
         }
 
-        self.reported_executables.get(&executable)
+        // Try direct cache lookup first.
+        if let Some(env) = self.reported_executables.get(&executable) {
+            return Some(env);
+        }
+
+        // If the executable wasn't found directly, resolve symlinks and try the canonical path.
+        // This handles cases like /bin/python3 → /usr/bin/python3 on systems where /bin
+        // is a symlink to /usr/bin. The cache is populated using canonicalized bin directories,
+        // so /bin/python3 won't be in the cache but /usr/bin/python3 will be.
+        if let Some(canonical) = canonical {
+            if canonical != executable {
+                if let Some(mut env) = self.reported_executables.get(&canonical) {
+                    // Add the original path as a symlink so it's visible to consumers.
+                    let mut symlinks = env.symlinks.clone().unwrap_or_default();
+                    if !symlinks.contains(&executable) {
+                        symlinks.push(executable.clone());
+                        symlinks.sort();
+                        symlinks.dedup();
+                        env.symlinks = Some(symlinks);
+                    }
+                    // Update both the canonical and original entries for consistency.
+                    self.reported_executables.insert(canonical, env.clone());
+                    self.reported_executables.insert(executable, env.clone());
+                    return Some(env);
+                }
+            }
+        }
+
+        None
     }
 
     fn find(&self, reporter: &dyn Reporter) {
