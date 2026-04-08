@@ -225,24 +225,36 @@ impl Locator for Conda {
         });
 
         match scope {
-            RefreshStateSyncScope::Full => {}
-            RefreshStateSyncScope::GlobalFiltered(kind)
-                if self.supported_categories().contains(kind) => {}
-            RefreshStateSyncScope::GlobalFiltered(_) | RefreshStateSyncScope::Workspace => {
-                return;
+            RefreshStateSyncScope::Full => {
+                // Full refresh: replace all caches entirely.
+                self.environments.clear();
+                self.environments
+                    .insert_many(source.environments.clone_map());
+
+                self.managers.clear();
+                self.managers.insert_many(source.managers.clone_map());
+
+                self.mamba_managers.clear();
+                self.mamba_managers
+                    .insert_many(source.mamba_managers.clone_map());
             }
+            RefreshStateSyncScope::GlobalFiltered(kind)
+                if self.supported_categories().contains(kind) =>
+            {
+                // Filtered refresh: merge discoveries without clearing existing
+                // caches. Today find() exhaustively discovers all conda
+                // environments, but a filtered scope should not assume that and
+                // must not drop entries found by a previous full refresh.
+                // Trade-off: deleted environments may linger until the next Full
+                // refresh, but that is preferable to silently losing live entries.
+                self.environments
+                    .insert_many(source.environments.clone_map());
+                self.managers.insert_many(source.managers.clone_map());
+                self.mamba_managers
+                    .insert_many(source.mamba_managers.clone_map());
+            }
+            RefreshStateSyncScope::GlobalFiltered(_) | RefreshStateSyncScope::Workspace => {}
         }
-
-        self.environments.clear();
-        self.environments
-            .insert_many(source.environments.clone_map());
-
-        self.managers.clear();
-        self.managers.insert_many(source.managers.clone_map());
-
-        self.mamba_managers.clear();
-        self.mamba_managers
-            .insert_many(source.mamba_managers.clone_map());
     }
     fn configure(&self, config: &pet_core::Configuration) {
         self.conda_executable
