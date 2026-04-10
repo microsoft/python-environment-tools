@@ -31,6 +31,8 @@ This project will be consumed by the [Python extension](https://marketplace.visu
 
 Our approach prioritizes performance and efficiency by leveraging Rust. We minimize I/O operations by collecting all necessary environment information at once, which reduces repeated I/O and the need to spawn additional processes, significantly enhancing overall performance.
 
+Locator refresh-state contracts are documented in [docs/LOCATOR_STATE.md](docs/LOCATOR_STATE.md).
+
 ## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a

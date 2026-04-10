@@ -63,13 +63,24 @@ pub enum LocatorKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshStatePersistence {
-    /// The locator keeps no mutable state across requests.
+    /// The locator keeps no mutable state that survives a request.
     Stateless,
-    /// The locator keeps configured inputs only; refresh must not copy them back.
+    /// The locator keeps configured inputs only.
+    ///
+    /// Refresh creates and configures transient locator instances for one request. A
+    /// locator in this category must get its configuration from that request's
+    /// configuration snapshot, not by copying anything back from the transient
+    /// locator into the long-lived shared locator.
     ConfiguredOnly,
-    /// The locator keeps cache-like state, but later requests can repopulate it on demand.
+    /// The locator keeps cache-like state that later requests can repopulate on demand.
+    ///
+    /// Refresh may populate this state on a transient locator, but correctness must
+    /// not depend on syncing it back into the long-lived shared locator.
     SelfHydratingCache,
-    /// The locator keeps refresh-discovered state that later requests depend on for correctness.
+    /// The locator keeps refresh-discovered state that later requests depend on.
+    ///
+    /// Locators in this category must override `sync_refresh_state_from()` and copy
+    /// only correctness-critical discovery state for the provided sync scope.
     SyncedDiscoveryState,
 }
 
@@ -121,8 +132,11 @@ pub trait Locator: Any + Send + Sync {
     }
     /// Describes what mutable state, if any, must survive a refresh boundary.
     ///
-    /// Refresh runs execute against transient locator graphs and then invoke
-    /// `sync_refresh_state_from()` on the long-lived shared locators.
+    /// Refresh requests run against transient locator graphs. After a refresh
+    /// completes, the server invokes `sync_refresh_state_from()` on the long-lived
+    /// shared locator graph while the starting configuration generation is still
+    /// current. The returned classification is the contract the locator makes with
+    /// that sync step.
     fn refresh_state(&self) -> RefreshStatePersistence {
         RefreshStatePersistence::Stateless
     }

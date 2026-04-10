@@ -1223,6 +1223,7 @@ mod tests {
     use pet_conda::manager::CondaManager;
     use pet_core::manager::EnvManager;
     use pet_core::manager::EnvManagerType;
+    use pet_core::LocatorKind;
     use pet_core::RefreshStatePersistence;
     use std::path::PathBuf;
     use std::sync::mpsc;
@@ -1697,6 +1698,76 @@ mod tests {
 
         assert_eq!(result, Err(2));
         assert!(!synced);
+    }
+
+    #[test]
+    fn test_locator_graph_refresh_state_contracts_are_explicit() {
+        let environment = EnvironmentApi::new();
+        let conda_locator = Arc::new(Conda::from(&environment));
+        let poetry_locator = Arc::new(Poetry::from(&environment));
+        let locators = create_locators(conda_locator, poetry_locator, &environment);
+
+        let actual = locators
+            .iter()
+            .map(|locator| (locator.get_kind(), locator.refresh_state()))
+            .collect::<Vec<_>>();
+
+        let expected = vec![
+            #[cfg(windows)]
+            (
+                LocatorKind::WindowsStore,
+                RefreshStatePersistence::SyncedDiscoveryState,
+            ),
+            #[cfg(windows)]
+            (
+                LocatorKind::WindowsRegistry,
+                RefreshStatePersistence::SyncedDiscoveryState,
+            ),
+            #[cfg(windows)]
+            (LocatorKind::WinPython, RefreshStatePersistence::Stateless),
+            (
+                LocatorKind::PyEnv,
+                RefreshStatePersistence::SelfHydratingCache,
+            ),
+            (LocatorKind::Pixi, RefreshStatePersistence::Stateless),
+            (
+                LocatorKind::Conda,
+                RefreshStatePersistence::SyncedDiscoveryState,
+            ),
+            (LocatorKind::Uv, RefreshStatePersistence::ConfiguredOnly),
+            (
+                LocatorKind::Poetry,
+                RefreshStatePersistence::SyncedDiscoveryState,
+            ),
+            (LocatorKind::PipEnv, RefreshStatePersistence::ConfiguredOnly),
+            (
+                LocatorKind::VirtualEnvWrapper,
+                RefreshStatePersistence::Stateless,
+            ),
+            (LocatorKind::Venv, RefreshStatePersistence::Stateless),
+            (LocatorKind::VirtualEnv, RefreshStatePersistence::Stateless),
+            #[cfg(unix)]
+            (LocatorKind::Homebrew, RefreshStatePersistence::Stateless),
+            #[cfg(target_os = "macos")]
+            (LocatorKind::MacXCode, RefreshStatePersistence::Stateless),
+            #[cfg(target_os = "macos")]
+            (
+                LocatorKind::MacCommandLineTools,
+                RefreshStatePersistence::Stateless,
+            ),
+            #[cfg(target_os = "macos")]
+            (
+                LocatorKind::MacPythonOrg,
+                RefreshStatePersistence::Stateless,
+            ),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            (
+                LocatorKind::LinuxGlobal,
+                RefreshStatePersistence::SelfHydratingCache,
+            ),
+        ];
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
