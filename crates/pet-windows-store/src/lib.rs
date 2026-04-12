@@ -21,10 +21,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Debug)]
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 struct CachedStoreEnvironment {
-    #[allow(dead_code)]
     environment: PythonEnvironment,
-    #[allow(dead_code)]
     normalized_symlinks: Vec<PathBuf>,
 }
 
@@ -50,8 +49,10 @@ impl CachedStoreEnvironment {
 fn normalize_for_comparison(path: &Path) -> PathBuf {
     let normalized = norm_case(path);
     let path_str = normalized.to_string_lossy();
-    if path_str.starts_with(r"\\?\") {
-        PathBuf::from(path_str.trim_start_matches(r"\\?\"))
+    if let Some(unc_path) = path_str.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{unc_path}"))
+    } else if let Some(path_without_prefix) = path_str.strip_prefix(r"\\?\") {
+        PathBuf::from(path_without_prefix)
     } else {
         normalized
     }
@@ -254,6 +255,19 @@ mod tests {
         assert_eq!(
             cached.normalized_symlinks,
             vec![PathBuf::from(r"C:\Users\User\python.exe")]
+        );
+    }
+
+    #[test]
+    fn cached_store_environment_normalizes_extended_unc_symlinks() {
+        let cached = CachedStoreEnvironment::from_environment(PythonEnvironment {
+            symlinks: Some(vec![PathBuf::from(r"\\?\UNC\server\share\python.exe")]),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            cached.normalized_symlinks,
+            vec![PathBuf::from(r"\\server\share\python.exe")]
         );
     }
 
