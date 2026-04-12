@@ -15,25 +15,28 @@ use pet_core::LocatorKind;
 use pet_core::{
     os_environment::Environment, Locator, RefreshStatePersistence, RefreshStateSyncScope,
 };
+#[cfg(any(windows, test))]
 use pet_fs::path::norm_case;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Debug)]
 struct CachedStoreEnvironment {
+    #[allow(dead_code)]
     environment: PythonEnvironment,
     #[allow(dead_code)]
     normalized_symlinks: Vec<PathBuf>,
 }
 
 impl CachedStoreEnvironment {
+    #[cfg(any(windows, test))]
     fn from_environment(environment: PythonEnvironment) -> Self {
         let normalized_symlinks = environment
             .symlinks
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .map(normalize_for_comparison)
+            .map(|path| normalize_for_comparison(path))
             .collect();
 
         Self {
@@ -43,7 +46,8 @@ impl CachedStoreEnvironment {
     }
 }
 
-fn normalize_for_comparison(path: &PathBuf) -> PathBuf {
+#[cfg(any(windows, test))]
+fn normalize_for_comparison(path: &Path) -> PathBuf {
     let normalized = norm_case(path);
     let path_str = normalized.to_string_lossy();
     if path_str.starts_with(r"\\?\") {
@@ -62,7 +66,7 @@ pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
 pub struct WindowsStore {
     pub env_vars: EnvVariables,
     #[allow(dead_code)]
-    environments: Arc<RwLock<Option<Vec<CachedStoreEnvironment>>>>,
+    environments: Arc<RwLock<Option<Arc<Vec<CachedStoreEnvironment>>>>>,
 }
 
 impl WindowsStore {
@@ -73,7 +77,7 @@ impl WindowsStore {
         }
     }
     #[cfg(windows)]
-    fn find_with_cache(&self) -> Option<Vec<CachedStoreEnvironment>> {
+    fn find_with_cache(&self) -> Option<Arc<Vec<CachedStoreEnvironment>>> {
         // First check if we have cached results
         {
             let environments = self.environments.read().unwrap();
@@ -82,11 +86,13 @@ impl WindowsStore {
             }
         }
 
-        let envs = list_store_pythons(&self.env_vars)
-            .unwrap_or_default()
-            .into_iter()
-            .map(CachedStoreEnvironment::from_environment)
-            .collect::<Vec<_>>();
+        let envs = Arc::new(
+            list_store_pythons(&self.env_vars)
+                .unwrap_or_default()
+                .into_iter()
+                .map(CachedStoreEnvironment::from_environment)
+                .collect::<Vec<_>>(),
+        );
         self.environments.write().unwrap().replace(envs.clone());
         Some(envs)
     }
@@ -138,9 +144,10 @@ impl Locator for WindowsStore {
         use pet_core::python_environment::PythonEnvironmentBuilder;
         use pet_virtualenv::is_virtualenv;
 
-        // Assume we create a virtual env from a python install,
-        // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
-        // Hence the first part of the condition will be true, but the second part will be false.
+        // A virtual environment created from a Windows Store Python may still have an
+        // executable path or symlink chain that resolves back to the base Store install.
+        // Even in that case, the environment itself is a virtualenv and should not be
+        // classified as a Windows Store environment here.
         if is_virtualenv(env) {
             return None;
         }
@@ -151,7 +158,7 @@ impl Locator for WindowsStore {
             .map(|p| normalize_for_comparison(&p))
             .collect();
         if let Some(environments) = self.find_with_cache() {
-            for found_env in environments {
+            for found_env in environments.iter() {
                 if !found_env.normalized_symlinks.is_empty() {
                     // Check if we have found this exe.
                     if list_of_possible_exes
@@ -262,9 +269,9 @@ mod tests {
             symlinks: Some(vec![PathBuf::from(format!(r"\\?\{}", symlink.display()))]),
             ..Default::default()
         };
-        locator.environments.write().unwrap().replace(vec![
+        locator.environments.write().unwrap().replace(Arc::new(vec![
             CachedStoreEnvironment::from_environment(store_environment),
-        ]);
+        ]));
 
         let mut env = PythonEnv::new(symlink.clone(), None, None);
         env.symlinks = Some(vec![symlink]);
@@ -284,9 +291,9 @@ mod tests {
             symlinks: Some(vec![symlink.clone()]),
             ..Default::default()
         };
-        locator.environments.write().unwrap().replace(vec![
+        locator.environments.write().unwrap().replace(Arc::new(vec![
             CachedStoreEnvironment::from_environment(store_environment),
-        ]);
+        ]));
 
         let mut env = PythonEnv::new(symlink.clone(), None, None);
         env.symlinks = Some(vec![PathBuf::from(format!(r"\\?\{}", symlink.display()))]);
@@ -304,12 +311,12 @@ mod tests {
             .environments
             .write()
             .unwrap()
-            .replace(vec![cached_environment("stale")]);
+            .replace(Arc::new(vec![cached_environment("stale")]));
         refreshed
             .environments
             .write()
             .unwrap()
-            .replace(vec![cached_environment("fresh")]);
+            .replace(Arc::new(vec![cached_environment("fresh")]));
 
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
 
@@ -327,12 +334,12 @@ mod tests {
             .environments
             .write()
             .unwrap()
-            .replace(vec![cached_environment("stale")]);
+            .replace(Arc::new(vec![cached_environment("stale")]));
         refreshed
             .environments
             .write()
             .unwrap()
-            .replace(vec![cached_environment("fresh")]);
+            .replace(Arc::new(vec![cached_environment("fresh")]));
 
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Workspace);
 
@@ -350,12 +357,12 @@ mod tests {
             .environments
             .write()
             .unwrap()
-            .replace(vec![cached_environment("stale")]);
+            .replace(Arc::new(vec![cached_environment("stale")]));
         refreshed
             .environments
             .write()
             .unwrap()
-            .replace(vec![cached_environment("fresh")]);
+            .replace(Arc::new(vec![cached_environment("fresh")]));
 
         shared.sync_refresh_state_from(
             &refreshed,
@@ -368,7 +375,7 @@ mod tests {
             .environments
             .write()
             .unwrap()
-            .replace(vec![cached_environment("stale")]);
+            .replace(Arc::new(vec![cached_environment("stale")]));
         shared.sync_refresh_state_from(
             &refreshed,
             &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::Conda),
