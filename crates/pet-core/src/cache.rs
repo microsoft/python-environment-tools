@@ -26,8 +26,14 @@ pub struct LocatorCache<K, V> {
 }
 
 struct InFlightEntry<V> {
-    result: Mutex<Option<Option<V>>>,
+    result: Mutex<Option<InFlightResult<V>>>,
     changed: Condvar,
+}
+
+#[derive(Clone)]
+enum InFlightResult<V> {
+    Value(Option<V>),
+    Panicked,
 }
 
 struct InFlightOwnerGuard<'a, K: Eq + Hash, V> {
@@ -56,6 +62,14 @@ impl<K: Eq + Hash, V> InFlightOwnerGuard<'_, K, V> {
     }
 
     fn publish_result(&mut self, result: Option<V>) {
+        self.publish(InFlightResult::Value(result));
+    }
+
+    fn publish_panic(&mut self) {
+        self.publish(InFlightResult::Panicked);
+    }
+
+    fn publish(&mut self, result: InFlightResult<V>) {
         *self
             .entry
             .result
@@ -76,7 +90,7 @@ impl<K: Eq + Hash, V> InFlightOwnerGuard<'_, K, V> {
 impl<K: Eq + Hash, V> Drop for InFlightOwnerGuard<'_, K, V> {
     fn drop(&mut self) {
         if self.key.is_some() {
-            self.publish_result(None);
+            self.publish_panic();
         }
     }
 }
@@ -137,6 +151,11 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
     /// running duplicate closures with duplicate side effects. `None` results
     /// are shared with current waiters but are not stored in the cache, so later
     /// calls can retry the computation.
+    ///
+    /// The closure must not call `get_or_insert_with` for the same cache and key,
+    /// directly or indirectly, because the owner would wait on its own in-flight
+    /// entry. If the owner panics before publishing a result, waiters for the same
+    /// key are woken and panic instead of silently receiving an uncached `None`.
     #[must_use]
     pub fn get_or_insert_with<F>(&self, key: K, f: F) -> Option<V>
     where
@@ -220,7 +239,12 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
 
-        result.clone().unwrap()
+        match result.clone().unwrap() {
+            InFlightResult::Value(value) => value,
+            InFlightResult::Panicked => {
+                panic!("locator cache in-flight owner panicked before publishing a result");
+            }
+        }
     }
 
     /// Clears all entries from the cache.
@@ -381,7 +405,8 @@ mod tests {
         *entry
             .result
             .lock()
-            .expect("locator cache in-flight result lock poisoned") = Some(None);
+            .expect("locator cache in-flight result lock poisoned") =
+            Some(InFlightResult::Value(None));
         entry.changed.notify_all();
 
         assert_eq!(waiter.join().unwrap(), None);
@@ -412,6 +437,28 @@ mod tests {
             cache.get_or_insert_with("key".to_string(), || Some(42)),
             Some(42)
         );
+    }
+
+    #[test]
+    fn test_cache_panicked_owner_wakes_waiters_with_panic() {
+        let key = "key".to_string();
+        let entry = Arc::new(InFlightEntry::new());
+        let in_flight: Mutex<HashMap<String, Arc<InFlightEntry<i32>>>> = Mutex::new(HashMap::new());
+
+        in_flight.lock().unwrap().insert(key.clone(), entry.clone());
+        let owner = InFlightOwnerGuard {
+            key: Some(key),
+            entry: entry.clone(),
+            in_flight: &in_flight,
+        };
+
+        drop(owner);
+
+        let waiter_result =
+            std::panic::catch_unwind(|| LocatorCache::<String, i32>::wait_for_in_flight(entry));
+
+        assert!(waiter_result.is_err());
+        assert!(in_flight.lock().unwrap().is_empty());
     }
 
     #[test]
