@@ -47,7 +47,7 @@ fn is_poetry_cache_environment(path: &Path) -> bool {
     // - Windows: %LOCALAPPDATA%\pypoetry\Cache\virtualenvs\
     if has_poetry_cache_components(path) {
         // Further validate by checking if the directory name matches Poetry's naming pattern
-        // Pattern: {name}-{8-char-hash}-py or just .venv
+        // Pattern: {name}-{8-char-hash}-py{version}
         if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
             // Check for Poetry's hash-based naming: name-XXXXXXXX-py
             // The hash is 8 characters of base64url encoding
