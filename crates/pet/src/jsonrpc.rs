@@ -665,7 +665,6 @@ fn apply_configure_options(
     environment_directories: Option<Vec<PathBuf>>,
 ) -> Result<(), String> {
     let mut state = configuration.write().unwrap();
-    let previous_config = state.config.clone();
     let mut next_config = state.config.clone();
     let next_generation = state.generation + 1;
 
@@ -687,18 +686,27 @@ fn apply_configure_options(
         next_config
     );
 
-    if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
-        configure_locators(locators, &next_config);
-    })) {
-        let panic_message = panic_payload_message(panic_payload.as_ref());
-        error!(
-            "Locator configuration panicked for generation {}: {}",
-            next_generation, panic_message
-        );
-        rollback_locator_config(locators, &previous_config, next_generation);
-        return Err(format!(
-            "Locator configuration failed for generation {next_generation}: {panic_message}"
-        ));
+    let mut configured_locator_count = 0;
+    for locator in locators.iter() {
+        if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
+            locator.configure(&next_config);
+        })) {
+            let panic_message = panic_payload_message(panic_payload.as_ref());
+            error!(
+                "Locator configuration panicked for generation {}: {}",
+                next_generation, panic_message
+            );
+            rollback_locator_config(
+                locators,
+                &state.config,
+                next_generation,
+                configured_locator_count + 1,
+            );
+            return Err(format!(
+                "Locator configuration failed for generation {next_generation}: {panic_message}"
+            ));
+        }
+        configured_locator_count += 1;
     }
 
     if let Some(cache_directory) = cache_directory {
@@ -710,7 +718,12 @@ fn apply_configure_options(
                 "Cache directory configuration panicked for generation {}: {}",
                 next_generation, panic_message
             );
-            rollback_locator_config(locators, &previous_config, next_generation);
+            rollback_locator_config(
+                locators,
+                &state.config,
+                next_generation,
+                configured_locator_count,
+            );
             return Err(format!(
                 "Cache directory configuration failed for generation {next_generation}: {panic_message}"
             ));
@@ -731,15 +744,19 @@ fn rollback_locator_config(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     previous_config: &Configuration,
     failed_generation: u64,
+    configured_locator_count: usize,
 ) {
     if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
-        configure_locators(locators, previous_config);
+        for locator in locators.iter().take(configured_locator_count) {
+            locator.configure(previous_config);
+        }
     })) {
         error!(
-            "Rollback after failed locator configuration for generation {} also panicked: {}",
+            "Rollback after failed locator configuration for generation {} also panicked: {}. Aborting process to avoid continuing with inconsistent locator state.",
             failed_generation,
             panic_payload_message(panic_payload.as_ref())
         );
+        std::process::abort();
     }
 }
 
@@ -1339,7 +1356,9 @@ mod tests {
         configured_workspace_directories: Mutex<Option<Vec<PathBuf>>>,
     }
 
-    struct PanicConfigureLocator;
+    struct PanicConfigureLocator {
+        configured_workspace_directories: Mutex<Option<Vec<PathBuf>>>,
+    }
 
     struct RecordingConfigureLocator {
         configured_workspace_directories: Mutex<Option<Vec<PathBuf>>>,
@@ -1404,8 +1423,12 @@ mod tests {
             LocatorKind::Venv
         }
 
-        fn configure(&self, _config: &Configuration) {
-            panic!("configure boom");
+        fn configure(&self, config: &Configuration) {
+            *self.configured_workspace_directories.lock().unwrap() =
+                config.workspace_directories.clone();
+            if config.workspace_directories.is_some() || config.conda_executable.is_some() {
+                panic!("configure boom");
+            }
         }
 
         fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
@@ -1627,7 +1650,10 @@ mod tests {
     #[test]
     fn test_configure_panic_does_not_publish_state_or_poison_lock() {
         let configuration = RwLock::new(ConfigurationState::default());
-        let locators = Arc::new(vec![Arc::new(PanicConfigureLocator) as Arc<dyn Locator>]);
+        let panic_locator = Arc::new(PanicConfigureLocator {
+            configured_workspace_directories: Mutex::new(None),
+        });
+        let locators = Arc::new(vec![panic_locator.clone() as Arc<dyn Locator>]);
         let workspace_directories = vec![PathBuf::from("/workspace")];
 
         let result = apply_configure_options(
@@ -1650,6 +1676,11 @@ mod tests {
         assert_eq!(state.generation, 0);
         assert!(state.config.workspace_directories.is_none());
         assert!(state.config.conda_executable.is_none());
+        assert!(panic_locator
+            .configured_workspace_directories
+            .lock()
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -1658,9 +1689,12 @@ mod tests {
         let recording_locator = Arc::new(RecordingConfigureLocator {
             configured_workspace_directories: Mutex::new(None),
         });
+        let panic_locator = Arc::new(PanicConfigureLocator {
+            configured_workspace_directories: Mutex::new(None),
+        });
         let locators = Arc::new(vec![
             recording_locator.clone() as Arc<dyn Locator>,
-            Arc::new(PanicConfigureLocator) as Arc<dyn Locator>,
+            panic_locator.clone() as Arc<dyn Locator>,
         ]);
 
         let result = apply_configure_options(
@@ -1680,6 +1714,11 @@ mod tests {
 
         assert!(result.is_err());
         assert!(recording_locator
+            .configured_workspace_directories
+            .lock()
+            .unwrap()
+            .is_none());
+        assert!(panic_locator
             .configured_workspace_directories
             .lock()
             .unwrap()
