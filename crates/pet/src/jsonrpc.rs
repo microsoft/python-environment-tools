@@ -579,20 +579,28 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                     );
                 }
 
-                apply_configure_options(
+                if let Err(message) = apply_configure_options(
                     context.configuration.as_ref(),
                     &context.locators,
                     configure_options,
                     workspace_directories,
                     environment_directories,
-                );
+                ) {
+                    error!("Configure failed: {message}");
+                    send_error(Some(id), -4, message);
+                    return;
+                }
                 info!("Configure completed in {:?}", now.elapsed());
                 send_reply(id, None::<()>);
             });
         }
         Err(e) => {
-            send_reply(id, None::<u128>);
             error!("Failed to parse configure options {:?}: {}", params, e);
+            send_error(
+                Some(id),
+                -4,
+                format!("Failed to parse configure options {params:?}: {e}"),
+            );
         }
     }
 }
@@ -655,31 +663,95 @@ fn apply_configure_options(
     configure_options: ConfigureOptions,
     workspace_directories: Option<Vec<PathBuf>>,
     environment_directories: Option<Vec<PathBuf>>,
-) {
+) -> Result<(), String> {
     let mut state = configuration.write().unwrap();
-    state.config.workspace_directories = workspace_directories;
-    state.config.conda_executable = configure_options.conda_executable;
-    state.config.environment_directories = environment_directories;
-    state.config.pipenv_executable = configure_options.pipenv_executable;
-    state.config.poetry_executable = configure_options.poetry_executable;
+    let previous_config = state.config.clone();
+    let mut next_config = state.config.clone();
+    let next_generation = state.generation + 1;
+
+    next_config.workspace_directories = workspace_directories;
+    next_config.conda_executable = configure_options.conda_executable;
+    next_config.environment_directories = environment_directories;
+    next_config.pipenv_executable = configure_options.pipenv_executable;
+    next_config.poetry_executable = configure_options.poetry_executable;
     // We will not support changing the cache directories once set.
     // No point, supporting such a use case.
-    if let Some(cache_directory) = configure_options.cache_directory {
-        set_cache_directory(cache_directory.clone());
-        state.config.cache_directory = Some(cache_directory);
+    let cache_directory = configure_options.cache_directory;
+    if let Some(cache_directory) = cache_directory.clone() {
+        next_config.cache_directory = Some(cache_directory);
     }
-    state.generation += 1;
+
+    trace!(
+        "Configuring locators with generation {}: {:?}",
+        next_generation,
+        next_config
+    );
+
+    if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
+        configure_locators(locators, &next_config);
+    })) {
+        let panic_message = panic_payload_message(panic_payload.as_ref());
+        error!(
+            "Locator configuration panicked for generation {}: {}",
+            next_generation, panic_message
+        );
+        rollback_locator_config(locators, &previous_config, next_generation);
+        return Err(format!(
+            "Locator configuration failed for generation {next_generation}: {panic_message}"
+        ));
+    }
+
+    if let Some(cache_directory) = cache_directory {
+        if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
+            set_cache_directory(cache_directory);
+        })) {
+            let panic_message = panic_payload_message(panic_payload.as_ref());
+            error!(
+                "Cache directory configuration panicked for generation {}: {}",
+                next_generation, panic_message
+            );
+            rollback_locator_config(locators, &previous_config, next_generation);
+            return Err(format!(
+                "Cache directory configuration failed for generation {next_generation}: {panic_message}"
+            ));
+        }
+    }
+    state.config = next_config;
+    state.generation = next_generation;
     // Reset missing-env reporting so that the next refresh after
     // reconfiguration can trigger it again (Fixes #395). Done inside the write
     // lock to avoid a TOCTOU window with concurrent refresh threads reading the
     // generation.
     MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
-    trace!(
-        "Configuring locators with generation {}: {:?}",
-        state.generation,
-        state.config
-    );
-    configure_locators(locators, &state.config);
+
+    Ok(())
+}
+
+fn rollback_locator_config(
+    locators: &Arc<Vec<Arc<dyn Locator>>>,
+    previous_config: &Configuration,
+    failed_generation: u64,
+) {
+    if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
+        configure_locators(locators, previous_config);
+    })) {
+        error!(
+            "Rollback after failed locator configuration for generation {} also panicked: {}",
+            failed_generation,
+            panic_payload_message(panic_payload.as_ref())
+        );
+    }
+}
+
+fn panic_payload_message(panic_payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = panic_payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = panic_payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+
+    "unknown panic payload".to_string()
 }
 
 fn configure_locators(locators: &Arc<Vec<Arc<dyn Locator>>>, config: &Configuration) {
@@ -1267,6 +1339,12 @@ mod tests {
         configured_workspace_directories: Mutex<Option<Vec<PathBuf>>>,
     }
 
+    struct PanicConfigureLocator;
+
+    struct RecordingConfigureLocator {
+        configured_workspace_directories: Mutex<Option<Vec<PathBuf>>>,
+    }
+
     impl Reporter for RecordingReporter {
         fn report_manager(&self, manager: &EnvManager) {
             self.managers.lock().unwrap().push(manager.clone());
@@ -1306,6 +1384,47 @@ mod tests {
         fn configure(&self, config: &Configuration) {
             self.started.send(()).unwrap();
             self.release.lock().unwrap().recv().unwrap();
+            *self.configured_workspace_directories.lock().unwrap() =
+                config.workspace_directories.clone();
+        }
+
+        fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+            vec![PythonEnvironmentKind::Venv]
+        }
+
+        fn try_from(&self, _env: &pet_core::env::PythonEnv) -> Option<PythonEnvironment> {
+            None
+        }
+
+        fn find(&self, _reporter: &dyn Reporter) {}
+    }
+
+    impl Locator for PanicConfigureLocator {
+        fn get_kind(&self) -> LocatorKind {
+            LocatorKind::Venv
+        }
+
+        fn configure(&self, _config: &Configuration) {
+            panic!("configure boom");
+        }
+
+        fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+            vec![PythonEnvironmentKind::Venv]
+        }
+
+        fn try_from(&self, _env: &pet_core::env::PythonEnv) -> Option<PythonEnvironment> {
+            None
+        }
+
+        fn find(&self, _reporter: &dyn Reporter) {}
+    }
+
+    impl Locator for RecordingConfigureLocator {
+        fn get_kind(&self) -> LocatorKind {
+            LocatorKind::Venv
+        }
+
+        fn configure(&self, config: &Configuration) {
             *self.configured_workspace_directories.lock().unwrap() =
                 config.workspace_directories.clone();
         }
@@ -1480,7 +1599,8 @@ mod tests {
                     },
                     Some(workspace_directories),
                     None,
-                );
+                )
+                .unwrap();
                 done_tx.send(()).unwrap();
             })
         };
@@ -1502,6 +1622,68 @@ mod tests {
             *locator.configured_workspace_directories.lock().unwrap(),
             Some(workspace_directories)
         );
+    }
+
+    #[test]
+    fn test_configure_panic_does_not_publish_state_or_poison_lock() {
+        let configuration = RwLock::new(ConfigurationState::default());
+        let locators = Arc::new(vec![Arc::new(PanicConfigureLocator) as Arc<dyn Locator>]);
+        let workspace_directories = vec![PathBuf::from("/workspace")];
+
+        let result = apply_configure_options(
+            &configuration,
+            &locators,
+            ConfigureOptions {
+                workspace_directories: None,
+                conda_executable: Some(PathBuf::from("/configured/conda")),
+                pipenv_executable: None,
+                poetry_executable: None,
+                environment_directories: None,
+                cache_directory: None,
+            },
+            Some(workspace_directories),
+            None,
+        );
+
+        assert!(result.unwrap_err().contains("configure boom"));
+        let state = configuration.read().unwrap();
+        assert_eq!(state.generation, 0);
+        assert!(state.config.workspace_directories.is_none());
+        assert!(state.config.conda_executable.is_none());
+    }
+
+    #[test]
+    fn test_configure_panic_rolls_back_previously_configured_locators() {
+        let configuration = RwLock::new(ConfigurationState::default());
+        let recording_locator = Arc::new(RecordingConfigureLocator {
+            configured_workspace_directories: Mutex::new(None),
+        });
+        let locators = Arc::new(vec![
+            recording_locator.clone() as Arc<dyn Locator>,
+            Arc::new(PanicConfigureLocator) as Arc<dyn Locator>,
+        ]);
+
+        let result = apply_configure_options(
+            &configuration,
+            &locators,
+            ConfigureOptions {
+                workspace_directories: None,
+                conda_executable: None,
+                pipenv_executable: None,
+                poetry_executable: None,
+                environment_directories: None,
+                cache_directory: None,
+            },
+            Some(vec![PathBuf::from("/workspace")]),
+            None,
+        );
+
+        assert!(result.is_err());
+        assert!(recording_locator
+            .configured_workspace_directories
+            .lock()
+            .unwrap()
+            .is_none());
     }
 
     #[test]
