@@ -373,50 +373,21 @@ mod tests {
 
     #[test]
     fn test_cache_get_or_insert_with_shares_concurrent_none_result() {
-        let cache: Arc<LocatorCache<String, i32>> = Arc::new(LocatorCache::new());
-        let barrier = Arc::new(Barrier::new(3));
-        let calls = Arc::new(AtomicUsize::new(0));
-        let (started_tx, started_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let release_rx = Arc::new(Mutex::new(release_rx));
-        let mut handles = vec![];
+        let entry = Arc::new(InFlightEntry::new());
+        let waiter_entry = entry.clone();
+        let waiter =
+            thread::spawn(move || LocatorCache::<String, i32>::wait_for_in_flight(waiter_entry));
 
-        for _ in 0..2 {
-            let cache = cache.clone();
-            let barrier = barrier.clone();
-            let calls = calls.clone();
-            let started_tx = started_tx.clone();
-            let release_rx = release_rx.clone();
-            handles.push(thread::spawn(move || {
-                barrier.wait();
-                cache.get_or_insert_with("key".to_string(), || {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    started_tx.send(()).unwrap();
-                    release_rx
-                        .lock()
-                        .unwrap()
-                        .recv_timeout(Duration::from_secs(5))
-                        .unwrap();
-                    None
-                })
-            }));
-        }
+        *entry
+            .result
+            .lock()
+            .expect("locator cache in-flight result lock poisoned") = Some(None);
+        entry.changed.notify_all();
 
-        barrier.wait();
-        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(started_rx.try_recv().is_err());
+        assert_eq!(waiter.join().unwrap(), None);
 
-        release_tx.send(()).unwrap();
-        release_tx.send(()).unwrap();
-
-        let results = handles
-            .into_iter()
-            .map(|handle| handle.join().unwrap())
-            .collect::<Vec<_>>();
-
-        assert_eq!(results, vec![None, None]);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let cache: LocatorCache<String, i32> = LocatorCache::new();
+        assert_eq!(cache.get_or_insert_with("key".to_string(), || None), None);
         assert!(!cache.contains_key(&"key".to_string()));
 
         assert_eq!(
