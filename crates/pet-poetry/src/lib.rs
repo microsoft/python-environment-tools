@@ -49,7 +49,7 @@ fn is_poetry_cache_environment(path: &Path) -> bool {
         // Further validate by checking if the directory name matches Poetry's naming pattern
         // Pattern: {name}-{8-char-hash}-py{version}
         if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-            // Check for Poetry's hash-based naming: name-XXXXXXXX-py
+            // Check for Poetry's hash-based naming: name-XXXXXXXX-py<major>.<minor>
             // The hash is 8 characters of base64url encoding
             if POETRY_ENV_NAME_PATTERN.is_match(dir_name) {
                 return true;
@@ -63,16 +63,22 @@ fn is_poetry_cache_environment(path: &Path) -> bool {
 fn has_poetry_cache_components(path: &Path) -> bool {
     let mut found_pypoetry = false;
 
-    path.components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .any(|component| {
-            if component.eq_ignore_ascii_case("pypoetry") {
-                found_pypoetry = true;
-                return false;
-            }
+    for component in path.components() {
+        let Some(component) = component.as_os_str().to_str() else {
+            return false;
+        };
 
-            found_pypoetry && component.eq_ignore_ascii_case("virtualenvs")
-        })
+        if component.eq_ignore_ascii_case("pypoetry") {
+            found_pypoetry = true;
+            continue;
+        }
+
+        if found_pypoetry && component.eq_ignore_ascii_case("virtualenvs") {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Check if a .venv directory is an in-project Poetry environment
