@@ -213,4 +213,25 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn global_virtualenv_paths_include_xdg_and_default_home_children() {
+        let root = create_test_dir("xdg-and-home-envs");
+        let xdg_data_home = root.join("xdg-data");
+        let xdg_venv = xdg_data_home.join("virtualenvs").join("xdg-venv");
+        let default_venv = root.join(".virtualenvs").join("default-venv");
+        fs::create_dir_all(&xdg_venv).unwrap();
+        fs::create_dir_all(&default_venv).unwrap();
+
+        let python_envs = list_global_virtual_envs_paths(
+            None,
+            None,
+            Some(xdg_data_home.to_string_lossy().to_string()),
+            Some(root.clone()),
+        );
+
+        assert_eq!(python_envs, vec![default_venv, xdg_venv]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }
