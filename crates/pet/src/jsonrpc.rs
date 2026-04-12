@@ -539,21 +539,24 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
 
                 // Expand glob patterns before acquiring the write lock so we
                 // don't block readers/writers while traversing the filesystem.
-                let workspace_directories = configure_options.workspace_directories.map(|dirs| {
-                    let start = Instant::now();
-                    let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
-                        .into_iter()
-                        .filter(|p| p.is_dir())
-                        .collect();
-                    trace!(
-                        "Expanded workspace directory patterns ({:?}) in {:?}",
-                        dirs,
-                        start.elapsed()
-                    );
-                    result
-                });
-                let environment_directories =
-                    configure_options.environment_directories.map(|dirs| {
+                let workspace_directories =
+                    configure_options.workspace_directories.clone().map(|dirs| {
+                        let start = Instant::now();
+                        let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
+                            .into_iter()
+                            .filter(|p| p.is_dir())
+                            .collect();
+                        trace!(
+                            "Expanded workspace directory patterns ({:?}) in {:?}",
+                            dirs,
+                            start.elapsed()
+                        );
+                        result
+                    });
+                let environment_directories = configure_options
+                    .environment_directories
+                    .clone()
+                    .map(|dirs| {
                         let start = Instant::now();
                         let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
                             .into_iter()
@@ -575,33 +578,13 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                     );
                 }
 
-                let config = {
-                    let mut state = context.configuration.write().unwrap();
-                    state.config.workspace_directories = workspace_directories;
-                    state.config.conda_executable = configure_options.conda_executable;
-                    state.config.environment_directories = environment_directories;
-                    state.config.pipenv_executable = configure_options.pipenv_executable;
-                    state.config.poetry_executable = configure_options.poetry_executable;
-                    // We will not support changing the cache directories once set.
-                    // No point, supporting such a use case.
-                    if let Some(cache_directory) = configure_options.cache_directory {
-                        set_cache_directory(cache_directory.clone());
-                        state.config.cache_directory = Some(cache_directory);
-                    }
-                    state.generation += 1;
-                    // Reset missing-env reporting so that the next refresh
-                    // after reconfiguration can trigger it again (Fixes #395).
-                    // Done inside the write lock to avoid a TOCTOU window with
-                    // concurrent refresh threads reading the generation.
-                    MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
-                    trace!(
-                        "Configuring locators with generation {}: {:?}",
-                        state.generation,
-                        state.config
-                    );
-                    state.config.clone()
-                };
-                configure_locators(&context.locators, &config);
+                apply_configure_options(
+                    context.configuration.as_ref(),
+                    &context.locators,
+                    configure_options,
+                    workspace_directories,
+                    environment_directories,
+                );
                 info!("Configure completed in {:?}", now.elapsed());
                 send_reply(id, None::<()>);
             });
@@ -663,6 +646,39 @@ fn canonicalize_refresh_options(mut options: RefreshOptions) -> RefreshOptions {
 fn parse_refresh_options(params: Value) -> Result<RefreshOptions, serde_json::Error> {
     serde_json::from_value::<Option<RefreshOptions>>(normalize_refresh_params(params))
         .map(|options| canonicalize_refresh_options(options.unwrap_or_default()))
+}
+
+fn apply_configure_options(
+    configuration: &RwLock<ConfigurationState>,
+    locators: &Arc<Vec<Arc<dyn Locator>>>,
+    configure_options: ConfigureOptions,
+    workspace_directories: Option<Vec<PathBuf>>,
+    environment_directories: Option<Vec<PathBuf>>,
+) {
+    let mut state = configuration.write().unwrap();
+    state.config.workspace_directories = workspace_directories;
+    state.config.conda_executable = configure_options.conda_executable;
+    state.config.environment_directories = environment_directories;
+    state.config.pipenv_executable = configure_options.pipenv_executable;
+    state.config.poetry_executable = configure_options.poetry_executable;
+    // We will not support changing the cache directories once set.
+    // No point, supporting such a use case.
+    if let Some(cache_directory) = configure_options.cache_directory {
+        set_cache_directory(cache_directory.clone());
+        state.config.cache_directory = Some(cache_directory);
+    }
+    state.generation += 1;
+    // Reset missing-env reporting so that the next refresh after
+    // reconfiguration can trigger it again (Fixes #395). Done inside the write
+    // lock to avoid a TOCTOU window with concurrent refresh threads reading the
+    // generation.
+    MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
+    trace!(
+        "Configuring locators with generation {}: {:?}",
+        state.generation,
+        state.config
+    );
+    configure_locators(locators, &state.config);
 }
 
 fn configure_locators(locators: &Arc<Vec<Arc<dyn Locator>>>, config: &Configuration) {
@@ -1244,6 +1260,12 @@ mod tests {
         reported: Mutex<bool>,
     }
 
+    struct BlockingConfigureLocator {
+        started: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        configured_workspace_directories: Mutex<Option<Vec<PathBuf>>>,
+    }
+
     impl Reporter for RecordingReporter {
         fn report_manager(&self, manager: &EnvManager) {
             self.managers.lock().unwrap().push(manager.clone());
@@ -1273,6 +1295,29 @@ mod tests {
             assert!(self.configuration.try_write().is_err());
             *self.reported.lock().unwrap() = true;
         }
+    }
+
+    impl Locator for BlockingConfigureLocator {
+        fn get_kind(&self) -> LocatorKind {
+            LocatorKind::Venv
+        }
+
+        fn configure(&self, config: &Configuration) {
+            self.started.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            *self.configured_workspace_directories.lock().unwrap() =
+                config.workspace_directories.clone();
+        }
+
+        fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+            vec![PythonEnvironmentKind::Venv]
+        }
+
+        fn try_from(&self, _env: &pet_core::env::PythonEnv) -> Option<PythonEnvironment> {
+            None
+        }
+
+        fn find(&self, _reporter: &dyn Reporter) {}
     }
 
     fn make_refresh_key(generation: u64, options: RefreshOptions) -> RefreshKey {
@@ -1400,6 +1445,59 @@ mod tests {
         }));
 
         assert!(*inner.reported.lock().unwrap());
+    }
+
+    #[test]
+    fn test_configure_publishes_state_after_shared_locators_are_configured() {
+        let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let locator = Arc::new(BlockingConfigureLocator {
+            started: started_tx,
+            release: Mutex::new(release_rx),
+            configured_workspace_directories: Mutex::new(None),
+        });
+        let locators = Arc::new(vec![locator.clone() as Arc<dyn Locator>]);
+        let workspace_directories = vec![PathBuf::from("/workspace")];
+
+        let worker = {
+            let configuration = configuration.clone();
+            let locators = locators.clone();
+            let workspace_directories = workspace_directories.clone();
+            thread::spawn(move || {
+                apply_configure_options(
+                    configuration.as_ref(),
+                    &locators,
+                    ConfigureOptions {
+                        workspace_directories: None,
+                        conda_executable: None,
+                        pipenv_executable: None,
+                        poetry_executable: None,
+                        environment_directories: None,
+                        cache_directory: None,
+                    },
+                    Some(workspace_directories),
+                    None,
+                );
+            })
+        };
+
+        started_rx.recv().unwrap();
+        assert!(configuration.try_read().is_err());
+
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+
+        let state = configuration.read().unwrap();
+        assert_eq!(state.generation, 1);
+        assert_eq!(
+            state.config.workspace_directories,
+            Some(workspace_directories.clone())
+        );
+        assert_eq!(
+            *locator.configured_workspace_directories.lock().unwrap(),
+            Some(workspace_directories)
+        );
     }
 
     #[test]
