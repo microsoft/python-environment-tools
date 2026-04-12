@@ -60,12 +60,12 @@ impl<K: Eq + Hash, V> InFlightOwnerGuard<'_, K, V> {
             .entry
             .result
             .lock()
-            .expect("locator cache in-flight result lock poisoned") = Some(result);
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result);
 
         if let Some(key) = self.key.take() {
             self.in_flight
                 .lock()
-                .expect("locator cache in-flight lock poisoned")
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .remove(&key);
         }
 
@@ -212,12 +212,12 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
         let mut result = entry
             .result
             .lock()
-            .expect("locator cache in-flight result lock poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         while result.is_none() {
             result = entry
                 .changed
                 .wait(result)
-                .expect("locator cache in-flight condvar poisoned");
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
 
         result.clone().unwrap()
@@ -412,6 +412,49 @@ mod tests {
             cache.get_or_insert_with("key".to_string(), || Some(42)),
             Some(42)
         );
+    }
+
+    #[test]
+    fn test_cache_publish_result_recovers_poisoned_in_flight_locks() {
+        let key = "key".to_string();
+        let entry = Arc::new(InFlightEntry::new());
+        let in_flight: Arc<Mutex<HashMap<String, Arc<InFlightEntry<i32>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        in_flight.lock().unwrap().insert(key.clone(), entry.clone());
+
+        let poison_entry = entry.clone();
+        assert!(thread::spawn(move || {
+            let _guard = poison_entry.result.lock().unwrap();
+            panic!("poison result lock");
+        })
+        .join()
+        .is_err());
+
+        let poison_in_flight = in_flight.clone();
+        assert!(thread::spawn(move || {
+            let _guard = poison_in_flight.lock().unwrap();
+            panic!("poison in-flight lock");
+        })
+        .join()
+        .is_err());
+
+        let owner = InFlightOwnerGuard {
+            key: Some(key),
+            entry: entry.clone(),
+            in_flight: &in_flight,
+        };
+
+        owner.complete(Some(42));
+
+        assert_eq!(
+            LocatorCache::<String, i32>::wait_for_in_flight(entry),
+            Some(42)
+        );
+        assert!(in_flight
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty());
     }
 
     #[test]
