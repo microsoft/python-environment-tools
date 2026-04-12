@@ -531,7 +531,7 @@ const GLOB_EXPANSION_WARN_THRESHOLD: Duration = Duration::from_secs(5);
 
 pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
     match serde_json::from_value::<ConfigureOptions>(params.clone()) {
-        Ok(configure_options) => {
+        Ok(mut configure_options) => {
             info!("Received configure request");
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
@@ -540,7 +540,7 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                 // Expand glob patterns before acquiring the write lock so we
                 // don't block readers/writers while traversing the filesystem.
                 let workspace_directories =
-                    configure_options.workspace_directories.clone().map(|dirs| {
+                    configure_options.workspace_directories.take().map(|dirs| {
                         let start = Instant::now();
                         let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
                             .into_iter()
@@ -553,22 +553,23 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                         );
                         result
                     });
-                let environment_directories = configure_options
-                    .environment_directories
-                    .clone()
-                    .map(|dirs| {
-                        let start = Instant::now();
-                        let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
-                            .into_iter()
-                            .filter(|p| p.is_dir())
-                            .collect();
-                        trace!(
-                            "Expanded environment directory patterns ({:?}) in {:?}",
-                            dirs,
-                            start.elapsed()
-                        );
-                        result
-                    });
+                let environment_directories =
+                    configure_options
+                        .environment_directories
+                        .take()
+                        .map(|dirs| {
+                            let start = Instant::now();
+                            let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
+                                .into_iter()
+                                .filter(|p| p.is_dir())
+                                .collect();
+                            trace!(
+                                "Expanded environment directory patterns ({:?}) in {:?}",
+                                dirs,
+                                start.elapsed()
+                            );
+                            result
+                        });
                 let glob_elapsed = now.elapsed();
                 trace!("Glob expansion completed in {:?}", glob_elapsed);
                 if glob_elapsed >= GLOB_EXPANSION_WARN_THRESHOLD {
@@ -1452,6 +1453,7 @@ mod tests {
         let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
         let locator = Arc::new(BlockingConfigureLocator {
             started: started_tx,
             release: Mutex::new(release_rx),
@@ -1479,13 +1481,15 @@ mod tests {
                     Some(workspace_directories),
                     None,
                 );
+                done_tx.send(()).unwrap();
             })
         };
 
-        started_rx.recv().unwrap();
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(configuration.try_read().is_err());
 
         release_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         worker.join().unwrap();
 
         let state = configuration.read().unwrap();
