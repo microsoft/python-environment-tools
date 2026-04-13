@@ -2,19 +2,21 @@
 description: "Deep code reviewer for PET (Python Environment Tools). Catches environment misidentification, locator ordering issues, thread safety problems, platform-specific bugs, and JSONRPC protocol violations that automated tools miss."
 tools:
   [
-    "read/problems",
-    "read/readFile",
-    "agent",
-    "github/issue_read",
-    "github/list_issues",
-    "github/list_pull_requests",
-    "github/pull_request_read",
-    "github/search_code",
-    "github/search_issues",
-    "github/search_pull_requests",
-    "search",
-    "web",
+    read/problems,
+    read/readFile,
+    read/viewImage,
+    agent,
+    search,
+    web,
+    github/issue_read,
+    github/list_issues,
+    github/list_pull_requests,
+    github/pull_request_read,
+    github/search_code,
+    github/search_issues,
+    github/search_pull_requests,
   ]
+user-invocable: false
 ---
 
 # Code Reviewer
