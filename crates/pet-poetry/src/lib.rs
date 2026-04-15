@@ -45,18 +45,36 @@ fn is_poetry_cache_environment(path: &Path) -> bool {
     // - Linux: ~/.cache/pypoetry/virtualenvs/
     // - macOS: ~/Library/Caches/pypoetry/virtualenvs/
     // - Windows: %LOCALAPPDATA%\pypoetry\Cache\virtualenvs\
-    let path_str = path.to_str().unwrap_or_default();
-
-    // Check if path contains typical Poetry cache directory structure
-    if path_str.contains("pypoetry") && path_str.contains("virtualenvs") {
+    if has_poetry_cache_components(path) {
         // Further validate by checking if the directory name matches Poetry's naming pattern
-        // Pattern: {name}-{8-char-hash}-py or just .venv
+        // Pattern: {name}-{8-char-hash}-py{version}
         if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-            // Check for Poetry's hash-based naming: name-XXXXXXXX-py
+            // Check for Poetry's hash-based naming: name-XXXXXXXX-py<major>.<minor>
             // The hash is 8 characters of base64url encoding
             if POETRY_ENV_NAME_PATTERN.is_match(dir_name) {
                 return true;
             }
+        }
+    }
+
+    false
+}
+
+fn has_poetry_cache_components(path: &Path) -> bool {
+    let mut found_pypoetry = false;
+
+    for component in path.components() {
+        let Some(component) = component.as_os_str().to_str() else {
+            return false;
+        };
+
+        if component.eq_ignore_ascii_case("pypoetry") {
+            found_pypoetry = true;
+            continue;
+        }
+
+        if found_pypoetry && component.eq_ignore_ascii_case("virtualenvs") {
+            return true;
         }
     }
 
@@ -358,6 +376,100 @@ impl Locator for Poetry {
 mod tests {
     use super::*;
     use pet_core::os_environment::EnvironmentApi;
+
+    fn path_from_components(components: &[&str]) -> PathBuf {
+        let mut path = PathBuf::new();
+        for component in components {
+            path.push(component);
+        }
+        path
+    }
+
+    #[test]
+    fn test_poetry_cache_environment_requires_exact_cache_components() {
+        let path = path_from_components(&[
+            "home",
+            "user",
+            ".cache",
+            "pypoetry",
+            "virtualenvs",
+            "project-1a2b3c4d-py3.11",
+        ]);
+
+        assert!(is_poetry_cache_environment(&path));
+    }
+
+    #[test]
+    fn test_poetry_cache_environment_allows_windows_cache_component() {
+        let path = path_from_components(&[
+            "Users",
+            "user",
+            "AppData",
+            "Local",
+            "pypoetry",
+            "Cache",
+            "virtualenvs",
+            "project-1a2b3c4d-py3.11",
+        ]);
+
+        assert!(is_poetry_cache_environment(&path));
+    }
+
+    #[test]
+    fn test_poetry_cache_environment_rejects_substring_cache_components() {
+        let path = path_from_components(&[
+            "Users",
+            "pypoetry_user",
+            "virtualenvs_backup",
+            "project-1a2b3c4d-py3.11",
+        ]);
+
+        assert!(!is_poetry_cache_environment(&path));
+    }
+
+    #[test]
+    fn test_poetry_cache_environment_requires_ordered_cache_components() {
+        let path = path_from_components(&[
+            "home",
+            "user",
+            ".cache",
+            "virtualenvs",
+            "pypoetry",
+            "project-1a2b3c4d-py3.11",
+        ]);
+
+        assert!(!is_poetry_cache_environment(&path));
+    }
+
+    #[test]
+    fn test_poetry_cache_environment_allows_mixed_case_cache_components() {
+        let path = path_from_components(&[
+            "Users",
+            "user",
+            "AppData",
+            "Local",
+            "PyPoetry",
+            "Cache",
+            "VirtualEnvs",
+            "project-1a2b3c4d-py3.11",
+        ]);
+
+        assert!(is_poetry_cache_environment(&path));
+    }
+
+    #[test]
+    fn test_poetry_cache_environment_requires_poetry_env_name() {
+        let path = path_from_components(&[
+            "home",
+            "user",
+            ".cache",
+            "pypoetry",
+            "virtualenvs",
+            "not-a-poetry-env",
+        ]);
+
+        assert!(!is_poetry_cache_environment(&path));
+    }
 
     #[test]
     fn test_sync_search_result_from_replaces_cached_result() {
