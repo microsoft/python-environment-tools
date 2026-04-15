@@ -163,4 +163,26 @@ mod tests {
             vec![normalize_search_path(PathBuf::from("/usr/bin"))]
         );
     }
+
+    #[test]
+    fn windows_apps_path_detection_is_case_insensitive_by_components() {
+        let path = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\User\appdata\LOCAL\microsoft\WINDOWSAPPS"
+        } else {
+            "/Users/user/appdata/LOCAL/microsoft/WINDOWSAPPS"
+        });
+
+        assert!(is_windows_apps_path(&path, None));
+    }
+
+    #[test]
+    fn windows_apps_path_detection_rejects_partial_component_matches() {
+        let path = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\User\AppDataBackup\Local\Microsoft\WindowsApps"
+        } else {
+            "/Users/user/AppDataBackup/Local/Microsoft/WindowsApps"
+        });
+
+        assert!(!is_windows_apps_path(&path, None));
+    }
 }
