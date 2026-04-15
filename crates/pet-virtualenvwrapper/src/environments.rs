@@ -135,6 +135,29 @@ mod tests {
         fs::remove_dir_all(outside_prefix.parent().unwrap()).unwrap();
     }
 
+    #[test]
+    fn is_virtualenvwrapper_rejects_non_virtualenv_under_workon_home() {
+        let workon_home = create_test_dir("workon-home");
+        let prefix = workon_home.join("not-a-virtualenv");
+        let scripts_dir = prefix.join(if cfg!(windows) { "Scripts" } else { "bin" });
+        fs::create_dir_all(&scripts_dir).unwrap();
+        let executable = scripts_dir.join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+        fs::write(&executable, b"").unwrap();
+        let env = PythonEnv::new(executable, Some(prefix), None);
+        let env_variables = EnvVariables {
+            home: None,
+            workon_home: Some(workon_home.to_string_lossy().to_string()),
+        };
+
+        assert!(!is_virtualenvwrapper(&env, &env_variables));
+
+        fs::remove_dir_all(workon_home).unwrap();
+    }
+
     #[cfg(windows)]
     #[test]
     fn is_virtualenvwrapper_accepts_env_under_symlinked_workon_home() {
