@@ -15,8 +15,48 @@ use pet_core::LocatorKind;
 use pet_core::{
     os_environment::Environment, Locator, RefreshStatePersistence, RefreshStateSyncScope,
 };
-use std::path::Path;
+#[cfg(any(windows, test))]
+use pet_fs::path::norm_case;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+#[derive(Clone, Debug)]
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+struct CachedStoreEnvironment {
+    environment: PythonEnvironment,
+    normalized_symlinks: Vec<PathBuf>,
+}
+
+impl CachedStoreEnvironment {
+    #[cfg(any(windows, test))]
+    fn from_environment(environment: PythonEnvironment) -> Self {
+        let normalized_symlinks = environment
+            .symlinks
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|path| normalize_for_comparison(path))
+            .collect();
+
+        Self {
+            environment,
+            normalized_symlinks,
+        }
+    }
+}
+
+#[cfg(any(windows, test))]
+fn normalize_for_comparison(path: &Path) -> PathBuf {
+    let normalized = norm_case(path);
+    let path_str = normalized.to_string_lossy();
+    if let Some(unc_path) = path_str.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{unc_path}"))
+    } else if let Some(path_without_prefix) = path_str.strip_prefix(r"\\?\") {
+        PathBuf::from(path_without_prefix)
+    } else {
+        normalized
+    }
+}
 
 pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
     let path = path.to_str().unwrap_or_default().to_ascii_lowercase();
@@ -27,7 +67,7 @@ pub fn is_windows_app_folder_in_program_files(path: &Path) -> bool {
 pub struct WindowsStore {
     pub env_vars: EnvVariables,
     #[allow(dead_code)]
-    environments: Arc<RwLock<Option<Vec<PythonEnvironment>>>>,
+    environments: Arc<RwLock<Option<Arc<Vec<CachedStoreEnvironment>>>>>,
 }
 
 impl WindowsStore {
@@ -38,7 +78,7 @@ impl WindowsStore {
         }
     }
     #[cfg(windows)]
-    fn find_with_cache(&self) -> Option<Vec<PythonEnvironment>> {
+    fn find_with_cache(&self) -> Option<Arc<Vec<CachedStoreEnvironment>>> {
         // First check if we have cached results
         {
             let environments = self.environments.read().unwrap();
@@ -47,7 +87,13 @@ impl WindowsStore {
             }
         }
 
-        let envs = list_store_pythons(&self.env_vars).unwrap_or_default();
+        let envs = Arc::new(
+            list_store_pythons(&self.env_vars)
+                .unwrap_or_default()
+                .into_iter()
+                .map(CachedStoreEnvironment::from_environment)
+                .collect::<Vec<_>>(),
+        );
         self.environments.write().unwrap().replace(envs.clone());
         Some(envs)
     }
@@ -96,26 +142,13 @@ impl Locator for WindowsStore {
 
     #[cfg(windows)]
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
-        use std::path::PathBuf;
-
         use pet_core::python_environment::PythonEnvironmentBuilder;
-        use pet_fs::path::norm_case;
         use pet_virtualenv::is_virtualenv;
 
-        // Helper to normalize paths for comparison by stripping \\?\ prefix
-        fn normalize_for_comparison(path: &PathBuf) -> PathBuf {
-            let normalized = norm_case(path);
-            let path_str = normalized.to_string_lossy();
-            if path_str.starts_with(r"\\?\") {
-                PathBuf::from(path_str.trim_start_matches(r"\\?\"))
-            } else {
-                normalized
-            }
-        }
-
-        // Assume we create a virtual env from a python install,
-        // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
-        // Hence the first part of the condition will be true, but the second part will be false.
+        // A virtual environment created from a Windows Store Python may still have an
+        // executable path or symlink chain that resolves back to the base Store install.
+        // Even in that case, the environment itself is a virtualenv and should not be
+        // classified as a Windows Store environment here.
         if is_virtualenv(env) {
             return None;
         }
@@ -126,15 +159,12 @@ impl Locator for WindowsStore {
             .map(|p| normalize_for_comparison(&p))
             .collect();
         if let Some(environments) = self.find_with_cache() {
-            for found_env in environments {
-                if let Some(symlinks) = &found_env.symlinks {
-                    // Normalize symlinks for comparison
-                    let normalized_symlinks: Vec<PathBuf> =
-                        symlinks.iter().map(normalize_for_comparison).collect();
+            for found_env in environments.iter() {
+                if !found_env.normalized_symlinks.is_empty() {
                     // Check if we have found this exe.
                     if list_of_possible_exes
                         .iter()
-                        .any(|exe| normalized_symlinks.contains(exe))
+                        .any(|exe| found_env.normalized_symlinks.contains(exe))
                     {
                         // Its possible the env discovery was not aware of the symlink
                         // E.g. if we are asked to resolve `../WindowsApp/python.exe`
@@ -143,8 +173,10 @@ impl Locator for WindowsStore {
                         // However the env found by the locator will almost never contain python.exe nor python3.exe
                         // See README.md
                         // As a result, we need to add those symlinks here.
-                        let builder = PythonEnvironmentBuilder::from_environment(found_env.clone())
-                            .symlinks(env.symlinks.clone());
+                        let builder = PythonEnvironmentBuilder::from_environment(
+                            found_env.environment.clone(),
+                        )
+                        .symlinks(env.symlinks.clone());
                         return Some(builder.build());
                     }
                 }
@@ -164,7 +196,7 @@ impl Locator for WindowsStore {
         if let Some(environments) = self.find_with_cache() {
             environments
                 .iter()
-                .for_each(|e| reporter.report_environment(e))
+                .for_each(|e| reporter.report_environment(&e.environment))
         }
     }
 
@@ -178,6 +210,13 @@ impl Locator for WindowsStore {
 mod tests {
     use super::*;
     use pet_core::os_environment::EnvironmentApi;
+
+    fn cached_environment(name: &str) -> CachedStoreEnvironment {
+        CachedStoreEnvironment::from_environment(PythonEnvironment {
+            name: Some(name.to_string()),
+            ..Default::default()
+        })
+    }
 
     #[test]
     fn windows_store_reports_kind_supported_categories_and_refresh_state() {
@@ -207,6 +246,76 @@ mod tests {
     }
 
     #[test]
+    fn cached_store_environment_normalizes_symlinks_once() {
+        let cached = CachedStoreEnvironment::from_environment(PythonEnvironment {
+            symlinks: Some(vec![PathBuf::from(r"\\?\C:\Users\User\python.exe")]),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            cached.normalized_symlinks,
+            vec![PathBuf::from(r"C:\Users\User\python.exe")]
+        );
+    }
+
+    #[test]
+    fn cached_store_environment_normalizes_extended_unc_symlinks() {
+        let cached = CachedStoreEnvironment::from_environment(PythonEnvironment {
+            symlinks: Some(vec![PathBuf::from(r"\\?\UNC\server\share\python.exe")]),
+            ..Default::default()
+        });
+
+        assert_eq!(
+            cached.normalized_symlinks,
+            vec![PathBuf::from(r"\\server\share\python.exe")]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn try_from_matches_cached_normalized_symlink() {
+        let environment = EnvironmentApi::new();
+        let locator = WindowsStore::from(&environment);
+        let symlink =
+            PathBuf::from(r"C:\Users\User\AppData\Local\Microsoft\WindowsApps\python3.11.exe");
+        let store_environment = PythonEnvironment {
+            kind: Some(PythonEnvironmentKind::WindowsStore),
+            symlinks: Some(vec![PathBuf::from(format!(r"\\?\{}", symlink.display()))]),
+            ..Default::default()
+        };
+        locator.environments.write().unwrap().replace(Arc::new(vec![
+            CachedStoreEnvironment::from_environment(store_environment),
+        ]));
+
+        let mut env = PythonEnv::new(symlink.clone(), None, None);
+        env.symlinks = Some(vec![symlink]);
+
+        assert!(locator.try_from(&env).is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn try_from_normalizes_incoming_extended_prefix_symlink() {
+        let environment = EnvironmentApi::new();
+        let locator = WindowsStore::from(&environment);
+        let symlink =
+            PathBuf::from(r"C:\Users\User\AppData\Local\Microsoft\WindowsApps\python3.11.exe");
+        let store_environment = PythonEnvironment {
+            kind: Some(PythonEnvironmentKind::WindowsStore),
+            symlinks: Some(vec![symlink.clone()]),
+            ..Default::default()
+        };
+        locator.environments.write().unwrap().replace(Arc::new(vec![
+            CachedStoreEnvironment::from_environment(store_environment),
+        ]));
+
+        let mut env = PythonEnv::new(symlink.clone(), None, None);
+        env.symlinks = Some(vec![PathBuf::from(format!(r"\\?\{}", symlink.display()))]);
+
+        assert!(locator.try_from(&env).is_some());
+    }
+
+    #[test]
     fn test_full_refresh_sync_replaces_store_cache() {
         let environment = EnvironmentApi::new();
         let shared = WindowsStore::from(&environment);
@@ -216,23 +325,17 @@ mod tests {
             .environments
             .write()
             .unwrap()
-            .replace(vec![PythonEnvironment {
-                name: Some("stale".to_string()),
-                ..Default::default()
-            }]);
+            .replace(Arc::new(vec![cached_environment("stale")]));
         refreshed
             .environments
             .write()
             .unwrap()
-            .replace(vec![PythonEnvironment {
-                name: Some("fresh".to_string()),
-                ..Default::default()
-            }]);
+            .replace(Arc::new(vec![cached_environment("fresh")]));
 
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
 
         let result = shared.environments.read().unwrap().clone().unwrap();
-        assert_eq!(result[0].name.as_deref(), Some("fresh"));
+        assert_eq!(result[0].environment.name.as_deref(), Some("fresh"));
     }
 
     #[test]
@@ -245,23 +348,17 @@ mod tests {
             .environments
             .write()
             .unwrap()
-            .replace(vec![PythonEnvironment {
-                name: Some("stale".to_string()),
-                ..Default::default()
-            }]);
+            .replace(Arc::new(vec![cached_environment("stale")]));
         refreshed
             .environments
             .write()
             .unwrap()
-            .replace(vec![PythonEnvironment {
-                name: Some("fresh".to_string()),
-                ..Default::default()
-            }]);
+            .replace(Arc::new(vec![cached_environment("fresh")]));
 
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Workspace);
 
         let result = shared.environments.read().unwrap().clone().unwrap();
-        assert_eq!(result[0].name.as_deref(), Some("stale"));
+        assert_eq!(result[0].environment.name.as_deref(), Some("stale"));
     }
 
     #[test]
@@ -274,39 +371,30 @@ mod tests {
             .environments
             .write()
             .unwrap()
-            .replace(vec![PythonEnvironment {
-                name: Some("stale".to_string()),
-                ..Default::default()
-            }]);
+            .replace(Arc::new(vec![cached_environment("stale")]));
         refreshed
             .environments
             .write()
             .unwrap()
-            .replace(vec![PythonEnvironment {
-                name: Some("fresh".to_string()),
-                ..Default::default()
-            }]);
+            .replace(Arc::new(vec![cached_environment("fresh")]));
 
         shared.sync_refresh_state_from(
             &refreshed,
             &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::WindowsStore),
         );
         let result = shared.environments.read().unwrap().clone().unwrap();
-        assert_eq!(result[0].name.as_deref(), Some("fresh"));
+        assert_eq!(result[0].environment.name.as_deref(), Some("fresh"));
 
         shared
             .environments
             .write()
             .unwrap()
-            .replace(vec![PythonEnvironment {
-                name: Some("stale".to_string()),
-                ..Default::default()
-            }]);
+            .replace(Arc::new(vec![cached_environment("stale")]));
         shared.sync_refresh_state_from(
             &refreshed,
             &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::Conda),
         );
         let result = shared.environments.read().unwrap().clone().unwrap();
-        assert_eq!(result[0].name.as_deref(), Some("stale"));
+        assert_eq!(result[0].environment.name.as_deref(), Some("stale"));
     }
 }
