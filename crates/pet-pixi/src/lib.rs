@@ -193,6 +193,33 @@ mod tests {
     }
 
     #[test]
+    fn try_from_derives_pixi_prefix_from_direct_child_executable() {
+        let temp_dir = TempDir::new().unwrap();
+        let prefix = create_pixi_prefix(&temp_dir);
+        let executable = prefix.join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+        fs::write(&executable, b"").unwrap();
+        let locator = Pixi::new();
+        let env = PythonEnv::new(executable, None, None);
+
+        let pixi_env = locator.try_from(&env).unwrap();
+
+        assert_eq!(pixi_env.kind, Some(PythonEnvironmentKind::Pixi));
+        assert_eq!(
+            pixi_env
+                .prefix
+                .as_deref()
+                .map(fs::canonicalize)
+                .transpose()
+                .unwrap(),
+            Some(fs::canonicalize(prefix).unwrap())
+        );
+    }
+
+    #[test]
     fn try_from_rejects_non_pixi_environments() {
         let temp_dir = TempDir::new().unwrap();
         let executable = temp_dir.path().join("python");
