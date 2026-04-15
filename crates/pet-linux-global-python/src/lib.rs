@@ -305,15 +305,17 @@ mod tests {
         let executable = dir.path().join(PYTHON_EXE);
         create_executable(&executable);
         let env = create_env(executable.clone(), dir.path().to_path_buf());
+        let expected_executable = env.executable.clone();
+        let expected_prefix = env.prefix.clone();
 
         let environment = get_python_in_bin(&env, true).unwrap();
 
         assert_eq!(environment.kind, Some(PythonEnvironmentKind::LinuxGlobal));
-        assert_eq!(environment.executable, Some(executable.clone()));
-        assert_eq!(environment.prefix, Some(dir.path().to_path_buf()));
+        assert_eq!(environment.executable, Some(expected_executable.clone()));
+        assert_eq!(environment.prefix, expected_prefix);
         assert_eq!(environment.version, Some("3.12.1".to_string()));
         assert_eq!(environment.arch, Some(Architecture::X64));
-        assert!(environment.symlinks.unwrap().contains(&executable));
+        assert!(environment.symlinks.unwrap().contains(&expected_executable));
     }
 
     #[test]
