@@ -31,7 +31,7 @@ impl Locator for MacXCode {
         LocatorKind::MacXCode
     }
     fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
-        vec![PythonEnvironmentKind::MacCommandLineTools]
+        vec![PythonEnvironmentKind::MacXCode]
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -45,14 +45,13 @@ impl Locator for MacXCode {
             return None;
         }
 
-        let exe_str = env.executable.to_string_lossy();
-
         // Support for /Applications/Xcode.app/Contents/Developer/usr/bin/python3
         // /Applications/Xcode_15.0.1.app/Contents/Developer/usr/bin/python3 (such paths are on CI, see here https://github.com/microsoft/python-environment-tools/issues/38)
-        if !exe_str.starts_with("/Applications") && !exe_str.contains("Contents/Developer/usr/bin")
-        {
+        if !is_xcode_python_path(&env.executable) {
             return None;
         }
+
+        let exe_str = env.executable.to_string_lossy();
 
         let mut version = env.version.clone();
         let mut prefix = env.prefix.clone();
@@ -229,5 +228,137 @@ impl Locator for MacXCode {
         //         _reporter.report_environment(&env);
         //     }
         // }
+    }
+}
+
+fn is_xcode_python_path(executable: &std::path::Path) -> bool {
+    let executable = executable.to_string_lossy();
+    let Some(rest) = executable.strip_prefix("/Applications/") else {
+        return false;
+    };
+
+    let Some(app_bundle) = rest.split('/').next() else {
+        return false;
+    };
+
+    if !app_bundle.starts_with("Xcode") || !app_bundle.ends_with(".app") {
+        return false;
+    }
+
+    let app_relative_path = &rest[app_bundle.len()..];
+    if let Some(usr_bin_entry) = app_relative_path.strip_prefix("/Contents/Developer/usr/bin/") {
+        return usr_bin_entry.starts_with("python") && !usr_bin_entry.contains('/');
+    }
+
+    let Some(framework_entry) = app_relative_path
+        .strip_prefix("/Contents/Developer/Library/Frameworks/Python3.framework/Versions/")
+    else {
+        return false;
+    };
+
+    let mut framework_parts = framework_entry.split('/');
+    framework_parts
+        .next()
+        .is_some_and(|version| !version.is_empty())
+        && framework_parts.next() == Some("bin")
+        && framework_parts
+            .next()
+            .is_some_and(|executable| executable.starts_with("python"))
+        && framework_parts.next().is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::Locator;
+    use std::path::Path;
+
+    #[test]
+    fn locator_metadata_matches_xcode_kind() {
+        let locator = MacXCode::new();
+
+        assert_eq!(locator.get_kind(), LocatorKind::MacXCode);
+        assert_eq!(
+            locator.supported_categories(),
+            vec![PythonEnvironmentKind::MacXCode]
+        );
+    }
+
+    #[test]
+    fn xcode_path_accepts_default_xcode_usr_bin_python() {
+        assert!(is_xcode_python_path(Path::new(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn xcode_path_accepts_versioned_xcode_usr_bin_python() {
+        assert!(is_xcode_python_path(Path::new(
+            "/Applications/Xcode_15.0.1.app/Contents/Developer/usr/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn xcode_path_accepts_framework_python_executable() {
+        assert!(is_xcode_python_path(Path::new(
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"
+        )));
+    }
+
+    #[test]
+    fn xcode_path_rejects_non_python_framework_path() {
+        assert!(!is_xcode_python_path(Path::new(
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Info.plist"
+        )));
+    }
+
+    #[test]
+    fn xcode_path_rejects_unrelated_application_python() {
+        assert!(!is_xcode_python_path(Path::new(
+            "/Applications/Other.app/Contents/MacOS/python3"
+        )));
+    }
+
+    #[test]
+    fn xcode_path_rejects_other_application_developer_python() {
+        assert!(!is_xcode_python_path(Path::new(
+            "/Applications/Other.app/Contents/Developer/usr/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn xcode_path_rejects_developer_path_outside_applications() {
+        assert!(!is_xcode_python_path(Path::new(
+            "/tmp/Xcode.app/Contents/Developer/usr/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn xcode_path_rejects_nested_developer_layout() {
+        assert!(!is_xcode_python_path(Path::new(
+            "/Applications/Xcode.app/Nested.app/Contents/Developer/usr/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn xcode_path_rejects_nested_usr_bin_entry() {
+        assert!(!is_xcode_python_path(Path::new(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/nested/python3"
+        )));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn try_from_rejects_xcode_path_off_macos() {
+        let locator = MacXCode::new();
+        let env = PythonEnv::new(
+            PathBuf::from("/Applications/Xcode.app/Contents/Developer/usr/bin/python3"),
+            Some(PathBuf::from(
+                "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9",
+            )),
+            Some("3.9.6".to_string()),
+        );
+
+        assert!(locator.try_from(&env).is_none());
     }
 }
