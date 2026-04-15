@@ -120,11 +120,8 @@ pub fn start_server<C>(handlers: &HandlersKeyedByMethodName<C>) -> ! {
                             Ok(_) => {
                                 let request =
                                     String::from_utf8_lossy(&buffer[..content_length]).to_string();
-                                match serde_json::from_str(&request) {
-                                    Ok(request) => handlers.handle_request(request),
-                                    Err(err) => {
-                                        eprint!("Failed to parse LINE: {request}, {err:?}")
-                                    }
+                                if let Err(err) = handle_payload(handlers, &request) {
+                                    eprint!("Failed to parse LINE: {request}, {err:?}")
                                 }
                                 continue;
                             }
@@ -139,6 +136,15 @@ pub fn start_server<C>(handlers: &HandlersKeyedByMethodName<C>) -> ! {
             Err(error) => eprint!("Error in reading a line from stdin: {error}"),
         }
     }
+}
+
+fn handle_payload<C>(
+    handlers: &HandlersKeyedByMethodName<C>,
+    payload: &str,
+) -> Result<(), serde_json::Error> {
+    let request = serde_json::from_str(payload)?;
+    handlers.handle_request(request);
+    Ok(())
 }
 
 /// Parses the content length from the given line.
@@ -235,6 +241,44 @@ mod tests {
             Some((7, json!({ "value": 42 })))
         );
         assert_eq!(*context.notification.lock().unwrap(), Some(json!(["item"])));
+    }
+
+    #[test]
+    fn handle_payload_routes_valid_jsonrpc_payload() {
+        let context = Arc::new(TestContext::default());
+        let mut handlers = HandlersKeyedByMethodName::new(context.clone());
+        handlers.add_request_handler("request/method", |context, id, params| {
+            *context.request.lock().unwrap() = Some((id, params));
+        });
+
+        handle_payload(
+            &handlers,
+            r#"{"jsonrpc":"2.0","id":9,"method":"request/method","params":{"ok":true}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            *context.request.lock().unwrap(),
+            Some((9, json!({ "ok": true })))
+        );
+    }
+
+    #[test]
+    fn handle_payload_rejects_malformed_json_without_dispatching() {
+        let context = Arc::new(TestContext::default());
+        let mut handlers = HandlersKeyedByMethodName::new(context.clone());
+        handlers.add_request_handler("request/method", |context, id, params| {
+            *context.request.lock().unwrap() = Some((id, params));
+        });
+
+        let error = handle_payload(
+            &handlers,
+            r#"{"jsonrpc":"2.0","id":9,"method":"request/method","params": "#,
+        )
+        .unwrap_err();
+
+        assert!(error.is_eof());
+        assert!(context.request.lock().unwrap().is_none());
     }
 
     #[test]
