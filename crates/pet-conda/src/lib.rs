@@ -391,9 +391,9 @@ impl Locator for Conda {
                         reporter.report_environment(&env);
 
                         // Also check for a mamba/micromamba manager in the same directory and report it.
-                        // Reporting inside the closure minimizes the TOCTOU window compared to a
-                        // separate contains_key check, though concurrent threads may still
-                        // briefly both invoke the closure before the write-lock double-check.
+                        // LocatorCache coalesces concurrent lookups for this conda_dir, so mamba
+                        // discovery and its reporting side effect run at most once per in-flight
+                        // key.
                         let _ = self.mamba_managers.get_or_insert_with(conda_dir.clone(), || {
                             let mgr = get_mamba_manager(conda_dir);
                             if let Some(ref m) = mgr {
