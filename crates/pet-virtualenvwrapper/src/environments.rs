@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn get_project_reads_existing_project_path_from_project_file() {
-        let project_root = create_test_dir("project-root");
+        let project_root = fs::canonicalize(create_test_dir("project-root")).unwrap();
         let prefix = create_test_dir("wrapped-env");
         let executable = create_virtualenv(&prefix);
         fs::write(
