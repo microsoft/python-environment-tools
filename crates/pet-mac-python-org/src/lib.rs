@@ -46,10 +46,7 @@ impl Locator for MacPythonOrg {
         }
 
         let mut executable = resolve_symlink(&env.executable).unwrap_or(env.executable.clone());
-        if !executable
-            .to_string_lossy()
-            .starts_with("/Library/Frameworks/Python.framework/Versions/")
-        {
+        if !is_mac_python_org_framework_path(&executable) {
             return None;
         }
 
@@ -164,5 +161,143 @@ impl Locator for MacPythonOrg {
                 }
             }
         }
+    }
+}
+
+fn is_mac_python_org_framework_path(executable: &std::path::Path) -> bool {
+    let executable = executable.to_string_lossy();
+    let Some(framework_entry) =
+        executable.strip_prefix("/Library/Frameworks/Python.framework/Versions/")
+    else {
+        return false;
+    };
+
+    let mut framework_parts = framework_entry.split('/');
+    framework_parts
+        .next()
+        .is_some_and(|version| !version.is_empty())
+        && framework_parts.next() == Some("bin")
+        && framework_parts
+            .next()
+            .is_some_and(is_macos_python_executable_name)
+        && framework_parts.next().is_none()
+}
+
+fn is_macos_python_executable_name(executable: &str) -> bool {
+    let Some(version) = executable.strip_prefix("python") else {
+        return false;
+    };
+
+    if version.is_empty() {
+        return true;
+    }
+
+    version.chars().any(|ch| ch.is_ascii_digit())
+        && !version.starts_with('.')
+        && !version.ends_with('.')
+        && !version.contains("..")
+        && version.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::Locator;
+    use std::path::Path;
+
+    #[test]
+    fn locator_metadata_matches_python_org_kind() {
+        let locator = MacPythonOrg::new();
+
+        assert_eq!(locator.get_kind(), LocatorKind::MacPythonOrg);
+        assert_eq!(
+            locator.supported_categories(),
+            vec![PythonEnvironmentKind::MacPythonOrg]
+        );
+    }
+
+    #[test]
+    fn framework_path_accepts_versioned_python3() {
+        assert!(is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn framework_path_accepts_versioned_python_executable() {
+        assert!(is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+        )));
+    }
+
+    #[test]
+    fn framework_path_accepts_current_python() {
+        assert!(is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/Current/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_non_python_file() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/Resources/Info.plist"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_python_config_script() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python-config"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_versioned_python_config_script() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12-config"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_other_framework() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Other.framework/Versions/3.12/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_non_library_path() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/tmp/Python.framework/Versions/3.12/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_homebrew_framework_path() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/opt/homebrew/Cellar/python@3.12/3.12.1/Frameworks/Python.framework/Versions/3.12/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_nested_bin_entry() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/nested/python3"
+        )));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn try_from_rejects_python_org_path_off_macos() {
+        let locator = MacPythonOrg::new();
+        let env = PythonEnv::new(
+            PathBuf::from("/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"),
+            Some(PathBuf::from(
+                "/Library/Frameworks/Python.framework/Versions/3.12",
+            )),
+            Some("3.12.0".to_string()),
+        );
+
+        assert!(locator.try_from(&env).is_none());
     }
 }
