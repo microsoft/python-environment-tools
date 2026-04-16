@@ -346,6 +346,7 @@ fn get_user_home() -> Option<PathBuf> {
 ///   - If the path is relative, resolve it against `<dir>` and return the absolute path.
 ///   - If the resolved path does not exist or is not a directory, return `None`.
 /// 3. If `<dir>/.venv` does not exist, return `None`.
+///
 /// See: <https://www.python.org/dev/peps/pep-0832/#specification>
 pub fn resolve_dot_venv(dir: &Path) -> Option<PathBuf> {
     let dot_venv = dir.join(".venv");
