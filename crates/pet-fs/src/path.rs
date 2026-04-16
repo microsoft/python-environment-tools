@@ -334,6 +334,42 @@ fn get_user_home() -> Option<PathBuf> {
     }
 }
 
+/// Resolves the `.venv` entry in a directory to the virtual environment path. `.venv` may be either
+/// - A **directory**: The virtual environment itself (traditional convention)
+/// - A **file**: A text file containing the path (relative or absolute) to the virtual environment 
+///   located somewhere else in disk (PEP 832 convention)
+/// 
+/// # Resolution order
+/// 1. If `<dir>/.venv` is a directory, return that path.
+/// 2. If `<dir>/.venv` is a file, read its contents, trim whitespaces, and resolve the path:
+///   - If the path is absolute, return it.
+///   - If the path is relative, resolve it against `<dir>` and return the absolute path.
+///   - If the resolved path does not exist or is not a directory, return `None`.
+/// 3. If `<dir>/.venv` does not exist, return `None`.
+/// See: <https://www.python.org/dev/peps/pep-0832/#specification>
+pub fn resolve_dot_venv(dir: &Path) -> Option<PathBuf> {
+    let dot_venv = dir.join(".venv");
+    let meta = std::fs::symlink_metadata(&dot_venv).ok()?;
+    if meta.is_dir() {
+        Some(dot_venv)
+    } else if meta.is_file() {
+        let content = std::fs::read_to_string(&dot_venv).ok()?.trim().to_string();
+        let path = PathBuf::from(content);
+        let resolved_path = if path.is_absolute() {
+            path
+        } else {
+            dir.join(path)
+        };
+        if resolved_path.is_dir() {
+            Some(resolved_path)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
