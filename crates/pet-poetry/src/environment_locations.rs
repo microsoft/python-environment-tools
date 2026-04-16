@@ -6,6 +6,7 @@ use lazy_static::lazy_static;
 use log::trace;
 use pet_core::python_environment::PythonEnvironment;
 use pet_fs::path::norm_case;
+use pet_fs::path::resolve_dot_venv;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::{
@@ -108,7 +109,7 @@ fn list_all_environments_from_project_config(
     // Order of preference is Project (local config) > EnvVariable > Global
     if should_use_local_venv_as_poetry_env(global, &local, env) {
         // If virtualenvs are in the project, then look for .venv
-        let venv = resolve_dot_env(path);
+        let venv = resolve_dot_venv(path);
         if venv.is_dir() {
             envs.push(venv);
         }

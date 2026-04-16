@@ -15,6 +15,7 @@ use pet_core::{
     Configuration, Locator, LocatorKind, RefreshStatePersistence,
 };
 use pet_fs::path::norm_case;
+use pet_fs::path::resolve_dot_venv;
 use pet_python_utils::executable::{find_executable, find_executables};
 use serde::Deserialize;
 
@@ -422,7 +423,7 @@ fn find_workspace_for_project(project_path: &Path) -> Option<PythonEnvironment> 
 /// Builds a `PythonEnvironment` for a uv workspace root if it has a `.venv` with a valid
 /// uv-managed pyvenv.cfg.
 fn build_workspace_env(workspace_root: &Path) -> Option<PythonEnvironment> {
-    let prefix = resolve_dot_env(workspace_root);
+    let prefix = resolve_dot_venv(workspace_root);
     let pyvenv_cfg = prefix.join("pyvenv.cfg");
     if !pyvenv_cfg.exists() {
         trace!(
@@ -465,8 +466,8 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
     let Some(pyproject) = pyproject else {
         return envs;
     };
-    let pyvenv_cfg = resolve_dot_env(path).join("pyvenv.cfg");
-    let prefix = resolve_dot_env(path);
+    let pyvenv_cfg = resolve_dot_venv(path).join("pyvenv.cfg");
+    let prefix = resolve_dot_venv(path);
     let unix_executable = prefix.join("bin/python");
     let windows_executable = prefix.join("Scripts/python.exe");
     let executable = if unix_executable.exists() {

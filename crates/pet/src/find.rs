@@ -9,6 +9,7 @@ use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::reporter::Reporter;
 use pet_core::{Configuration, Locator, LocatorKind};
 use pet_env_var_path::get_search_paths_from_env_variables;
+use pet_fs::path::resolve_dot_venv;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_pixi::is_pixi_env;
 use pet_python_utils::executable::{
@@ -277,7 +278,7 @@ pub fn find_python_environments_in_workspace_folder_recursive(
         // Possible this is a virtual env
         workspace_folder.to_path_buf(),
         // Optimize for finding these first.
-        resolve_dot_env(workspace_folder),
+        resolve_dot_venv(workspace_folder),
         workspace_folder.join(".conda"),
         workspace_folder.join(".virtualenv"),
         workspace_folder.join("venv"),
