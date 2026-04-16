@@ -109,9 +109,10 @@ fn list_all_environments_from_project_config(
     // Order of preference is Project (local config) > EnvVariable > Global
     if should_use_local_venv_as_poetry_env(global, &local, env) {
         // If virtualenvs are in the project, then look for .venv
-        let venv = resolve_dot_venv(path);
-        if venv.clone()?.is_dir() {
-            envs.push(venv?);
+        if let Some(venv) = resolve_dot_venv(path) {
+            if venv.is_dir() {
+                envs.push(venv);
+            }
         }
     }
     Some(envs)

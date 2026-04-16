@@ -336,9 +336,9 @@ fn get_user_home() -> Option<PathBuf> {
 
 /// Resolves the `.venv` entry in a directory to the virtual environment path. `.venv` may be either
 /// - A **directory**: The virtual environment itself (traditional convention)
-/// - A **file**: A text file containing the path (relative or absolute) to the virtual environment 
+/// - A **file**: A text file containing the path (relative or absolute) to the virtual environment
 ///   located somewhere else in disk (PEP 832 convention)
-/// 
+///
 /// # Resolution order
 /// 1. If `<dir>/.venv` is a directory, return that path.
 /// 2. If `<dir>/.venv` is a file, read its contents, trim whitespaces, and resolve the path:

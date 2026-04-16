@@ -277,12 +277,14 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     let mut paths_to_search_first = vec![
         // Possible this is a virtual env
         workspace_folder.to_path_buf(),
-        // Optimize for finding these first.
-        resolve_dot_venv(workspace_folder),
         workspace_folder.join(".conda"),
         workspace_folder.join(".virtualenv"),
         workspace_folder.join("venv"),
     ];
+    // Optimize for finding .venv first (supports PEP 832 file-based .venv).
+    if let Some(dot_venv) = resolve_dot_venv(workspace_folder) {
+        paths_to_search_first.insert(1, dot_venv);
+    }
 
     // Add all subdirectories of .pixi/envs/**
     if let Ok(reader) = fs::read_dir(workspace_folder.join(".pixi").join("envs")) {
