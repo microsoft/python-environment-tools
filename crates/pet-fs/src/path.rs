@@ -730,4 +730,133 @@ mod tests {
         let _ = std::fs::remove_file(&symlink_path);
         let _ = std::fs::remove_file(&target_file);
     }
+
+    // ==================== resolve_dot_venv tests ====================
+
+    #[test]
+    fn test_resolve_dot_venv_no_dot_venv() {
+        // If .venv does not exist, return None
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_no_dot_venv");
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+        assert_eq!(resolve_dot_venv(&test_dir), None);
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_resolve_dot_venv_directory() {
+        // If .venv is a directory, return its path
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_dot_venv_dir");
+        let dot_venv = test_dir.join(".venv");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&dot_venv).expect("Failed to create .venv dir");
+
+        let result = resolve_dot_venv(&test_dir);
+        assert_eq!(result, Some(dot_venv));
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_resolve_dot_venv_file_absolute_path() {
+        // If .venv is a file containing an absolute path to an existing directory, return it
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_dot_venv_file_abs");
+        let target_venv = temp_dir.join("pet_test_dot_venv_target_abs");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        let _ = std::fs::remove_dir_all(&target_venv);
+        std::fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+        std::fs::create_dir_all(&target_venv).expect("Failed to create target venv dir");
+
+        let dot_venv_file = test_dir.join(".venv");
+        std::fs::write(&dot_venv_file, target_venv.to_string_lossy().as_ref())
+            .expect("Failed to write .venv file");
+
+        let result = resolve_dot_venv(&test_dir);
+        assert_eq!(result, Some(target_venv.clone()));
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        let _ = std::fs::remove_dir_all(&target_venv);
+    }
+
+    #[test]
+    fn test_resolve_dot_venv_file_relative_path() {
+        // If .venv is a file containing a relative path, resolve it against the dir
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_dot_venv_file_rel");
+        let target_venv = test_dir.join("my_venv");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&target_venv).expect("Failed to create target venv dir");
+
+        let dot_venv_file = test_dir.join(".venv");
+        std::fs::write(&dot_venv_file, "my_venv").expect("Failed to write .venv file");
+
+        let result = resolve_dot_venv(&test_dir);
+        assert_eq!(result, Some(target_venv.clone()));
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_resolve_dot_venv_file_nonexistent_target() {
+        // If .venv is a file pointing to a non-existent directory, return None
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_dot_venv_file_missing");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+        let dot_venv_file = test_dir.join(".venv");
+        std::fs::write(&dot_venv_file, "/this/path/does/not/exist")
+            .expect("Failed to write .venv file");
+
+        assert_eq!(resolve_dot_venv(&test_dir), None);
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_resolve_dot_venv_file_whitespace_trimmed() {
+        // Whitespace around the path should be trimmed
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_dot_venv_whitespace");
+        let target_venv = test_dir.join("ws_venv");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&target_venv).expect("Failed to create target venv dir");
+
+        let dot_venv_file = test_dir.join(".venv");
+        std::fs::write(&dot_venv_file, "  ws_venv  \n").expect("Failed to write .venv file");
+
+        let result = resolve_dot_venv(&test_dir);
+        assert_eq!(result, Some(target_venv.clone()));
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_resolve_dot_venv_file_points_to_file_not_dir() {
+        // If .venv file points to a path that exists but is a file (not a dir), return None
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_dot_venv_target_is_file");
+        let target_file = test_dir.join("not_a_dir");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+        std::fs::write(&target_file, "I am a file").expect("Failed to create target file");
+
+        let dot_venv_file = test_dir.join(".venv");
+        std::fs::write(&dot_venv_file, "not_a_dir").expect("Failed to write .venv file");
+
+        assert_eq!(resolve_dot_venv(&test_dir), None);
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
 }

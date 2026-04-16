@@ -277,7 +277,7 @@ pub fn find_python_environments_in_workspace_folder_recursive(
         // Possible this is a virtual env
         workspace_folder.to_path_buf(),
         // Optimize for finding these first.
-        workspace_folder.join(".venv"),
+        resolve_dot_env(workspace_folder),
         workspace_folder.join(".conda"),
         workspace_folder.join(".virtualenv"),
         workspace_folder.join("venv"),
