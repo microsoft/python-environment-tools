@@ -258,7 +258,7 @@ fn is_xcode_python_path(executable: &str) -> bool {
     let mut framework_parts = framework_entry.split('/');
     framework_parts
         .next()
-        .is_some_and(|version| !version.is_empty())
+        .is_some_and(is_macos_framework_version_dir)
         && framework_parts.next() == Some("bin")
         && framework_parts
             .next()
@@ -267,19 +267,30 @@ fn is_xcode_python_path(executable: &str) -> bool {
 }
 
 fn is_macos_python_executable_name(executable: &str) -> bool {
-    let Some(version) = executable.strip_prefix("python") else {
-        return false;
-    };
-
-    if version.is_empty() {
+    if executable == "python" || executable == "python3" {
         return true;
     }
 
-    version.chars().any(|ch| ch.is_ascii_digit())
-        && !version.starts_with('.')
-        && !version.ends_with('.')
-        && !version.contains("..")
-        && version.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+    let Some(minor) = executable.strip_prefix("python3.") else {
+        return false;
+    };
+
+    !minor.is_empty() && minor.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_macos_framework_version_dir(version: &str) -> bool {
+    if version == "Current" {
+        return true;
+    }
+
+    let mut parts = version.split('.');
+    parts
+        .next()
+        .is_some_and(|major| !major.is_empty() && major.chars().all(|ch| ch.is_ascii_digit()))
+        && parts
+            .next()
+            .is_some_and(|minor| !minor.is_empty() && minor.chars().all(|ch| ch.is_ascii_digit()))
+        && parts.next().is_none()
 }
 
 #[cfg(test)]
@@ -313,9 +324,30 @@ mod tests {
     }
 
     #[test]
+    fn xcode_path_accepts_default_xcode_usr_bin_python_without_version() {
+        assert!(is_xcode_python_path(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/python"
+        ));
+    }
+
+    #[test]
+    fn xcode_path_accepts_default_xcode_usr_bin_versioned_python() {
+        assert!(is_xcode_python_path(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/python3.12"
+        ));
+    }
+
+    #[test]
     fn xcode_path_accepts_framework_python_executable() {
         assert!(is_xcode_python_path(
             "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9"
+        ));
+    }
+
+    #[test]
+    fn xcode_path_accepts_framework_python_executable_in_current_version_dir() {
+        assert!(is_xcode_python_path(
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/Current/bin/python3"
         ));
     }
 
@@ -337,6 +369,34 @@ mod tests {
     fn xcode_path_rejects_versioned_python_config_script() {
         assert!(!is_xcode_python_path(
             "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9-config"
+        ));
+    }
+
+    #[test]
+    fn xcode_path_rejects_framework_python_executable_in_invalid_version_dir() {
+        assert!(!is_xcode_python_path(
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/Foo/bin/python3"
+        ));
+    }
+
+    #[test]
+    fn xcode_path_rejects_framework_python_executable_in_patch_version_dir() {
+        assert!(!is_xcode_python_path(
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9.0/bin/python3"
+        ));
+    }
+
+    #[test]
+    fn xcode_path_rejects_multi_dot_python_executable_name() {
+        assert!(!is_xcode_python_path(
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9.0"
+        ));
+    }
+
+    #[test]
+    fn xcode_path_rejects_compact_python_version_name() {
+        assert!(!is_xcode_python_path(
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/python312"
         ));
     }
 
