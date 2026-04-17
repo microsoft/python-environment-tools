@@ -165,38 +165,52 @@ impl Locator for MacPythonOrg {
 }
 
 fn is_mac_python_org_framework_path(executable: &std::path::Path) -> bool {
-    let executable = executable.to_string_lossy();
-    let Some(framework_entry) =
-        executable.strip_prefix("/Library/Frameworks/Python.framework/Versions/")
+    let Ok(framework_entry) =
+        executable.strip_prefix("/Library/Frameworks/Python.framework/Versions")
     else {
         return false;
     };
 
-    let mut framework_parts = framework_entry.split('/');
-    framework_parts
-        .next()
-        .is_some_and(|version| !version.is_empty())
-        && framework_parts.next() == Some("bin")
-        && framework_parts
-            .next()
-            .is_some_and(is_macos_python_executable_name)
-        && framework_parts.next().is_none()
+    let mut framework_parts = framework_entry.components();
+    matches!(
+        framework_parts.next(),
+        Some(std::path::Component::Normal(version))
+            if version.to_str().is_some_and(is_macos_framework_version_dir)
+    ) && matches!(
+        framework_parts.next(),
+        Some(std::path::Component::Normal(part)) if part == std::ffi::OsStr::new("bin")
+    ) && matches!(
+        framework_parts.next(),
+        Some(std::path::Component::Normal(executable_name))
+            if executable_name.to_str().is_some_and(is_macos_python_executable_name)
+    ) && framework_parts.next().is_none()
 }
 
 fn is_macos_python_executable_name(executable: &str) -> bool {
-    let Some(version) = executable.strip_prefix("python") else {
-        return false;
-    };
-
-    if version.is_empty() {
+    if executable == "python" || executable == "python3" {
         return true;
     }
 
-    version.chars().any(|ch| ch.is_ascii_digit())
-        && !version.starts_with('.')
-        && !version.ends_with('.')
-        && !version.contains("..")
-        && version.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+    let Some(minor) = executable.strip_prefix("python3.") else {
+        return false;
+    };
+
+    !minor.is_empty() && minor.chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn is_macos_framework_version_dir(version: &str) -> bool {
+    if version == "Current" {
+        return true;
+    }
+
+    let mut parts = version.split('.');
+    parts
+        .next()
+        .is_some_and(|major| !major.is_empty() && major.chars().all(|ch| ch.is_ascii_digit()))
+        && parts
+            .next()
+            .is_some_and(|minor| !minor.is_empty() && minor.chars().all(|ch| ch.is_ascii_digit()))
+        && parts.next().is_none()
 }
 
 #[cfg(test)]
@@ -220,6 +234,13 @@ mod tests {
     fn framework_path_accepts_versioned_python3() {
         assert!(is_mac_python_org_framework_path(Path::new(
             "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn framework_path_accepts_unversioned_python() {
+        assert!(is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python"
         )));
     }
 
@@ -255,6 +276,41 @@ mod tests {
     fn framework_path_rejects_versioned_python_config_script() {
         assert!(!is_mac_python_org_framework_path(Path::new(
             "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12-config"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_patch_version_python_name() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12.0"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_compact_version_python_name() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python312"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_python2_name() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12/bin/python2"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_patch_version_dir() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/3.12.0/bin/python3"
+        )));
+    }
+
+    #[test]
+    fn framework_path_rejects_invalid_version_dir() {
+        assert!(!is_mac_python_org_framework_path(Path::new(
+            "/Library/Frameworks/Python.framework/Versions/Foo/bin/python3"
         )));
     }
 
