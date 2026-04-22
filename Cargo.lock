@@ -589,6 +589,7 @@ dependencies = [
  "pet-fs",
  "pet-python-utils",
  "pet-virtualenv",
+ "tempfile",
 ]
 
 [[package]]

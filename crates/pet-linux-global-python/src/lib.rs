@@ -85,8 +85,6 @@ impl Locator for LinuxGlobalPython {
         env.version.clone()?;
         let executable = env.executable.clone();
 
-        self.find_cached(None);
-
         // Resolve the canonical path once — used for both the path guard and cache fallback.
         let canonical = fs::canonicalize(&executable).ok();
 
@@ -99,6 +97,8 @@ impl Locator for LinuxGlobalPython {
         if !dominated(&executable) && !canonical.as_ref().is_some_and(|c| dominated(c)) {
             return None;
         }
+
+        self.find_cached(None);
 
         // Try direct cache lookup first.
         if let Some(env) = self.reported_executables.get(&executable) {
@@ -261,4 +261,181 @@ fn get_python_in_bin(env: &PythonEnv, is_64bit: bool) -> Option<PythonEnvironmen
             .symlinks(Some(symlinks))
             .build(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::python_environment::PythonEnvironmentKind;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[cfg(windows)]
+    const PYTHON_EXE: &str = "python.exe";
+    #[cfg(not(windows))]
+    const PYTHON_EXE: &str = "python";
+
+    #[cfg(windows)]
+    const PYTHON_VERSIONED_EXE: &str = "python3.12.exe";
+    #[cfg(not(windows))]
+    const PYTHON_VERSIONED_EXE: &str = "python3.12";
+
+    fn create_executable(path: &Path) {
+        fs::write(path, b"").unwrap();
+    }
+
+    fn create_env(executable: PathBuf, prefix: PathBuf) -> PythonEnv {
+        PythonEnv::new(executable, Some(prefix), Some("3.12.1".to_string()))
+    }
+
+    #[test]
+    fn get_python_in_bin_requires_version_and_prefix() {
+        let dir = tempdir().unwrap();
+        let executable = dir.path().join(PYTHON_EXE);
+        let versionless = PythonEnv::new(executable.clone(), Some(dir.path().to_path_buf()), None);
+        let prefixless = PythonEnv::new(executable, None, Some("3.12.1".to_string()));
+
+        assert!(get_python_in_bin(&versionless, true).is_none());
+        assert!(get_python_in_bin(&prefixless, true).is_none());
+    }
+
+    #[test]
+    fn get_python_in_bin_builds_linux_global_environment() {
+        let dir = tempdir().unwrap();
+        let executable = dir.path().join(PYTHON_EXE);
+        create_executable(&executable);
+        let env = create_env(executable.clone(), dir.path().to_path_buf());
+        let expected_executable = env.executable.clone();
+        let expected_prefix = env.prefix.clone();
+
+        let environment = get_python_in_bin(&env, true).unwrap();
+
+        assert_eq!(environment.kind, Some(PythonEnvironmentKind::LinuxGlobal));
+        assert_eq!(environment.executable, Some(expected_executable.clone()));
+        assert_eq!(environment.prefix, expected_prefix);
+        assert_eq!(environment.version, Some("3.12.1".to_string()));
+        assert_eq!(environment.arch, Some(Architecture::X64));
+        assert!(environment.symlinks.unwrap().contains(&expected_executable));
+    }
+
+    #[test]
+    fn get_python_in_bin_reports_x86_when_not_64_bit() {
+        let dir = tempdir().unwrap();
+        let executable = dir.path().join(PYTHON_EXE);
+        create_executable(&executable);
+        let env = create_env(executable, dir.path().to_path_buf());
+
+        let environment = get_python_in_bin(&env, false).unwrap();
+
+        assert_eq!(environment.arch, Some(Architecture::X86));
+    }
+
+    #[test]
+    fn get_python_in_bin_preserves_and_dedupes_known_symlinks() {
+        let dir = tempdir().unwrap();
+        let executable = dir.path().join(PYTHON_EXE);
+        let known_symlink = dir.path().join(PYTHON_VERSIONED_EXE);
+        create_executable(&executable);
+        create_executable(&known_symlink);
+        let mut env = create_env(executable.clone(), dir.path().to_path_buf());
+        env.symlinks = Some(vec![known_symlink.clone(), executable.clone()]);
+
+        let environment = get_python_in_bin(&env, true).unwrap();
+        let symlinks = environment.symlinks.unwrap();
+
+        assert_eq!(
+            symlinks.iter().filter(|path| *path == &executable).count(),
+            1
+        );
+        assert!(symlinks.contains(&known_symlink));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn get_python_in_bin_collects_same_directory_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let executable = dir.path().join("python3");
+        let versioned_executable = dir.path().join(PYTHON_VERSIONED_EXE);
+        create_executable(&versioned_executable);
+        symlink(&versioned_executable, &executable).unwrap();
+        let env = create_env(executable.clone(), dir.path().to_path_buf());
+
+        let environment = get_python_in_bin(&env, true).unwrap();
+        let symlinks = environment.symlinks.unwrap();
+
+        assert!(symlinks.contains(&executable));
+        assert!(symlinks.contains(&versioned_executable));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn get_python_in_bin_keeps_cross_directory_symlink_separate() {
+        use std::os::unix::fs::symlink;
+
+        let link_dir = tempdir().unwrap();
+        let real_dir = tempdir().unwrap();
+        let executable = link_dir.path().join("python3");
+        let real_executable = real_dir.path().join(PYTHON_VERSIONED_EXE);
+        create_executable(&real_executable);
+        symlink(&real_executable, &executable).unwrap();
+        let env = create_env(executable.clone(), link_dir.path().to_path_buf());
+
+        let environment = get_python_in_bin(&env, true).unwrap();
+        let symlinks = environment.symlinks.unwrap();
+
+        assert!(symlinks.contains(&executable));
+        assert!(!symlinks.contains(&real_executable));
+    }
+
+    #[test]
+    fn try_from_returns_none_without_version_before_cache_lookup() {
+        let locator = LinuxGlobalPython::new();
+        let env = PythonEnv::new(
+            PathBuf::from("/usr/bin/python3"),
+            Some(PathBuf::from("/usr")),
+            None,
+        );
+
+        assert!(locator.try_from(&env).is_none());
+        assert!(locator.reported_executables.is_empty());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[test]
+    fn try_from_rejects_non_global_path_before_cache_lookup() {
+        let dir = tempdir().unwrap();
+        let executable = dir.path().join("python");
+        create_executable(&executable);
+        let locator = LinuxGlobalPython::new();
+        let env = PythonEnv::new(
+            executable,
+            Some(dir.path().to_path_buf()),
+            Some("3.12.1".to_string()),
+        );
+
+        assert!(locator.try_from(&env).is_none());
+        assert!(locator.reported_executables.is_empty());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[test]
+    fn try_from_rejects_virtualenv_before_cache_lookup() {
+        let dir = tempdir().unwrap();
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::write(bin_dir.join("activate"), b"").unwrap();
+        let executable = bin_dir.join("python");
+        create_executable(&executable);
+        let locator = LinuxGlobalPython::new();
+        let env = PythonEnv::new(
+            executable,
+            Some(dir.path().to_path_buf()),
+            Some("3.12.1".to_string()),
+        );
+
+        assert!(locator.try_from(&env).is_none());
+        assert!(locator.reported_executables.is_empty());
+    }
 }
