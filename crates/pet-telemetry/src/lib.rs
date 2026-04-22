@@ -202,4 +202,180 @@ mod tests {
             "None prefix should not cause any inaccuracy flag"
         );
     }
+
+    // ── are_versions_different ────────────────────────────────────
+
+    #[test]
+    fn same_version_is_not_different() {
+        assert_eq!(are_versions_different("3.12.7", "3.12.7"), Some(false));
+    }
+
+    #[test]
+    fn different_patch_version_is_detected() {
+        assert_eq!(are_versions_different("3.12.7", "3.12.6"), Some(true));
+    }
+
+    #[test]
+    fn different_minor_version_is_detected() {
+        assert_eq!(are_versions_different("3.13.0", "3.12.7"), Some(true));
+    }
+
+    #[test]
+    fn version_with_suffix_compares_only_numeric_part() {
+        // "3.12.7+" or "3.12.7rc1" — the regex extracts only the digits
+        assert_eq!(are_versions_different("3.12.7rc1", "3.12.7"), Some(false));
+    }
+
+    #[test]
+    fn non_version_strings_return_none() {
+        assert_eq!(are_versions_different("not-a-version", "3.12.7"), None);
+        assert_eq!(are_versions_different("3.12.7", "not-a-version"), None);
+    }
+
+    #[test]
+    fn empty_expected_version_returns_none() {
+        assert_eq!(are_versions_different("3.12.7", ""), None);
+    }
+
+    // ── executable mismatch ───────────────────────────────────────
+
+    #[test]
+    fn different_executable_is_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe_a = prefix.join("bin").join("python3.12");
+        let exe_b = prefix.join("bin").join("python3");
+
+        let env = make_env(exe_a, prefix.clone(), "3.12.7", vec![]);
+        let resolved = make_env(exe_b, prefix, "3.12.7", vec![]);
+
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        let event = result.expect("different executables should be flagged");
+        assert_eq!(event.invalid_executable, Some(true));
+    }
+
+    #[test]
+    fn none_executable_is_not_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe = prefix.join("bin").join("python");
+
+        let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+            .prefix(Some(prefix.clone()))
+            .version(Some("3.12.7".to_string()))
+            .symlinks(Some(vec![exe.clone()]))
+            .build();
+        let resolved = make_env(exe.clone(), prefix, "3.12.7", vec![exe]);
+
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        assert!(
+            result.is_none(),
+            "None executable should not cause any inaccuracy flag"
+        );
+    }
+
+    // ── executable not in symlinks ────────────────────────────────
+
+    #[test]
+    fn resolved_executable_not_in_symlinks_is_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe = prefix.join("bin").join("python");
+        // Resolved executable differs from the one env knows about —
+        // the builder auto-adds the env executable to symlinks, so the
+        // resolved exe must be a genuinely different path to be "not in symlinks".
+        let resolved_exe = prefix.join("bin").join("python3.12");
+
+        let env = make_env(exe, prefix.clone(), "3.12.7", vec![]);
+        let resolved = make_env(resolved_exe, prefix, "3.12.7", vec![]);
+
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        let event = result.expect("resolved exe not in symlinks should be flagged");
+        assert_eq!(event.executable_not_in_symlinks, Some(true));
+    }
+
+    #[test]
+    fn resolved_executable_in_symlinks_is_not_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe = prefix.join("bin").join("python");
+
+        // env's symlinks include the resolved executable
+        let env = make_env(exe.clone(), prefix.clone(), "3.12.7", vec![exe.clone()]);
+        let resolved = make_env(exe.clone(), prefix, "3.12.7", vec![exe]);
+
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        assert!(result.is_none());
+    }
+
+    // ── architecture mismatch ─────────────────────────────────────
+
+    #[test]
+    fn different_arch_is_flagged() {
+        use pet_core::arch::Architecture;
+
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe = prefix.join("bin").join("python");
+
+        let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+            .executable(Some(exe.clone()))
+            .prefix(Some(prefix.clone()))
+            .version(Some("3.12.7".to_string()))
+            .symlinks(Some(vec![exe.clone()]))
+            .arch(Some(Architecture::X64))
+            .build();
+        let resolved = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+            .executable(Some(exe.clone()))
+            .prefix(Some(prefix))
+            .version(Some("3.12.7".to_string()))
+            .symlinks(Some(vec![exe]))
+            .arch(Some(Architecture::X86))
+            .build();
+
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        let event = result.expect("different architectures should be flagged");
+        assert_eq!(event.invalid_arch, Some(true));
+    }
+
+    #[test]
+    fn none_arch_is_not_flagged() {
+        use pet_core::arch::Architecture;
+
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe = prefix.join("bin").join("python");
+
+        // env has no arch, resolved has X64
+        let env = make_env(exe.clone(), prefix.clone(), "3.12.7", vec![exe.clone()]);
+        let resolved = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Venv))
+            .executable(Some(exe.clone()))
+            .prefix(Some(prefix))
+            .version(Some("3.12.7".to_string()))
+            .symlinks(Some(vec![exe]))
+            .arch(Some(Architecture::X64))
+            .build();
+
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        assert!(
+            result.is_none(),
+            "None arch should not cause any inaccuracy flag"
+        );
+    }
+
+    // ── version mismatch ──────────────────────────────────────────
+
+    #[test]
+    fn different_version_is_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().to_path_buf();
+        let exe = prefix.join("bin").join("python");
+
+        let env = make_env(exe.clone(), prefix.clone(), "3.12.6", vec![exe.clone()]);
+        let resolved = make_env(exe.clone(), prefix, "3.12.7", vec![exe]);
+
+        let result = report_inaccuracies_identified_after_resolving(&NoopReporter, &env, &resolved);
+        let event = result.expect("different versions should be flagged");
+        assert_eq!(event.invalid_version, Some(true));
+    }
 }
