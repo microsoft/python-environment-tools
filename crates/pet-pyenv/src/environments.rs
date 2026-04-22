@@ -100,3 +100,232 @@ fn get_version(folder_name: &str) -> Option<String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    // get_version tests
+    #[test]
+    fn get_version_parses_stable_version() {
+        assert_eq!(get_version("3.10.10"), Some("3.10.10".to_string()));
+        assert_eq!(get_version("3.12.0"), Some("3.12.0".to_string()));
+        assert_eq!(get_version("2.7.18"), Some("2.7.18".to_string()));
+    }
+
+    #[test]
+    fn get_version_parses_dev_version() {
+        assert_eq!(get_version("3.10-dev"), Some("3.10-dev".to_string()));
+        assert_eq!(get_version("3.13-dev"), Some("3.13-dev".to_string()));
+    }
+
+    #[test]
+    fn get_version_parses_alpha_rc_version() {
+        assert_eq!(get_version("3.10.0a3"), Some("3.10.0a3".to_string()));
+        assert_eq!(get_version("3.12.0b1"), Some("3.12.0b1".to_string()));
+    }
+
+    #[test]
+    fn get_version_returns_none_for_multi_letter_prerelease() {
+        // Known limitation: BETA_PYTHON_VERSION regex uses \w (single char) so multi-letter
+        // pre-release tags like "rc" are not captured. Real pyenv installs can have rc versions
+        // (e.g. 3.13.0rc1), but version detection falls back to header files in that case.
+        assert_eq!(get_version("3.11.0rc2"), None);
+    }
+
+    #[test]
+    fn get_version_parses_win32_version() {
+        assert_eq!(get_version("3.11.0a4-win32"), Some("3.11.0a4".to_string()));
+    }
+
+    #[test]
+    fn get_version_returns_none_for_non_version_strings() {
+        assert_eq!(get_version("mambaforge-4.10.1-4"), None);
+        assert_eq!(get_version("pypy3.9-7.3.15"), None);
+        assert_eq!(get_version("my-virtual-env"), None);
+        assert_eq!(get_version(""), None);
+    }
+
+    #[test]
+    fn get_version_returns_none_for_partial_version() {
+        assert_eq!(get_version("3.10"), None);
+    }
+
+    // get_generic_python_environment tests
+    #[test]
+    fn get_generic_python_environment_with_stable_version_folder() {
+        let root = tempdir().unwrap();
+        let env_path = root.path().join("3.12.0");
+        let bin_dir = if cfg!(windows) {
+            env_path.join("Scripts")
+        } else {
+            env_path.join("bin")
+        };
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+        fs::write(&exe, b"").unwrap();
+
+        let result = get_generic_python_environment(&exe, &env_path, &None).unwrap();
+
+        assert_eq!(result.kind, Some(PythonEnvironmentKind::Pyenv));
+        assert_eq!(result.executable, Some(exe));
+        assert_eq!(result.version, Some("3.12.0".to_string()));
+        assert_eq!(result.prefix, Some(env_path));
+        assert!(result.manager.is_none());
+    }
+
+    #[test]
+    fn get_generic_python_environment_with_win32_folder_sets_x86_arch() {
+        let root = tempdir().unwrap();
+        let env_path = root.path().join("3.11.0a4-win32");
+        let bin_dir = if cfg!(windows) {
+            env_path.join("Scripts")
+        } else {
+            env_path.join("bin")
+        };
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+        fs::write(&exe, b"").unwrap();
+
+        let result = get_generic_python_environment(&exe, &env_path, &None).unwrap();
+
+        assert_eq!(result.arch, Some(Architecture::X86));
+    }
+
+    #[test]
+    fn get_generic_python_environment_with_non_win32_folder_has_no_arch() {
+        let root = tempdir().unwrap();
+        let env_path = root.path().join("3.12.0");
+        let bin_dir = if cfg!(windows) {
+            env_path.join("Scripts")
+        } else {
+            env_path.join("bin")
+        };
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+        fs::write(&exe, b"").unwrap();
+
+        let result = get_generic_python_environment(&exe, &env_path, &None).unwrap();
+
+        assert!(result.arch.is_none());
+    }
+
+    #[test]
+    fn get_generic_python_environment_includes_manager_when_provided() {
+        let root = tempdir().unwrap();
+        let env_path = root.path().join("3.12.0");
+        let bin_dir = if cfg!(windows) {
+            env_path.join("Scripts")
+        } else {
+            env_path.join("bin")
+        };
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+        fs::write(&exe, b"").unwrap();
+
+        let mgr = EnvManager::new(
+            PathBuf::from("/usr/bin/pyenv"),
+            pet_core::manager::EnvManagerType::Pyenv,
+            Some("2.4.0".to_string()),
+        );
+        let result = get_generic_python_environment(&exe, &env_path, &Some(mgr.clone())).unwrap();
+
+        assert_eq!(result.manager, Some(mgr));
+    }
+
+    #[test]
+    fn get_generic_python_environment_with_unrecognized_folder_name() {
+        let root = tempdir().unwrap();
+        let env_path = root.path().join("mambaforge-4.10.1-4");
+        let bin_dir = if cfg!(windows) {
+            env_path.join("Scripts")
+        } else {
+            env_path.join("bin")
+        };
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+        fs::write(&exe, b"").unwrap();
+
+        let result = get_generic_python_environment(&exe, &env_path, &None).unwrap();
+
+        assert_eq!(result.kind, Some(PythonEnvironmentKind::Pyenv));
+        // No version extractable from folder name and no header files
+        assert!(result.version.is_none());
+    }
+
+    // get_virtual_env_environment tests
+    #[test]
+    fn get_virtual_env_returns_none_without_pyvenv_cfg() {
+        let root = tempdir().unwrap();
+        let env_path = root.path().join("my-venv");
+        let bin_dir = if cfg!(windows) {
+            env_path.join("Scripts")
+        } else {
+            env_path.join("bin")
+        };
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+        fs::write(&exe, b"").unwrap();
+
+        let result = get_virtual_env_environment(&exe, &env_path, &None);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_virtual_env_returns_env_with_pyvenv_cfg() {
+        let root = tempdir().unwrap();
+        let env_path = root.path().join("my-venv");
+        let bin_dir = if cfg!(windows) {
+            env_path.join("Scripts")
+        } else {
+            env_path.join("bin")
+        };
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+        fs::write(&exe, b"").unwrap();
+        fs::write(
+            env_path.join("pyvenv.cfg"),
+            "version = 3.12.0\nhome = /usr/bin\n",
+        )
+        .unwrap();
+
+        let result = get_virtual_env_environment(&exe, &env_path, &None).unwrap();
+
+        assert_eq!(result.kind, Some(PythonEnvironmentKind::PyenvVirtualEnv));
+        assert_eq!(result.version, Some("3.12.0".to_string()));
+        assert_eq!(result.executable, Some(exe));
+        assert_eq!(result.prefix, Some(env_path));
+    }
+}
