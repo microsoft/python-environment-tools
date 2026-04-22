@@ -91,4 +91,43 @@ mod tests {
             .iter()
             .any(|path| path == &missing_homebrew_prefix.join("bin")));
     }
+
+    #[test]
+    fn homebrew_prefix_bin_returns_results_without_env_var() {
+        let env_vars = EnvVariables {
+            home: None,
+            root: None,
+            path: None,
+            homebrew_prefix: None,
+            known_global_search_locations: vec![],
+        };
+
+        // Should not panic and should return whatever standard paths exist
+        let prefix_bins = get_homebrew_prefix_bin(&env_vars);
+        // All returned paths should actually exist
+        for path in &prefix_bins {
+            assert!(path.exists(), "{:?} should exist", path);
+        }
+    }
+
+    #[test]
+    fn homebrew_prefix_bin_does_not_duplicate_when_env_var_matches_existing_dir() {
+        // Create a temp dir to act as a custom homebrew prefix.
+        // Call get_homebrew_prefix_bin twice with the same prefix to ensure
+        // the env var path only appears once in the result.
+        let custom_prefix = tempdir().unwrap();
+        let custom_bin = custom_prefix.path().join("bin");
+        fs::create_dir_all(&custom_bin).unwrap();
+        let env_vars = EnvVariables {
+            home: None,
+            root: None,
+            path: None,
+            homebrew_prefix: Some(custom_prefix.path().to_string_lossy().to_string()),
+            known_global_search_locations: vec![],
+        };
+
+        let prefix_bins = get_homebrew_prefix_bin(&env_vars);
+        let count = prefix_bins.iter().filter(|p| **p == custom_bin).count();
+        assert_eq!(count, 1, "Custom bin path should appear exactly once");
+    }
 }

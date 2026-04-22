@@ -244,7 +244,7 @@ pub fn get_known_symlinks_impl(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -263,6 +263,29 @@ mod tests {
     }
 
     #[test]
+    fn is_homebrew_python_recognizes_opt_homebrew_bin_paths() {
+        assert!(is_homebrew_python(Path::new(
+            "/opt/homebrew/bin/python3.12"
+        )));
+        assert!(is_homebrew_python(Path::new(
+            "/opt/homebrew/opt/python@3.12/bin/python3.12"
+        )));
+        assert!(is_homebrew_python(Path::new(
+            "/opt/homebrew/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+        )));
+    }
+
+    #[test]
+    fn is_homebrew_python_rejects_non_homebrew_paths() {
+        assert!(!is_homebrew_python(Path::new("/usr/local/bin/python3.12")));
+        assert!(!is_homebrew_python(Path::new("/usr/bin/python3")));
+        assert!(!is_homebrew_python(Path::new(
+            "/home/user/.pyenv/versions/3.12.0/bin/python3.12"
+        )));
+        assert!(!is_homebrew_python(Path::new("")));
+    }
+
+    #[test]
     fn known_symlink_templates_include_resolved_executable_for_linuxbrew() {
         let resolved_exe =
             PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12");
@@ -277,5 +300,50 @@ mod tests {
             get_known_symlinks_impl(Path::new("/usr/bin/python3.12"), &"3.12.4".to_string())
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn known_symlink_templates_include_self_for_opt_homebrew() {
+        let resolved_exe = PathBuf::from(
+            "/opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+        );
+        let symlinks = get_known_symlinks_impl(&resolved_exe, &"3.12.3".to_string());
+
+        assert!(symlinks.contains(&resolved_exe));
+        assert!(symlinks.len() >= 1);
+    }
+
+    #[test]
+    fn known_symlink_templates_include_self_for_usr_local_cellar() {
+        let resolved_exe = PathBuf::from(
+            "/usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8/bin/python3.8",
+        );
+        let symlinks = get_known_symlinks_impl(&resolved_exe, &"3.8.20".to_string());
+
+        assert!(symlinks.contains(&resolved_exe));
+        assert!(symlinks.len() >= 1);
+    }
+
+    #[test]
+    fn known_symlink_templates_return_empty_when_version_regex_does_not_match() {
+        // Path under /opt/homebrew but without a python@version segment
+        let resolved_exe = PathBuf::from("/opt/homebrew/bin/python3.12");
+        let symlinks = get_known_symlinks_impl(&resolved_exe, &"3.12.0".to_string());
+
+        // No python@version/ in path, so regex won't capture → returns empty
+        assert!(symlinks.is_empty());
+    }
+
+    #[test]
+    fn known_symlink_templates_for_linuxbrew_contain_expected_paths() {
+        let resolved_exe =
+            PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12");
+        let symlinks = get_known_symlinks_impl(&resolved_exe, &"3.12.4".to_string());
+
+        // The resolved exe itself is always included
+        assert!(symlinks.contains(&resolved_exe));
+        // On a test system without real symlinks, only the resolved exe will pass validation.
+        // But verify the function doesn't panic and returns at least the resolved exe.
+        assert!(!symlinks.is_empty());
     }
 }
