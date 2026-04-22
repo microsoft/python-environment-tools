@@ -185,4 +185,113 @@ mod tests {
 
         assert!(!is_windows_apps_path(&path, None));
     }
+
+    // ── additional coverage ───────────────────────────────────────
+
+    #[test]
+    fn search_paths_returns_empty_for_empty_locations() {
+        let environment = TestEnvironment {
+            user_home: None,
+            global_search_locations: vec![],
+        };
+
+        let result = get_search_paths_from_env_variables(&environment);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn search_paths_returns_empty_when_all_are_windows_apps() {
+        let home = create_test_dir("all-apps");
+        let apps1 = home
+            .join("AppData")
+            .join("Local")
+            .join("Microsoft")
+            .join("WindowsApps");
+        let apps2 = home
+            .join("AppData")
+            .join("Local")
+            .join("Microsoft")
+            .join("WindowsApps")
+            .join("subdir");
+        fs::create_dir_all(&apps1).unwrap();
+        fs::create_dir_all(&apps2).unwrap();
+
+        let environment = TestEnvironment {
+            user_home: Some(home.clone()),
+            global_search_locations: vec![apps1, apps2],
+        };
+
+        let result = get_search_paths_from_env_variables(&environment);
+        assert!(result.is_empty());
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn is_windows_apps_path_matches_with_known_home() {
+        let home = create_test_dir("known-home");
+        let apps_path = home
+            .join("AppData")
+            .join("Local")
+            .join("Microsoft")
+            .join("WindowsApps");
+        fs::create_dir_all(&apps_path).unwrap();
+
+        assert!(is_windows_apps_path(&apps_path, Some(&home)));
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn is_windows_apps_path_matches_subdirectory_of_apps() {
+        let home = create_test_dir("apps-subdir");
+        let apps_subdir = home
+            .join("AppData")
+            .join("Local")
+            .join("Microsoft")
+            .join("WindowsApps")
+            .join("PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0");
+        // No need to create on disk - starts_with is a path comparison
+
+        assert!(is_windows_apps_path(&apps_subdir, Some(&home)));
+
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn is_windows_apps_path_rejects_unrelated_path() {
+        let path = PathBuf::from(if cfg!(windows) {
+            r"C:\Python312"
+        } else {
+            "/usr/local/bin"
+        });
+
+        assert!(!is_windows_apps_path(&path, None));
+    }
+
+    #[test]
+    fn normalize_search_path_handles_non_existent_path() {
+        let non_existent = PathBuf::from(if cfg!(windows) {
+            r"C:\this\path\does\not\exist"
+        } else {
+            "/this/path/does/not/exist"
+        });
+
+        // On Unix, canonicalize fails for non-existent paths so it returns original
+        // On Windows, norm_case returns the path as-is
+        let result = normalize_search_path(non_existent.clone());
+        // Should not panic and should return something
+        assert!(!result.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn normalize_search_path_handles_existing_path() {
+        let temp = create_test_dir("normalize");
+
+        let result = normalize_search_path(temp.clone());
+        // On all platforms, an existing path should normalize successfully
+        assert!(result.exists());
+
+        fs::remove_dir_all(temp).unwrap();
+    }
 }
