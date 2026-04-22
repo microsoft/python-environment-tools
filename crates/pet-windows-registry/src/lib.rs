@@ -326,4 +326,102 @@ mod tests {
 
         assert!(locator.try_from(&env).is_none());
     }
+
+    #[test]
+    fn test_try_from_returns_none_for_plain_env_without_cache() {
+        // A non-virtualenv, non-conda env returns None when no matching
+        // executable is found in the registry. On Unix the registry lookup
+        // is compiled out, so this always returns None after the guards.
+        let temp_dir = TempDir::new().unwrap();
+        let prefix = temp_dir.path().to_path_buf();
+        let executable = prefix.join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+        fs::create_dir_all(&prefix).unwrap();
+        fs::write(&executable, b"").unwrap();
+        let env = PythonEnv::new(executable, Some(prefix), None);
+        let locator = create_locator();
+
+        assert!(locator.try_from(&env).is_none());
+    }
+
+    #[test]
+    fn test_sync_full_when_source_has_none_cache() {
+        let shared = create_locator();
+        let refreshed = create_locator();
+
+        // shared has some data, refreshed has None
+        shared.search_result.lock().unwrap().replace(LocatorResult {
+            managers: vec![],
+            environments: vec![PythonEnvironment {
+                name: Some("existing".to_string()),
+                ..Default::default()
+            }],
+        });
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+
+        // After syncing from a source with None cache, shared should also be None
+        assert!(shared.search_result.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_sync_is_idempotent() {
+        let shared = create_locator();
+        let refreshed = create_locator();
+
+        refreshed
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("fresh".to_string()),
+                    ..Default::default()
+                }],
+            });
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+
+        let result = shared.search_result.lock().unwrap().clone().unwrap();
+        assert_eq!(result.environments.len(), 1);
+        assert_eq!(result.environments[0].name.as_deref(), Some("fresh"));
+    }
+
+    #[test]
+    fn test_global_filtered_conda_kind_syncs() {
+        let shared = create_locator();
+        let refreshed = create_locator();
+
+        shared.search_result.lock().unwrap().replace(LocatorResult {
+            managers: vec![],
+            environments: vec![PythonEnvironment {
+                name: Some("stale".to_string()),
+                ..Default::default()
+            }],
+        });
+        refreshed
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("fresh".to_string()),
+                    ..Default::default()
+                }],
+            });
+
+        // Conda is a supported category, so GlobalFiltered(Conda) should sync
+        shared.sync_refresh_state_from(
+            &refreshed,
+            &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::Conda),
+        );
+        let result = shared.search_result.lock().unwrap().clone().unwrap();
+        assert_eq!(result.environments[0].name.as_deref(), Some("fresh"));
+    }
 }
