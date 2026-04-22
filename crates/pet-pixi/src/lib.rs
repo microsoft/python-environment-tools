@@ -229,4 +229,116 @@ mod tests {
 
         assert!(locator.try_from(&env).is_none());
     }
+
+    // ── is_pixi_env edge cases ────────────────────────────────────
+
+    #[test]
+    fn is_pixi_env_rejects_conda_meta_without_pixi_marker() {
+        let temp_dir = TempDir::new().unwrap();
+        let prefix = temp_dir.path().join("conda-env");
+        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+        // conda-meta exists but no pixi marker file
+        assert!(!is_pixi_env(&prefix));
+    }
+
+    #[test]
+    fn is_pixi_env_rejects_path_without_conda_meta() {
+        let temp_dir = TempDir::new().unwrap();
+        let prefix = temp_dir.path().join("plain-dir");
+        fs::create_dir_all(&prefix).unwrap();
+        assert!(!is_pixi_env(&prefix));
+    }
+
+    // ── get_pixi_prefix edge cases ────────────────────────────────
+
+    #[test]
+    fn get_pixi_prefix_returns_none_for_non_bin_parent_without_pixi() {
+        // Executable is in a directory that is neither a pixi env itself
+        // nor named "bin"/"Scripts", so prefix cannot be derived.
+        let temp_dir = TempDir::new().unwrap();
+        let lib_dir = temp_dir.path().join("lib");
+        fs::create_dir_all(&lib_dir).unwrap();
+        let executable = lib_dir.join("python");
+        fs::write(&executable, b"").unwrap();
+
+        let env = PythonEnv::new(executable, None, None);
+        assert!(get_pixi_prefix(&env).is_none());
+    }
+
+    #[test]
+    fn get_pixi_prefix_returns_none_when_bin_parent_is_not_pixi() {
+        // Executable is in bin/ but the parent of bin/ is not a pixi env.
+        let temp_dir = TempDir::new().unwrap();
+        let prefix = temp_dir.path().join("not-pixi");
+        let bin_dir = prefix.join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let executable = bin_dir.join("python");
+        fs::write(&executable, b"").unwrap();
+
+        let env = PythonEnv::new(executable, None, None);
+        assert!(get_pixi_prefix(&env).is_none());
+    }
+
+    #[test]
+    fn get_pixi_prefix_prefers_explicit_prefix_over_executable_derivation() {
+        // When env.prefix is set, it should be returned directly
+        // even if the executable is in a different location.
+        let temp_dir = TempDir::new().unwrap();
+        let explicit_prefix = temp_dir.path().join("explicit");
+        fs::create_dir_all(&explicit_prefix).unwrap();
+
+        let env = PythonEnv::new(
+            temp_dir.path().join("somewhere-else").join("python"),
+            Some(explicit_prefix.clone()),
+            None,
+        );
+
+        let result = get_pixi_prefix(&env);
+        assert_eq!(result, Some(explicit_prefix));
+    }
+
+    // ── try_from field validation ─────────────────────────────────
+
+    #[test]
+    fn try_from_populates_name_from_prefix_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        // Use a custom directory name to verify name extraction
+        let prefix = temp_dir.path().join("my-custom-env");
+        fs::create_dir_all(prefix.join("conda-meta")).unwrap();
+        fs::write(prefix.join("conda-meta").join("pixi"), b"").unwrap();
+        let bin_dir = prefix.join(if cfg!(windows) { "Scripts" } else { "bin" });
+        fs::create_dir_all(&bin_dir).unwrap();
+        let executable = bin_dir.join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+        fs::write(&executable, b"").unwrap();
+
+        let locator = Pixi::new();
+        let env = PythonEnv::new(executable, Some(prefix), None);
+
+        let pixi_env = locator.try_from(&env).unwrap();
+        assert_eq!(pixi_env.name, Some("my-custom-env".to_string()));
+    }
+
+    #[test]
+    fn try_from_rejects_when_explicit_prefix_is_not_pixi() {
+        // env.prefix is set but it's not a pixi env (no conda-meta/pixi)
+        let temp_dir = TempDir::new().unwrap();
+        let prefix = temp_dir.path().join("not-pixi");
+        fs::create_dir_all(&prefix).unwrap();
+
+        let executable = prefix.join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+        fs::write(&executable, b"").unwrap();
+
+        let locator = Pixi::new();
+        let env = PythonEnv::new(executable, Some(prefix), None);
+
+        assert!(locator.try_from(&env).is_none());
+    }
 }
