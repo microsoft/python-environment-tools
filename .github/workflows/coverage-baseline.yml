@@ -79,10 +79,11 @@ jobs:
       - name: Install pyenv (Windows)
         if: startsWith(matrix.os, 'windows')
         run: |
-          choco install pyenv-win -y
-          echo "PATH=$PATH;$HOME/.pyenv/pyenv-win/bin;$HOME/.pyenv/pyenv-win/shims" >> $GITHUB_ENV
-          echo "PYENV_ROOT=$HOME/.pyenv" >> $GITHUB_ENV
-        shell: bash
+          Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/pyenv-win/pyenv-win/master/pyenv-win/install-pyenv-win.ps1" -OutFile "./install-pyenv-win.ps1"; &"./install-pyenv-win.ps1"
+          $pyenvBin = "$env:USERPROFILE\.pyenv\pyenv-win\bin"
+          echo "$pyenvBin" >> $env:GITHUB_PATH
+          echo "PYENV_ROOT=$env:USERPROFILE\.pyenv" >> $env:GITHUB_ENV
+        shell: pwsh
 
       - name: Install pyenv and pyenv-virtualenv (Linux)
         if: startsWith(matrix.os, 'ubuntu')
