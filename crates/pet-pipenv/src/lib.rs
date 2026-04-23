@@ -797,4 +797,472 @@ mod tests {
         assert!(!PIPENV_ENV_NAME_PATTERN.is_match("myproject-abcdefg")); // hash too short (7 chars)
         assert!(!PIPENV_ENV_NAME_PATTERN.is_match("-AbC12xYz")); // no project name
     }
+
+    // ── get_pipenv_virtualenv_dirs ────────────────────────────────
+
+    #[test]
+    fn virtualenv_dirs_returns_workon_home_when_set() {
+        let temp = unique_temp_dir();
+        let workon_home = temp.join("workon");
+        std::fs::create_dir_all(&workon_home).unwrap();
+
+        let env_vars = EnvVariables {
+            pipenv_max_depth: 3,
+            pipenv_pipfile: "Pipfile".to_string(),
+            home: Some(temp.clone()),
+            xdg_data_home: None,
+            workon_home: Some(workon_home.clone()),
+            path: None,
+        };
+
+        let dirs = get_pipenv_virtualenv_dirs(&env_vars);
+        assert!(
+            dirs.contains(&norm_case(&workon_home)),
+            "Expected WORKON_HOME in dirs: {:?}",
+            dirs
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn virtualenv_dirs_returns_xdg_data_home_virtualenvs() {
+        let temp = unique_temp_dir();
+        let xdg_dir = temp.join("xdg");
+        let xdg_venvs = xdg_dir.join("virtualenvs");
+        std::fs::create_dir_all(&xdg_venvs).unwrap();
+
+        let env_vars = EnvVariables {
+            pipenv_max_depth: 3,
+            pipenv_pipfile: "Pipfile".to_string(),
+            home: Some(temp.clone()),
+            xdg_data_home: Some(xdg_dir.to_string_lossy().to_string()),
+            workon_home: None,
+            path: None,
+        };
+
+        let dirs = get_pipenv_virtualenv_dirs(&env_vars);
+        assert!(
+            dirs.contains(&norm_case(&xdg_venvs)),
+            "Expected XDG_DATA_HOME/virtualenvs in dirs: {:?}",
+            dirs
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn virtualenv_dirs_returns_local_share_virtualenvs() {
+        let temp = unique_temp_dir();
+        let local_share_venvs = temp.join(".local").join("share").join("virtualenvs");
+        std::fs::create_dir_all(&local_share_venvs).unwrap();
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+
+        let dirs = get_pipenv_virtualenv_dirs(&env_vars);
+        assert!(
+            dirs.contains(&norm_case(&local_share_venvs)),
+            "Expected ~/.local/share/virtualenvs in dirs: {:?}",
+            dirs
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn virtualenv_dirs_returns_dot_venvs() {
+        let temp = unique_temp_dir();
+        let dot_venvs = temp.join(".venvs");
+        std::fs::create_dir_all(&dot_venvs).unwrap();
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+
+        let dirs = get_pipenv_virtualenv_dirs(&env_vars);
+        assert!(
+            dirs.contains(&norm_case(&dot_venvs)),
+            "Expected ~/.venvs in dirs: {:?}",
+            dirs
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn virtualenv_dirs_returns_dot_virtualenvs() {
+        let temp = unique_temp_dir();
+        let dot_virtualenvs = temp.join(".virtualenvs");
+        std::fs::create_dir_all(&dot_virtualenvs).unwrap();
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+
+        let dirs = get_pipenv_virtualenv_dirs(&env_vars);
+        assert!(
+            dirs.contains(&norm_case(&dot_virtualenvs)),
+            "Expected ~/.virtualenvs in dirs: {:?}",
+            dirs
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn virtualenv_dirs_returns_empty_when_no_dirs_exist() {
+        let temp = unique_temp_dir();
+        // Don't create any directories inside
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+
+        let dirs = get_pipenv_virtualenv_dirs(&env_vars);
+        assert!(
+            dirs.is_empty(),
+            "Expected empty dirs when nothing exists: {:?}",
+            dirs
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn virtualenv_dirs_skips_non_existent_workon_home() {
+        let temp = unique_temp_dir();
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let env_vars = EnvVariables {
+            pipenv_max_depth: 3,
+            pipenv_pipfile: "Pipfile".to_string(),
+            home: Some(temp.clone()),
+            xdg_data_home: None,
+            workon_home: Some(temp.join("does_not_exist")),
+            path: None,
+        };
+
+        let dirs = get_pipenv_virtualenv_dirs(&env_vars);
+        assert!(
+            !dirs.contains(&norm_case(temp.join("does_not_exist"))),
+            "Non-existent WORKON_HOME should not be in dirs"
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    // ── get_virtualenvs_dir ───────────────────────────────────────
+
+    #[test]
+    fn get_virtualenvs_dir_prefers_workon_home() {
+        let temp = unique_temp_dir();
+        let workon_home = temp.join("workon");
+        std::fs::create_dir_all(&workon_home).unwrap();
+        // Also create the default fallback
+        if cfg!(windows) {
+            std::fs::create_dir_all(temp.join(".virtualenvs")).unwrap();
+        } else {
+            std::fs::create_dir_all(temp.join(".local").join("share").join("virtualenvs")).unwrap();
+        }
+
+        let env_vars = EnvVariables {
+            pipenv_max_depth: 3,
+            pipenv_pipfile: "Pipfile".to_string(),
+            home: Some(temp.clone()),
+            xdg_data_home: None,
+            workon_home: Some(workon_home.clone()),
+            path: None,
+        };
+
+        let result = get_virtualenvs_dir(&env_vars);
+        assert_eq!(result, Some(workon_home));
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn get_virtualenvs_dir_returns_platform_default() {
+        let temp = unique_temp_dir();
+        let expected = if cfg!(windows) {
+            temp.join(".virtualenvs")
+        } else {
+            temp.join(".local").join("share").join("virtualenvs")
+        };
+        std::fs::create_dir_all(&expected).unwrap();
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+
+        let result = get_virtualenvs_dir(&env_vars);
+        assert_eq!(result, Some(expected));
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn get_virtualenvs_dir_returns_none_when_nothing_exists() {
+        let temp = unique_temp_dir();
+        std::fs::create_dir_all(&temp).unwrap();
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+
+        let result = get_virtualenvs_dir(&env_vars);
+        assert_eq!(result, None);
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    // ── is_pipenv_from_project ────────────────────────────────────
+
+    #[test]
+    fn is_pipenv_from_project_detects_pipfile_next_to_venv_prefix() {
+        let project_dir = unique_temp_dir();
+        let venv_dir = project_dir.join(".venv");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        let python_exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(&python_exe, b"").unwrap();
+        std::fs::write(project_dir.join("Pipfile"), b"[[source]]\n").unwrap();
+
+        let env = PythonEnv {
+            executable: norm_case(&python_exe),
+            prefix: Some(norm_case(&venv_dir)),
+            version: None,
+            symlinks: None,
+        };
+
+        assert!(is_pipenv_from_project(&env));
+
+        std::fs::remove_dir_all(&project_dir).ok();
+    }
+
+    #[test]
+    fn is_pipenv_from_project_detects_via_executable_path_without_prefix() {
+        let project_dir = unique_temp_dir();
+        let venv_dir = project_dir.join(".venv");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        let python_exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(&python_exe, b"").unwrap();
+        std::fs::write(project_dir.join("Pipfile"), b"[[source]]\n").unwrap();
+
+        let env = PythonEnv {
+            executable: norm_case(&python_exe),
+            prefix: None,
+            version: None,
+            symlinks: None,
+        };
+
+        assert!(is_pipenv_from_project(&env));
+
+        std::fs::remove_dir_all(&project_dir).ok();
+    }
+
+    #[test]
+    fn is_pipenv_from_project_returns_false_without_pipfile() {
+        let project_dir = unique_temp_dir();
+        let venv_dir = project_dir.join(".venv");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        let python_exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(&python_exe, b"").unwrap();
+        // No Pipfile created
+
+        let env = PythonEnv {
+            executable: norm_case(&python_exe),
+            prefix: Some(norm_case(&venv_dir)),
+            version: None,
+            symlinks: None,
+        };
+
+        assert!(!is_pipenv_from_project(&env));
+
+        std::fs::remove_dir_all(&project_dir).ok();
+    }
+
+    // ── is_pipenv ─────────────────────────────────────────────────
+
+    #[test]
+    fn is_pipenv_returns_false_for_plain_venv() {
+        let temp = unique_temp_dir();
+        let venv_dir = temp.join("myenv");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        let python_exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(&python_exe, b"").unwrap();
+        // No Pipfile, no .project, not in centralized dir
+
+        let env = PythonEnv {
+            executable: norm_case(&python_exe),
+            prefix: Some(norm_case(&venv_dir)),
+            version: None,
+            symlinks: None,
+        };
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+        assert!(!is_pipenv(&env, &env_vars));
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    // ── get_pipenv_project ────────────────────────────────────────
+
+    #[test]
+    fn get_pipenv_project_reads_dot_project_file() {
+        let temp = unique_temp_dir();
+        let venv_dir = temp.join("myproject-Abc12345");
+        std::fs::create_dir_all(&venv_dir).unwrap();
+
+        let project_path = temp.join("projects").join("myproject");
+        std::fs::write(
+            venv_dir.join(".project"),
+            project_path.to_string_lossy().as_bytes(),
+        )
+        .unwrap();
+
+        let python_exe = if cfg!(windows) {
+            venv_dir.join("Scripts").join("python.exe")
+        } else {
+            venv_dir.join("bin").join("python")
+        };
+        let env = PythonEnv {
+            executable: python_exe,
+            prefix: Some(venv_dir.clone()),
+            version: None,
+            symlinks: None,
+        };
+
+        let result = get_pipenv_project(&env);
+        assert_eq!(result, Some(norm_case(project_path)));
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn get_pipenv_project_returns_none_without_project_file_or_pipfile() {
+        let temp = unique_temp_dir();
+        let venv_dir = temp.join("myenv");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        std::fs::create_dir_all(&bin_dir).unwrap();
+
+        let env = PythonEnv {
+            executable: bin_dir.join("python"),
+            prefix: Some(venv_dir.clone()),
+            version: None,
+            symlinks: None,
+        };
+
+        let result = get_pipenv_project(&env);
+        assert_eq!(result, None);
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    // ── locator metadata ──────────────────────────────────────────
+
+    #[test]
+    fn locator_metadata_matches_pipenv_kind() {
+        let locator = PipEnv {
+            env_vars: create_test_env_vars(None),
+            pipenv_executable: Arc::new(RwLock::new(None)),
+        };
+        assert_eq!(locator.get_kind(), LocatorKind::PipEnv);
+        assert_eq!(
+            locator.supported_categories(),
+            vec![PythonEnvironmentKind::Pipenv]
+        );
+    }
+
+    // ── is_in_pipenv_centralized_dir without prefix ───────────────
+
+    #[test]
+    fn centralized_dir_detection_derives_prefix_from_executable() {
+        let temp = unique_temp_dir();
+        let virtualenvs_dir = temp.join(".local").join("share").join("virtualenvs");
+        let venv_dir = virtualenvs_dir.join("project-AbC12xYz");
+        let bin_dir = if cfg!(windows) {
+            venv_dir.join("Scripts")
+        } else {
+            venv_dir.join("bin")
+        };
+        let python_exe = if cfg!(windows) {
+            bin_dir.join("python.exe")
+        } else {
+            bin_dir.join("python")
+        };
+
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(&python_exe, b"").unwrap();
+        std::fs::write(venv_dir.join(".project"), b"/some/project").unwrap();
+
+        // PythonEnv without prefix set
+        let env = PythonEnv {
+            executable: norm_case(&python_exe),
+            prefix: None,
+            version: None,
+            symlinks: None,
+        };
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+        assert!(
+            is_in_pipenv_centralized_dir(&env, &env_vars),
+            "Should derive prefix from executable and detect centralized dir"
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
+
+    #[test]
+    fn centralized_dir_detection_returns_false_when_prefix_not_derivable() {
+        let temp = unique_temp_dir();
+        std::fs::create_dir_all(&temp).unwrap();
+
+        // Executable whose parent directory is neither "bin" nor "Scripts",
+        // so is_in_pipenv_centralized_dir cannot derive a prefix.
+        let env = PythonEnv {
+            executable: temp.join("random").join("python"),
+            prefix: None,
+            version: None,
+            symlinks: None,
+        };
+
+        let env_vars = create_test_env_vars(Some(temp.clone()));
+        assert!(!is_in_pipenv_centralized_dir(&env, &env_vars));
+
+        std::fs::remove_dir_all(&temp).ok();
+    }
 }
