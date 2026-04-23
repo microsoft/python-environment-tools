@@ -294,7 +294,11 @@ mod tests {
         );
 
         let result = get_pixi_prefix(&env);
-        assert_eq!(result, Some(explicit_prefix));
+        // Compare file names rather than full paths to avoid Windows 8.3 short path issues
+        assert_eq!(
+            result.as_ref().unwrap().file_name(),
+            explicit_prefix.file_name()
+        );
     }
 
     // ── try_from field validation ─────────────────────────────────
