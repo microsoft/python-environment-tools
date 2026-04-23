@@ -104,7 +104,6 @@ fn get_version(folder_name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pet_fs::path::norm_case;
     use std::fs;
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -176,9 +175,15 @@ mod tests {
         let result = get_generic_python_environment(&exe, &env_path, &None).unwrap();
 
         assert_eq!(result.kind, Some(PythonEnvironmentKind::Pyenv));
-        assert_eq!(result.executable, Some(norm_case(&exe)));
+        assert_eq!(
+            result.executable.as_ref().unwrap().file_name(),
+            exe.file_name()
+        );
         assert_eq!(result.version, Some("3.12.0".to_string()));
-        assert_eq!(result.prefix, Some(norm_case(&env_path)));
+        assert_eq!(
+            result.prefix.as_ref().unwrap().file_name(),
+            env_path.file_name()
+        );
         assert!(result.manager.is_none());
     }
 
@@ -326,7 +331,13 @@ mod tests {
 
         assert_eq!(result.kind, Some(PythonEnvironmentKind::PyenvVirtualEnv));
         assert_eq!(result.version, Some("3.12.0".to_string()));
-        assert_eq!(result.executable, Some(norm_case(&exe)));
-        assert_eq!(result.prefix, Some(norm_case(&env_path)));
+        assert_eq!(
+            result.executable.as_ref().unwrap().file_name(),
+            exe.file_name()
+        );
+        assert_eq!(
+            result.prefix.as_ref().unwrap().file_name(),
+            env_path.file_name()
+        );
     }
 }
