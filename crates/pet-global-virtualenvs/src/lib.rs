@@ -234,4 +234,73 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn global_virtualenv_dirs_returns_empty_when_all_none() {
+        let dirs = get_global_virtualenv_dirs(None, None, None);
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn global_virtualenv_dirs_skips_nonexistent_work_on_home() {
+        let root = create_test_dir("skip-work-on");
+        let nonexistent = root.join("does-not-exist");
+
+        let dirs =
+            get_global_virtualenv_dirs(Some(nonexistent.to_string_lossy().to_string()), None, None);
+        assert!(dirs.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn global_virtualenv_dirs_skips_nonexistent_xdg_virtualenvs() {
+        let root = create_test_dir("skip-xdg");
+        let xdg = root.join("xdg-missing");
+
+        let dirs = get_global_virtualenv_dirs(None, Some(xdg.to_string_lossy().to_string()), None);
+        assert!(dirs.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_global_virtual_envs_all_none_returns_empty() {
+        let paths = list_global_virtual_envs_paths(None, None, None, None);
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn list_global_virtual_envs_virtual_env_var_nonexistent_is_skipped() {
+        let root = create_test_dir("skip-virtual-env");
+        let nonexistent = root.join("nonexistent-venv");
+
+        let paths = list_global_virtual_envs_paths(
+            Some(nonexistent.to_string_lossy().to_string()),
+            None,
+            None,
+            None,
+        );
+        assert!(paths.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn list_global_virtual_envs_skips_empty_dirs() {
+        let root = create_test_dir("empty-dirs");
+        let work_on_home = root.join("workon");
+        fs::create_dir_all(&work_on_home).unwrap();
+
+        // workon dir exists but has no children
+        let paths = list_global_virtual_envs_paths(
+            None,
+            Some(work_on_home.to_string_lossy().to_string()),
+            None,
+            None,
+        );
+        assert!(paths.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }
