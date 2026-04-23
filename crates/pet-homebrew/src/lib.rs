@@ -281,4 +281,100 @@ mod tests {
         );
         assert!(locator.try_from(&conda).is_none());
     }
+
+    #[test]
+    fn try_from_identifies_opt_homebrew_python() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+        let env = PythonEnv::new(
+            PathBuf::from(
+                "/opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+            ),
+            None,
+            None,
+        );
+
+        let homebrew_env = locator.try_from(&env).unwrap();
+
+        assert_eq!(homebrew_env.kind, Some(PythonEnvironmentKind::Homebrew));
+        assert_eq!(
+            homebrew_env.executable,
+            Some(PathBuf::from("/opt/homebrew/bin/python3.12"))
+        );
+        assert_eq!(homebrew_env.version, Some("3.12.3".to_string()));
+    }
+
+    #[test]
+    fn try_from_identifies_usr_local_cellar_python() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+        let env = PythonEnv::new(
+            PathBuf::from(
+                "/usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8/bin/python3.8",
+            ),
+            None,
+            None,
+        );
+
+        let homebrew_env = locator.try_from(&env).unwrap();
+
+        assert_eq!(homebrew_env.kind, Some(PythonEnvironmentKind::Homebrew));
+        assert_eq!(
+            homebrew_env.executable,
+            Some(PathBuf::from("/usr/local/bin/python3.8"))
+        );
+        assert_eq!(homebrew_env.version, Some("3.8.20".to_string()));
+    }
+
+    #[test]
+    fn try_from_rejects_conda_env_when_parent_is_conda() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+        // Create a directory that looks like a conda env (has conda-meta)
+        let conda_root = tempdir().unwrap();
+        fs::create_dir_all(conda_root.path().join("conda-meta")).unwrap();
+        // Place executable directly in the conda-meta parent directory
+        let exe = conda_root.path().join("python3.12");
+        fs::write(&exe, b"").unwrap();
+
+        let env = PythonEnv::new(exe, None, None);
+        assert!(locator.try_from(&env).is_none());
+    }
+
+    #[test]
+    fn try_from_rejects_conda_env_when_grandparent_is_conda() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+        // Create a directory that looks like a conda env (has conda-meta)
+        let conda_root = tempdir().unwrap();
+        fs::create_dir_all(conda_root.path().join("conda-meta")).unwrap();
+        let bin_dir = conda_root.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = bin_dir.join("python3.12");
+        fs::write(&exe, b"").unwrap();
+
+        let env = PythonEnv::new(exe, None, None);
+        assert!(locator.try_from(&env).is_none());
+    }
+
+    #[test]
+    fn try_from_rejects_conda_env_via_prefix() {
+        let locator = Homebrew::from(&TestEnvironment {
+            homebrew_prefix: None,
+        });
+        // Conda env detected via prefix having conda-meta
+        let conda_root = tempdir().unwrap();
+        fs::create_dir_all(conda_root.path().join("conda-meta")).unwrap();
+        let bin_dir = conda_root.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let exe = bin_dir.join("python3.12");
+        fs::write(&exe, b"").unwrap();
+
+        let env = PythonEnv::new(exe, Some(conda_root.path().to_path_buf()), None);
+        assert!(locator.try_from(&env).is_none());
+    }
 }
