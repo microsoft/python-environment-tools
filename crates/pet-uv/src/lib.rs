@@ -15,6 +15,7 @@ use pet_core::{
     Configuration, Locator, LocatorKind, RefreshStatePersistence,
 };
 use pet_fs::path::norm_case;
+use pet_fs::path::resolve_dot_venv;
 use pet_python_utils::executable::{find_executable, find_executables};
 use serde::Deserialize;
 
@@ -422,7 +423,7 @@ fn find_workspace_for_project(project_path: &Path) -> Option<PythonEnvironment> 
 /// Builds a `PythonEnvironment` for a uv workspace root if it has a `.venv` with a valid
 /// uv-managed pyvenv.cfg.
 fn build_workspace_env(workspace_root: &Path) -> Option<PythonEnvironment> {
-    let prefix = workspace_root.join(".venv");
+    let prefix = resolve_dot_venv(workspace_root)?;
     let pyvenv_cfg = prefix.join("pyvenv.cfg");
     if !pyvenv_cfg.exists() {
         trace!(
@@ -465,17 +466,22 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
     let Some(pyproject) = pyproject else {
         return envs;
     };
-    let pyvenv_cfg = path.join(".venv/pyvenv.cfg");
-    let prefix = path.join(".venv");
-    let unix_executable = prefix.join("bin/python");
-    let windows_executable = prefix.join("Scripts/python.exe");
-    let executable = if unix_executable.exists() {
-        Some(unix_executable)
-    } else if windows_executable.exists() {
-        Some(windows_executable)
-    } else {
-        None
-    };
+    let prefix = resolve_dot_venv(path);
+    let uv_venv = prefix
+        .as_ref()
+        .map(|p| p.join("pyvenv.cfg"))
+        .and_then(|cfg| UvVenv::maybe_from_file(&cfg));
+    let executable = prefix.as_ref().and_then(|p| {
+        let unix_executable = p.join("bin/python");
+        let windows_executable = p.join("Scripts/python.exe");
+        if unix_executable.exists() {
+            Some(unix_executable)
+        } else if windows_executable.exists() {
+            Some(windows_executable)
+        } else {
+            None
+        }
+    });
     if pyproject
         .tool
         .and_then(|t| t.uv)
@@ -483,7 +489,7 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
         .is_some()
     {
         trace!("Workspace found in {}", path.display());
-        if let Some(uv_venv) = UvVenv::maybe_from_file(&pyvenv_cfg) {
+        if let (Some(uv_venv), Some(prefix)) = (uv_venv, prefix) {
             trace!("uv-managed venv found for workspace in {}", path.display());
             let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::UvWorkspace))
                 .name(Some(uv_venv.prompt))
@@ -501,7 +507,7 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
         }
     // prioritize the workspace over the project if it's the same venv
     } else if let Some(project) = pyproject.project {
-        if let Some(uv_venv) = UvVenv::maybe_from_file(&pyvenv_cfg) {
+        if let (Some(uv_venv), Some(prefix)) = (uv_venv, prefix) {
             trace!("uv-managed venv found for project in {}", path.display());
             let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Uv))
                 .name(Some(uv_venv.prompt))
