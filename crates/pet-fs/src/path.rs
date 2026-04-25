@@ -343,18 +343,23 @@ fn get_user_home() -> Option<PathBuf> {
 /// 1. If `<dir>/.venv` is a directory, return that path.
 /// 2. If `<dir>/.venv` is a file, read its contents, trim whitespaces, and resolve the path:
 ///   - If the path is absolute, return it.
-///   - If the path is relative, resolve it against `<dir>` and return the absolute path.
+///   - If the path is relative, resolve it against `<dir>` using `dir.join(path)`.
+///     The returned path is not further canonicalized, so it may remain relative if `<dir>`
+///     is relative and may preserve `.` or `..` components.
 ///   - If the resolved path does not exist or is not a directory, return `None`.
 /// 3. If `<dir>/.venv` does not exist, return `None`.
 ///
 /// See: <https://www.python.org/dev/peps/pep-0832/#specification>
 pub fn resolve_dot_venv(dir: &Path) -> Option<PathBuf> {
     let dot_venv = dir.join(".venv");
-    let meta = std::fs::symlink_metadata(&dot_venv).ok()?;
+    let meta = std::fs::metadata(&dot_venv).ok()?;
     if meta.is_dir() {
         Some(dot_venv)
     } else if meta.is_file() {
         let content = std::fs::read_to_string(&dot_venv).ok()?.trim().to_string();
+        if content.is_empty() {
+            return None;
+        }
         let path = PathBuf::from(content);
         let resolved_path = if path.is_absolute() {
             path
@@ -838,6 +843,42 @@ mod tests {
 
         let result = resolve_dot_venv(&test_dir);
         assert_eq!(result, Some(target_venv.clone()));
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[test]
+    fn test_resolve_dot_venv_file_whitespace_only_returns_none() {
+        // A whitespace-only .venv file should not resolve to the project directory
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_dot_venv_whitespace_only");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&test_dir).expect("Failed to create test dir");
+
+        let dot_venv_file = test_dir.join(".venv");
+        std::fs::write(&dot_venv_file, "  \n\t  ").expect("Failed to write .venv file");
+
+        assert_eq!(resolve_dot_venv(&test_dir), None);
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_dot_venv_symlink_to_directory() {
+        // A .venv symlink to a directory should be treated like a directory
+        let temp_dir = std::env::temp_dir();
+        let test_dir = temp_dir.join("pet_test_dot_venv_symlink_dir");
+        let target_venv = test_dir.join("actual_venv");
+        let dot_venv = test_dir.join(".venv");
+
+        let _ = std::fs::remove_dir_all(&test_dir);
+        std::fs::create_dir_all(&target_venv).expect("Failed to create target venv dir");
+        std::os::unix::fs::symlink(&target_venv, &dot_venv)
+            .expect("Failed to create .venv symlink");
+
+        assert_eq!(resolve_dot_venv(&test_dir), Some(dot_venv.clone()));
 
         let _ = std::fs::remove_dir_all(&test_dir);
     }
