@@ -2067,6 +2067,7 @@ mod tests {
                 LocatorKind::VirtualEnvWrapper,
                 RefreshStatePersistence::Stateless,
             ),
+            (LocatorKind::Hatch, RefreshStatePersistence::ConfiguredOnly),
             (LocatorKind::Venv, RefreshStatePersistence::Stateless),
             (LocatorKind::VirtualEnv, RefreshStatePersistence::Stateless),
             #[cfg(unix)]

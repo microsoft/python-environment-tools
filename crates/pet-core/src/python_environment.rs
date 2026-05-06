@@ -19,6 +19,7 @@ pub enum PythonEnvironmentKind {
     PyenvVirtualEnv, // Pyenv virtualenvs.
     Pipenv,
     Poetry,
+    Hatch,
     MacPythonOrg,
     MacCommandLineTools,
     LinuxGlobal,

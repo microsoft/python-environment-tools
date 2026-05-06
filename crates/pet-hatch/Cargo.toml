@@ -1,0 +1,17 @@
+[package]
+name = "pet-hatch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+
+[dependencies]
+pet-core = { path = "../pet-core" }
+pet-fs = { path = "../pet-fs" }
+pet-python-utils = { path = "../pet-python-utils" }
+log = "0.4.21"
+
+[dev-dependencies]
+tempfile = "3.13"

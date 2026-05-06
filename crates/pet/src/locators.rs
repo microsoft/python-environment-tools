@@ -10,6 +10,7 @@ use pet_core::python_environment::{
     PythonEnvironment, PythonEnvironmentBuilder, PythonEnvironmentKind,
 };
 use pet_core::Locator;
+use pet_hatch::Hatch;
 use pet_linux_global_python::LinuxGlobalPython;
 use pet_mac_commandlinetools::MacCmdLineTools;
 use pet_mac_python_org::MacPythonOrg;
@@ -69,6 +70,7 @@ pub fn create_locators(
     locators.push(poetry_locator);
     locators.push(Arc::new(PipEnv::from(environment)));
     locators.push(Arc::new(VirtualEnvWrapper::from(environment)));
+    locators.push(Arc::new(Hatch::from(environment)));
     locators.push(Arc::new(Venv::new()));
     // VirtualEnv is the most generic, hence should be the last.
     locators.push(Arc::new(VirtualEnv::new()));

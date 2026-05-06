@@ -43,6 +43,7 @@ pub struct Configuration {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LocatorKind {
     Conda,
+    Hatch,
     Homebrew,
     LinuxGlobal,
     MacCommandLineTools,
