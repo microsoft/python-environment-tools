@@ -119,8 +119,9 @@ pub fn strip_trailing_separator<P: AsRef<Path>>(path: P) -> PathBuf {
 ///   → backslash) and trailing separators stripped, so the same logical
 ///   path is cached only once even when callers vary in style. Only
 ///   successful normalizations are cached, so paths that do not yet exist
-///   on disk can still be normalized later. The cache is never invalidated
-///   for the lifetime of the process.
+///   on disk can still be normalized later. The cache has a generous soft
+///   cap (`NORM_CASE_CACHE_MAX_ENTRIES`) and is cleared when exceeded; it
+///   is otherwise never invalidated for the lifetime of the process.
 ///
 /// # Related
 /// - `strip_trailing_separator()` - Just removes trailing separators
@@ -142,41 +143,65 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
         // First, convert to absolute path if relative, without resolving symlinks/junctions.
         // We key the cache on this *absolute* path rather than the caller's input so
         // a relative input like "./foo" stays correct if the process CWD changes
-        // between calls.
-        let absolute_path = if path.as_ref().is_absolute() {
-            path.as_ref().to_path_buf()
+        // between calls. If `current_dir()` itself fails (extremely rare), we
+        // proceed with the original path but skip caching — see below.
+        let (absolute_path, abs_ok) = if path.as_ref().is_absolute() {
+            (path.as_ref().to_path_buf(), true)
         } else if let Ok(abs) = std::env::current_dir() {
-            abs.join(path.as_ref())
+            (abs.join(path.as_ref()), true)
         } else {
-            path.as_ref().to_path_buf()
+            (path.as_ref().to_path_buf(), false)
         };
 
         // Apply a cheap, deterministic pre-normalization (slash style + trailing
         // separator) to the cache key so the same logical path is not cached under
         // multiple keys (e.g. `C:\Windows`, `C:\Windows\`, and `C:/Windows`).
-        // This is purely an in-memory string transform — no syscalls.
+        // This is purely an in-memory transform — no syscalls.
         let cache_key = cache_key_for(&absolute_path);
 
         // Fast path: cache hit. Read lock is held only while we copy the
-        // already-normalized PathBuf out. We treat lock poisoning as a
-        // soft-miss (fall through to recompute) because `norm_case` is
-        // hot and side-effect-free; a poisoned RwLock from one bad caller
-        // shouldn't permanently break path normalization for the process.
-        if let Ok(cache) = NORM_CASE_CACHE.read() {
-            if let Some(cached) = cache.get(&cache_key) {
-                return cached.clone();
-            }
+        // already-normalized PathBuf out. If the lock is poisoned we recover
+        // the inner map via `into_inner()` so the cache keeps working for
+        // the rest of the process — silently disabling the cache after a
+        // single bad caller would reintroduce the syscall storm we're
+        // trying to avoid.
+        let cache_read = NORM_CASE_CACHE
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(cached) = cache_read.get(&cache_key) {
+            return cached.clone();
         }
+        // Explicitly drop the read guard before we try to acquire the
+        // write guard below: `std::sync::RwLock` does not guarantee
+        // safe same-thread read → write upgrades, and holding both at
+        // once can deadlock on some platforms.
+        drop(cache_read);
 
         // Use GetLongPathNameW to normalize case without resolving junctions.
         // If normalization fails, fall back to the computed absolute path to keep behavior consistent.
         match normalize_case_windows(&absolute_path) {
             Some(normalized) => {
-                // Only cache successful normalizations: a failure usually
-                // means the path does not exist yet, and we don't want to
-                // poison the cache with a non-normalized fallback for paths
-                // that may be created later in the process.
-                if let Ok(mut cache) = NORM_CASE_CACHE.write() {
+                // Only cache successful normalizations whose key is a real
+                // absolute path:
+                //  * Failures (None) are skipped because the path may be
+                //    created later in the process and should normalize then.
+                //  * !abs_ok means we never resolved CWD, so the key is a
+                //    relative path — caching it could become wrong if CWD
+                //    changes later. This branch is essentially unreachable
+                //    in practice (current_dir() failing) but we'd rather
+                //    pay the syscall again than poison the cache.
+                if abs_ok {
+                    let mut cache = NORM_CASE_CACHE
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    // Soft cap: if the cache grows unreasonably large
+                    // (e.g. a long-lived JSONRPC server scanning many
+                    // workspaces), reset rather than tracking a true LRU.
+                    // The working set per-session is small, so re-warming
+                    // is cheap.
+                    if cache.len() >= NORM_CASE_CACHE_MAX_ENTRIES {
+                        cache.clear();
+                    }
                     cache.insert(cache_key, normalized.clone());
                 }
                 normalized
@@ -185,6 +210,15 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
         }
     }
 }
+
+/// Soft upper bound on the number of entries `NORM_CASE_CACHE` will hold
+/// before being cleared. The working set of paths a single PET refresh
+/// touches is at most low hundreds (PATH entries, registry installs,
+/// conda envs, virtualenv prefixes, etc.). 4096 leaves ample headroom
+/// for unusual workspaces while keeping the worst-case memory footprint
+/// bounded for long-lived JSONRPC server processes.
+#[cfg(windows)]
+const NORM_CASE_CACHE_MAX_ENTRIES: usize = 4096;
 
 /// Builds a deterministic cache key for `norm_case` from an absolute path.
 ///
@@ -777,7 +811,27 @@ mod tests {
         // GetLongPathNameW fails for non-existent paths. We must NOT cache
         // those, otherwise a path that gets created later in the process
         // would forever return its non-normalized fallback form.
-        let nonexistent = PathBuf::from("C:\\pet_test_norm_case_no_cache_xyz_zzz_zzz");
+        //
+        // Build the test path inside `std::env::temp_dir()` so it is
+        // anchored to a real, writable location regardless of which drive
+        // Windows is installed on, and use a unique name with a low
+        // collision rate. Then make sure it does not exist on disk so
+        // GetLongPathNameW deterministically fails.
+        let nonexistent = std::env::temp_dir().join(format!(
+            "pet_test_norm_case_no_cache_{}_{}",
+            std::process::id(),
+            // Wall-clock nanoseconds — process id alone isn't enough on
+            // hosts that recycle PIDs quickly.
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        assert!(
+            !nonexistent.exists(),
+            "test setup expected a non-existent path"
+        );
+
         let key = cache_key_for(&nonexistent);
         // Make sure we start from a clean slate for this key.
         NORM_CASE_CACHE
