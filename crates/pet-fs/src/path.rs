@@ -114,11 +114,13 @@ pub fn strip_trailing_separator<P: AsRef<Path>>(path: P) -> PathBuf {
 /// - On Windows, this function uses `GetLongPathNameW` which **preserves junction paths**
 ///   unlike `fs::canonicalize` which would resolve them to their target.
 /// - For symlink resolution, use `resolve_symlink()` instead.
-/// - On Windows, results are memoized in a per-process cache keyed on the
-///   computed *absolute* path (so relative inputs remain correct across
-///   CWD changes). Only successful normalizations are cached, so paths
-///   that do not yet exist on disk can still be normalized later. The
-///   cache is never invalidated for the lifetime of the process.
+/// - On Windows, results are memoized in a per-process cache. The key is
+///   the computed *absolute* path with separators canonicalized (forward
+///   → backslash) and trailing separators stripped, so the same logical
+///   path is cached only once even when callers vary in style. Only
+///   successful normalizations are cached, so paths that do not yet exist
+///   on disk can still be normalized later. The cache is never invalidated
+///   for the lifetime of the process.
 ///
 /// # Related
 /// - `strip_trailing_separator()` - Just removes trailing separators
@@ -149,13 +151,19 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
             path.as_ref().to_path_buf()
         };
 
+        // Apply a cheap, deterministic pre-normalization (slash style + trailing
+        // separator) to the cache key so the same logical path is not cached under
+        // multiple keys (e.g. `C:\Windows`, `C:\Windows\`, and `C:/Windows`).
+        // This is purely an in-memory string transform — no syscalls.
+        let cache_key = cache_key_for(&absolute_path);
+
         // Fast path: cache hit. Read lock is held only while we copy the
         // already-normalized PathBuf out. We treat lock poisoning as a
         // soft-miss (fall through to recompute) because `norm_case` is
-        // hot and side-effect-free; a poisoned mutex from one bad caller
+        // hot and side-effect-free; a poisoned RwLock from one bad caller
         // shouldn't permanently break path normalization for the process.
         if let Ok(cache) = NORM_CASE_CACHE.read() {
-            if let Some(cached) = cache.get(&absolute_path) {
+            if let Some(cached) = cache.get(&cache_key) {
                 return cached.clone();
             }
         }
@@ -169,13 +177,31 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
                 // poison the cache with a non-normalized fallback for paths
                 // that may be created later in the process.
                 if let Ok(mut cache) = NORM_CASE_CACHE.write() {
-                    cache.insert(absolute_path, normalized.clone());
+                    cache.insert(cache_key, normalized.clone());
                 }
                 normalized
             }
             None => absolute_path,
         }
     }
+}
+
+/// Builds a deterministic cache key for `norm_case` from an absolute path.
+///
+/// We canonicalize separators (forward → backslash) and strip trailing
+/// separators (preserving roots) so that, for example, `C:\Windows`,
+/// `C:\Windows\`, and `C:/Windows` all collapse to the same key. This is
+/// purely an in-memory string transform — no syscalls — and exists only
+/// to improve cache hit rate, not to change the result of `norm_case`.
+#[cfg(windows)]
+fn cache_key_for(absolute_path: &Path) -> PathBuf {
+    let s = absolute_path.to_string_lossy();
+    let with_backslashes = if s.contains('/') {
+        PathBuf::from(s.replace('/', "\\"))
+    } else {
+        absolute_path.to_path_buf()
+    };
+    strip_trailing_separator(&with_backslashes)
 }
 
 /// Windows-specific path case normalization using GetLongPathNameW.
@@ -678,15 +704,17 @@ mod tests {
     fn test_norm_case_windows_memoizes_existing_path() {
         // Successful normalizations should be cached so subsequent calls
         // for the same input do not re-issue GetLongPathNameW.
-        // The cache is keyed on the computed absolute path, so we pass an
-        // absolute path here to make the assertion deterministic.
+        // The cache is keyed on the canonicalized absolute path, so we
+        // pass an already-canonical absolute path here to make the
+        // assertion deterministic.
         let path = PathBuf::from("C:\\Windows\\System32");
         let first = norm_case(&path);
-        // Cache must contain the exact (absolute) input we passed in.
+        // Cache must contain the canonicalized form of the input.
+        let key = cache_key_for(&path);
         let cached = NORM_CASE_CACHE
             .read()
             .expect("norm_case cache poisoned")
-            .get(&path)
+            .get(&key)
             .cloned();
         assert_eq!(
             cached.as_ref(),
@@ -705,18 +733,19 @@ mod tests {
         // those, otherwise a path that gets created later in the process
         // would forever return its non-normalized fallback form.
         let nonexistent = PathBuf::from("C:\\pet_test_norm_case_no_cache_xyz_zzz_zzz");
+        let key = cache_key_for(&nonexistent);
         // Make sure we start from a clean slate for this key.
         NORM_CASE_CACHE
             .write()
             .expect("norm_case cache poisoned")
-            .remove(&nonexistent);
+            .remove(&key);
 
         let _ = norm_case(&nonexistent);
 
         let has_entry = NORM_CASE_CACHE
             .read()
             .expect("norm_case cache poisoned")
-            .contains_key(&nonexistent);
+            .contains_key(&key);
         assert!(
             !has_entry,
             "failed normalizations must not be inserted into the cache"
@@ -742,16 +771,41 @@ mod tests {
             !cache.contains_key(&relative),
             "cache must not be keyed on the caller-supplied relative path"
         );
-        // The absolute form must be present (assuming the CWD exists,
-        // which it always does for a running test process).
+        // The canonicalized absolute form must be present (assuming the
+        // CWD exists, which it always does for a running test process).
         let abs = std::env::current_dir()
             .expect("cwd must exist")
             .join(&relative);
+        let key = cache_key_for(&abs);
         assert_eq!(
-            cache.get(&abs).cloned(),
+            cache.get(&key).cloned(),
             Some(result),
-            "cache must be keyed on the computed absolute path"
+            "cache must be keyed on the canonicalized absolute path"
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_cache_key_canonicalizes_separators_and_trailing_slash() {
+        // Variant inputs (mixed separators, trailing slash) should all share
+        // a single cache entry once one of them populates it.
+        let canonical = PathBuf::from("C:\\Windows\\System32");
+        let with_forward_slashes = PathBuf::from("C:/Windows/System32");
+        let with_trailing_slash = PathBuf::from("C:\\Windows\\System32\\");
+
+        // Pre-populate by calling norm_case on the canonical form.
+        let expected = norm_case(&canonical);
+
+        // All variants compute to the same cache key.
+        let key_canonical = cache_key_for(&canonical);
+        let key_forward = cache_key_for(&with_forward_slashes);
+        let key_trailing = cache_key_for(&with_trailing_slash);
+        assert_eq!(key_canonical, key_forward);
+        assert_eq!(key_canonical, key_trailing);
+
+        // And subsequent calls for the variants return the same cached result.
+        assert_eq!(norm_case(&with_forward_slashes), expected);
+        assert_eq!(norm_case(&with_trailing_slash), expected);
     }
 
     // ==================== resolve_any_symlink tests ====================
