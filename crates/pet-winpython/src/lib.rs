@@ -30,7 +30,7 @@ use std::{
 ///
 /// Multiple paths can be provided, separated by the platform path separator
 /// (`;` on Windows, `:` elsewhere).
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 const WINPYTHON_HOME_ENV_VAR: &str = "WINPYTHON_HOME";
 
 lazy_static! {
