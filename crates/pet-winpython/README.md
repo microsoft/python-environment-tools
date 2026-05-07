@@ -30,3 +30,26 @@ WPy64-31300/                          # Top-level WinPython directory
 ## Platform Support
 
 This locator only works on Windows, as WinPython is a Windows-only distribution.
+
+## Search Paths
+
+By default, the locator only looks for WinPython installations under
+`%USERPROFILE%\WinPython`. Earlier versions also scanned drive roots
+(`C:\`, `D:\`, `E:\`), `Program Files`, `Downloads`, `Desktop`, and
+`Documents` on every refresh — those scans were a Windows Defender
+hot-spot and inflated refresh latency, so they have been removed.
+
+If your WinPython installation lives elsewhere, point the locator at it
+with the `WINPYTHON_HOME` environment variable. The value can be a
+single path or a `;`-separated list of paths. Each entry can either:
+
+- _be_ a WinPython installation (e.g. `D:\WPy64-31300`), or
+- _contain_ one or more WinPython installations (e.g. `D:\python-tools`
+  with `D:\python-tools\WPy64-31300` inside).
+
+Examples:
+
+```
+set WINPYTHON_HOME=D:\WPy64-31300
+set WINPYTHON_HOME=D:\WPy64-31300;E:\portable-python
+```

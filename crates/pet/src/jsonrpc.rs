@@ -2047,7 +2047,10 @@ mod tests {
                 RefreshStatePersistence::SyncedDiscoveryState,
             ),
             #[cfg(windows)]
-            (LocatorKind::WinPython, RefreshStatePersistence::Stateless),
+            (
+                LocatorKind::WinPython,
+                RefreshStatePersistence::SyncedDiscoveryState,
+            ),
             (
                 LocatorKind::PyEnv,
                 RefreshStatePersistence::SelfHydratingCache,
