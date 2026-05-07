@@ -52,7 +52,6 @@ pub struct WinPython {
     /// Cached discovery result. Populated lazily by `find_with_cache()` and
     /// cleared at the start of each `find()` (refresh). Mirrors the pattern
     /// used by `WindowsStore` and `WindowsRegistry`.
-    #[allow(dead_code)]
     cached_environments: Arc<Mutex<Option<Arc<Vec<PythonEnvironment>>>>>,
 }
 
@@ -475,7 +474,10 @@ fn build_search_paths(userprofile: Option<String>, winpython_home: Option<String
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     let mut push_unique = |p: PathBuf, paths: &mut Vec<PathBuf>| {
-        if seen.insert(p.clone()) {
+        // Normalize for dedup so case-only or separator-only differences on
+        // Windows don't produce duplicate scans.
+        let key = norm_case(&p);
+        if seen.insert(key) {
             paths.push(p);
         }
     };
@@ -726,6 +728,7 @@ mod tests {
     /// `~/Desktop`, or `~/Documents` — that was the pre-#453 behavior and
     /// caused Defender-induced p90 latency on Windows refreshes.
     #[test]
+    #[cfg(windows)]
     fn test_search_paths_exclude_drive_roots_and_program_files() {
         let paths = build_search_paths(Some(r"C:\Users\test".to_string()), None);
 
