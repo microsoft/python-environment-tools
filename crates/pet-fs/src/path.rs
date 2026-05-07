@@ -9,6 +9,29 @@ use std::{
 #[cfg(unix)]
 use std::path::MAIN_SEPARATOR;
 
+#[cfg(windows)]
+use std::{collections::HashMap, sync::RwLock};
+
+#[cfg(windows)]
+use lazy_static::lazy_static;
+
+#[cfg(windows)]
+lazy_static! {
+    /// Per-process memoization cache for `norm_case` results on Windows.
+    ///
+    /// Each `norm_case` call invokes `GetLongPathNameW`, which is a real
+    /// filesystem syscall (Defender-intercepted on Windows). Many hot paths
+    /// — the user home directory, common parents, every `PATH` entry, every
+    /// registry `env_path`/`executable` — get normalized repeatedly per
+    /// refresh. Memoizing eliminates the repeat syscalls.
+    ///
+    /// We cache only successful normalizations: a failure (`GetLongPathNameW`
+    /// returning 0, typically because the path doesn't exist yet) is *not*
+    /// cached so a path that gets created later can still be normalized.
+    static ref NORM_CASE_CACHE: RwLock<HashMap<PathBuf, PathBuf>> =
+        RwLock::new(HashMap::new());
+}
+
 /// Strips trailing path separators from a path, preserving root paths.
 ///
 /// This function removes trailing `/` or `\` from paths while ensuring that root paths
@@ -91,6 +114,11 @@ pub fn strip_trailing_separator<P: AsRef<Path>>(path: P) -> PathBuf {
 /// - On Windows, this function uses `GetLongPathNameW` which **preserves junction paths**
 ///   unlike `fs::canonicalize` which would resolve them to their target.
 /// - For symlink resolution, use `resolve_symlink()` instead.
+/// - On Windows, results are memoized in a per-process cache keyed on the
+///   computed *absolute* path (so relative inputs remain correct across
+///   CWD changes). Only successful normalizations are cached, so paths
+///   that do not yet exist on disk can still be normalized later. The
+///   cache is never invalidated for the lifetime of the process.
 ///
 /// # Related
 /// - `strip_trailing_separator()` - Just removes trailing separators
@@ -109,7 +137,10 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
 
     #[cfg(windows)]
     {
-        // First, convert to absolute path if relative, without resolving symlinks/junctions
+        // First, convert to absolute path if relative, without resolving symlinks/junctions.
+        // We key the cache on this *absolute* path rather than the caller's input so
+        // a relative input like "./foo" stays correct if the process CWD changes
+        // between calls.
         let absolute_path = if path.as_ref().is_absolute() {
             path.as_ref().to_path_buf()
         } else if let Ok(abs) = std::env::current_dir() {
@@ -118,9 +149,32 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
             path.as_ref().to_path_buf()
         };
 
+        // Fast path: cache hit. Read lock is held only while we copy the
+        // already-normalized PathBuf out. We treat lock poisoning as a
+        // soft-miss (fall through to recompute) because `norm_case` is
+        // hot and side-effect-free; a poisoned mutex from one bad caller
+        // shouldn't permanently break path normalization for the process.
+        if let Ok(cache) = NORM_CASE_CACHE.read() {
+            if let Some(cached) = cache.get(&absolute_path) {
+                return cached.clone();
+            }
+        }
+
         // Use GetLongPathNameW to normalize case without resolving junctions.
         // If normalization fails, fall back to the computed absolute path to keep behavior consistent.
-        normalize_case_windows(&absolute_path).unwrap_or(absolute_path)
+        match normalize_case_windows(&absolute_path) {
+            Some(normalized) => {
+                // Only cache successful normalizations: a failure usually
+                // means the path does not exist yet, and we don't want to
+                // poison the cache with a non-normalized fallback for paths
+                // that may be created later in the process.
+                if let Ok(mut cache) = NORM_CASE_CACHE.write() {
+                    cache.insert(absolute_path, normalized.clone());
+                }
+                normalized
+            }
+            None => absolute_path,
+        }
     }
 }
 
@@ -616,6 +670,87 @@ mod tests {
             result.to_string_lossy().starts_with(r"\\?\"),
             "Should preserve UNC prefix when present in original, got: {:?}",
             result
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_memoizes_existing_path() {
+        // Successful normalizations should be cached so subsequent calls
+        // for the same input do not re-issue GetLongPathNameW.
+        // The cache is keyed on the computed absolute path, so we pass an
+        // absolute path here to make the assertion deterministic.
+        let path = PathBuf::from("C:\\Windows\\System32");
+        let first = norm_case(&path);
+        // Cache must contain the exact (absolute) input we passed in.
+        let cached = NORM_CASE_CACHE
+            .read()
+            .expect("norm_case cache poisoned")
+            .get(&path)
+            .cloned();
+        assert_eq!(
+            cached.as_ref(),
+            Some(&first),
+            "expected norm_case to insert the result into the cache"
+        );
+        // Second call returns the same result (and goes through the cache).
+        let second = norm_case(&path);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_does_not_cache_failures() {
+        // GetLongPathNameW fails for non-existent paths. We must NOT cache
+        // those, otherwise a path that gets created later in the process
+        // would forever return its non-normalized fallback form.
+        let nonexistent = PathBuf::from("C:\\pet_test_norm_case_no_cache_xyz_zzz_zzz");
+        // Make sure we start from a clean slate for this key.
+        NORM_CASE_CACHE
+            .write()
+            .expect("norm_case cache poisoned")
+            .remove(&nonexistent);
+
+        let _ = norm_case(&nonexistent);
+
+        let has_entry = NORM_CASE_CACHE
+            .read()
+            .expect("norm_case cache poisoned")
+            .contains_key(&nonexistent);
+        assert!(
+            !has_entry,
+            "failed normalizations must not be inserted into the cache"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_norm_case_windows_cache_key_is_absolute_path() {
+        // The cache is keyed on the computed absolute path, not the
+        // caller-supplied input. Calling norm_case on a relative path
+        // must NOT insert an entry under that relative key; the entry
+        // must instead live under the resolved absolute path.
+        //
+        // We avoid mutating the process CWD here because cargo runs tests
+        // in parallel and a global chdir would race with other tests.
+        let relative = PathBuf::from(".");
+        let result = norm_case(&relative);
+
+        assert!(result.is_absolute(), "result must be absolute");
+        let cache = NORM_CASE_CACHE.read().expect("norm_case cache poisoned");
+        assert!(
+            !cache.contains_key(&relative),
+            "cache must not be keyed on the caller-supplied relative path"
+        );
+        // The absolute form must be present (assuming the CWD exists,
+        // which it always does for a running test process).
+        let abs = std::env::current_dir()
+            .expect("cwd must exist")
+            .join(&relative);
+        assert_eq!(
+            cache.get(&abs).cloned(),
+            Some(result),
+            "cache must be keyed on the computed absolute path"
         );
     }
 
