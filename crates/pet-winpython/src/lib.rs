@@ -482,11 +482,13 @@ fn build_search_paths(userprofile: Option<String>, winpython_home: Option<String
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     let mut push_unique = |p: PathBuf, paths: &mut Vec<PathBuf>| {
-        // Normalize for dedup so case-only or separator-only differences on
-        // Windows don't produce duplicate scans.
-        let key = norm_case(&p);
-        if seen.insert(key) {
-            paths.push(p);
+        // Normalize for both dedup and the actual scan path so case-only,
+        // separator-only, or `\\?\`-prefix differences on Windows don't
+        // produce duplicate scans, and so non-normalized inputs (e.g. mixed
+        // separators in `WINPYTHON_HOME`) get resolved consistently.
+        let normed = norm_case(&p);
+        if seen.insert(normed.clone()) {
+            paths.push(normed);
         }
     };
 
