@@ -531,6 +531,7 @@ name = "pet-fs"
 version = "0.1.0"
 dependencies = [
  "glob",
+ "lazy_static",
  "log",
  "msvc_spectre_libs",
  "windows-sys 0.59.0",
