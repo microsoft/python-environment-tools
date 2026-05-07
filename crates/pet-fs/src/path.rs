@@ -191,17 +191,43 @@ pub fn norm_case<P: AsRef<Path>>(path: P) -> PathBuf {
 /// We canonicalize separators (forward → backslash) and strip trailing
 /// separators (preserving roots) so that, for example, `C:\Windows`,
 /// `C:\Windows\`, and `C:/Windows` all collapse to the same key. This is
-/// purely an in-memory string transform — no syscalls — and exists only
-/// to improve cache hit rate, not to change the result of `norm_case`.
+/// purely an in-memory transform — no syscalls — and exists only to
+/// improve cache hit rate, not to change the result of `norm_case`.
+///
+/// We operate on the UTF-16 (`encode_wide`) representation rather than
+/// going through `to_string_lossy()` so the transform is lossless for
+/// all `Path` values, including the rare paths that contain non-Unicode
+/// bytes (unpaired surrogates) which `to_string_lossy()` would map to
+/// `U+FFFD` and so could collapse distinct paths to the same key.
 #[cfg(windows)]
 fn cache_key_for(absolute_path: &Path) -> PathBuf {
-    let s = absolute_path.to_string_lossy();
-    let with_backslashes = if s.contains('/') {
-        PathBuf::from(s.replace('/', "\\"))
-    } else {
-        absolute_path.to_path_buf()
-    };
-    strip_trailing_separator(&with_backslashes)
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    const FWD: u16 = b'/' as u16;
+    const BACK: u16 = b'\\' as u16;
+
+    // Replace forward slashes with backslashes in-place on the wide form.
+    let mut wide: Vec<u16> = absolute_path
+        .as_os_str()
+        .encode_wide()
+        .map(|c| if c == FWD { BACK } else { c })
+        .collect();
+
+    // Strip trailing separators while preserving root paths (drive roots,
+    // UNC roots, network paths, extended-length roots). We rebuild a
+    // `PathBuf` only as a probe for `Path::parent()`, which already
+    // handles all the Windows root shapes correctly.
+    while wide.last() == Some(&BACK) {
+        let probe = PathBuf::from(OsString::from_wide(&wide));
+        if probe.parent().is_some() {
+            wide.pop();
+        } else {
+            break;
+        }
+    }
+
+    PathBuf::from(OsString::from_wide(&wide))
 }
 
 /// Windows-specific path case normalization using GetLongPathNameW.
@@ -699,6 +725,18 @@ mod tests {
         );
     }
 
+    /// Helper: returns an existing Windows directory derived from
+    /// `SystemRoot` (e.g. `C:\Windows`) so tests don't hardcode a drive
+    /// letter or the `\System32` subfolder. Both can vary on custom
+    /// installs / CI setups.
+    #[cfg(windows)]
+    fn system_root_dir() -> PathBuf {
+        let root = std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("WINDIR"))
+            .expect("SystemRoot or WINDIR must be set on Windows");
+        PathBuf::from(root)
+    }
+
     #[test]
     #[cfg(windows)]
     fn test_norm_case_windows_memoizes_existing_path() {
@@ -707,10 +745,17 @@ mod tests {
         // The cache is keyed on the canonicalized absolute path, so we
         // pass an already-canonical absolute path here to make the
         // assertion deterministic.
-        let path = PathBuf::from("C:\\Windows\\System32");
+        let path = system_root_dir();
+        let key = cache_key_for(&path);
+        // Tests run in parallel and share NORM_CASE_CACHE; clear the key
+        // first so this test really exercises insertion-on-miss.
+        NORM_CASE_CACHE
+            .write()
+            .expect("norm_case cache poisoned")
+            .remove(&key);
+
         let first = norm_case(&path);
         // Cache must contain the canonicalized form of the input.
-        let key = cache_key_for(&path);
         let cached = NORM_CASE_CACHE
             .read()
             .expect("norm_case cache poisoned")
@@ -789,9 +834,18 @@ mod tests {
     fn test_norm_case_windows_cache_key_canonicalizes_separators_and_trailing_slash() {
         // Variant inputs (mixed separators, trailing slash) should all share
         // a single cache entry once one of them populates it.
-        let canonical = PathBuf::from("C:\\Windows\\System32");
-        let with_forward_slashes = PathBuf::from("C:/Windows/System32");
-        let with_trailing_slash = PathBuf::from("C:\\Windows\\System32\\");
+        // Use SystemRoot rather than hardcoding a drive letter, since
+        // Windows can be installed elsewhere.
+        let canonical = system_root_dir();
+        let canonical_str = canonical
+            .to_str()
+            .expect("SystemRoot is expected to be valid UTF-8");
+        let with_forward_slashes = PathBuf::from(canonical_str.replace('\\', "/"));
+        let with_trailing_slash = {
+            let mut s = canonical_str.to_string();
+            s.push('\\');
+            PathBuf::from(s)
+        };
 
         // Pre-populate by calling norm_case on the canonical form.
         let expected = norm_case(&canonical);
