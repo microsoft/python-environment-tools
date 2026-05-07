@@ -377,10 +377,20 @@ fn build_environment(
 /// directly so callers always go through the cache.
 #[cfg(windows)]
 fn discover_environments(locator: &WinPython) -> Vec<PythonEnvironment> {
+    discover_environments_in(locator, get_winpython_search_paths())
+}
+
+/// Testable variant of [`discover_environments`] that takes the list of
+/// search paths as input rather than reading environment variables.
+#[cfg(any(windows, test))]
+fn discover_environments_in(
+    locator: &WinPython,
+    search_paths: Vec<PathBuf>,
+) -> Vec<PythonEnvironment> {
     let mut found: Vec<PythonEnvironment> = Vec::new();
     let mut seen_executables: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
-    for search_path in get_winpython_search_paths() {
+    for search_path in search_paths {
         if !search_path.exists() {
             continue;
         }
@@ -395,6 +405,7 @@ fn discover_environments(locator: &WinPython) -> Vec<PythonEnvironment> {
                 .is_some_and(is_winpython_dir_name)
         {
             collect_install(&search_path, locator, &mut found, &mut seen_executables);
+            continue;
         }
 
         // Otherwise treat it as a directory that may contain WinPython installs.
@@ -419,7 +430,7 @@ fn discover_environments(locator: &WinPython) -> Vec<PythonEnvironment> {
     found
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 fn collect_install(
     winpython_root: &Path,
     locator: &WinPython,
@@ -820,5 +831,205 @@ mod tests {
 
         let paths = build_search_paths(Some(home), Some(extra));
         assert_eq!(paths, vec![norm_case(default_path)]);
+    }
+
+    /// Build a minimal on-disk WinPython tree under `parent`:
+    ///
+    /// ```text
+    /// parent/<name>/
+    ///   .winpython
+    ///   python-3.13.0.amd64/
+    ///     python.exe
+    /// ```
+    ///
+    /// Returns the WinPython root and the python.exe path.
+    #[cfg(windows)]
+    fn make_winpython_tree(parent: &Path, name: &str) -> (PathBuf, PathBuf) {
+        let root = parent.join(name);
+        fs::create_dir_all(&root).unwrap();
+        File::create(root.join(".winpython")).unwrap();
+
+        let python_folder = root.join("python-3.13.0.amd64");
+        fs::create_dir_all(&python_folder).unwrap();
+        let python_exe = python_folder.join(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        });
+        File::create(&python_exe).unwrap();
+
+        (root, python_exe)
+    }
+
+    /// `discover_environments_in` should find an install when the search path
+    /// is a *parent directory* containing one or more WPy* directories.
+    #[test]
+    #[cfg(windows)]
+    fn test_discover_environments_in_parent_dir() {
+        let dir = tempdir().unwrap();
+        let (_root, python_exe) = make_winpython_tree(dir.path(), "WPy64-31300");
+
+        let locator = WinPython::new();
+        let envs = discover_environments_in(&locator, vec![dir.path().to_path_buf()]);
+
+        assert_eq!(envs.len(), 1, "expected one env, got {envs:?}");
+        let env = &envs[0];
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::WinPython));
+        assert_eq!(
+            env.executable.as_deref(),
+            Some(norm_case(&python_exe).as_path())
+        );
+    }
+
+    /// `discover_environments_in` should also accept a path that *is itself*
+    /// a WinPython install (the `WINPYTHON_HOME=D:\WPy64-31300` shape).
+    #[test]
+    #[cfg(windows)]
+    fn test_discover_environments_in_direct_install() {
+        let dir = tempdir().unwrap();
+        let (root, _python_exe) = make_winpython_tree(dir.path(), "WPy64-31300");
+
+        let locator = WinPython::new();
+        let envs = discover_environments_in(&locator, vec![root]);
+
+        assert_eq!(envs.len(), 1);
+    }
+
+    /// Two WPy* directories under the same parent should both be discovered,
+    /// and we should not double-report when the same install is reachable
+    /// via two different search paths (dedup by normalized executable).
+    #[test]
+    #[cfg(windows)]
+    fn test_discover_environments_in_dedups() {
+        let dir = tempdir().unwrap();
+        let (root_a, _) = make_winpython_tree(dir.path(), "WPy64-31300");
+        make_winpython_tree(dir.path(), "WPy64-31200");
+
+        let locator = WinPython::new();
+        let envs = discover_environments_in(
+            &locator,
+            // Pass parent twice + a direct install to exercise dedup.
+            vec![dir.path().to_path_buf(), dir.path().to_path_buf(), root_a],
+        );
+
+        assert_eq!(envs.len(), 2, "expected 2 unique envs, got {envs:?}");
+    }
+
+    /// Non-existent search paths are skipped silently.
+    #[test]
+    #[cfg(windows)]
+    fn test_discover_environments_in_ignores_missing_paths() {
+        let locator = WinPython::new();
+        let envs =
+            discover_environments_in(&locator, vec![PathBuf::from(r"Z:\definitely\not\here")]);
+        assert!(envs.is_empty());
+    }
+
+    /// Drive `find_with_cache`'s cached-hit path and the report loop
+    /// (the body of `Locator::find` minus the `clear()`).
+    #[test]
+    #[cfg(windows)]
+    fn test_find_with_cache_iteration_reports_each_environment() {
+        use pet_core::manager::EnvManager;
+        use pet_core::telemetry::TelemetryEvent;
+        use std::sync::Mutex;
+
+        struct Capture {
+            envs: Mutex<Vec<PythonEnvironment>>,
+        }
+        impl Reporter for Capture {
+            fn report_manager(&self, _: &EnvManager) {}
+            fn report_environment(&self, env: &PythonEnvironment) {
+                self.envs.lock().unwrap().push(env.clone());
+            }
+            fn report_telemetry(&self, _: &TelemetryEvent) {}
+        }
+
+        let dir = tempdir().unwrap();
+        let (root, _) = make_winpython_tree(dir.path(), "WPy64-31300");
+
+        let locator = WinPython::new();
+        let env = PythonEnv::new(
+            root.join("python-3.13.0.amd64").join("python.exe"),
+            Some(root.join("python-3.13.0.amd64")),
+            None,
+        );
+        let py_env = locator.try_from(&env).expect("try_from should succeed");
+
+        // Drive `find_with_cache` straight to its cached-hit branch and the
+        // report loop without invoking `discover_environments` (which would
+        // read real env vars).
+        locator
+            .cached_environments
+            .lock()
+            .unwrap()
+            .replace(Arc::new(vec![py_env]));
+
+        let reporter = Capture {
+            envs: Mutex::new(Vec::new()),
+        };
+        for env in locator.find_with_cache().iter() {
+            reporter.report_environment(env);
+        }
+
+        let captured = reporter.envs.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].kind, Some(PythonEnvironmentKind::WinPython));
+    }
+
+    /// `sync_refresh_state_from(Full)` copies the source's cached envs.
+    #[test]
+    fn test_sync_refresh_state_full_scope_copies_cache() {
+        let source = WinPython::new();
+        source
+            .cached_environments
+            .lock()
+            .unwrap()
+            .replace(Arc::new(Vec::new()));
+
+        let target = WinPython::new();
+        assert!(target.cached_environments.lock().unwrap().is_none());
+
+        target.sync_refresh_state_from(&source, &RefreshStateSyncScope::Full);
+        assert!(target.cached_environments.lock().unwrap().is_some());
+    }
+
+    /// `sync_refresh_state_from(GlobalFiltered(WinPython))` also syncs.
+    #[test]
+    fn test_sync_refresh_state_matching_filtered_scope_copies_cache() {
+        let source = WinPython::new();
+        source
+            .cached_environments
+            .lock()
+            .unwrap()
+            .replace(Arc::new(Vec::new()));
+
+        let target = WinPython::new();
+        target.sync_refresh_state_from(
+            &source,
+            &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::WinPython),
+        );
+        assert!(target.cached_environments.lock().unwrap().is_some());
+    }
+
+    /// `GlobalFiltered` for an unrelated kind and `Workspace` are no-ops.
+    #[test]
+    fn test_sync_refresh_state_other_scopes_are_no_op() {
+        let source = WinPython::new();
+        source
+            .cached_environments
+            .lock()
+            .unwrap()
+            .replace(Arc::new(Vec::new()));
+
+        let target = WinPython::new();
+        target.sync_refresh_state_from(
+            &source,
+            &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::Conda),
+        );
+        assert!(target.cached_environments.lock().unwrap().is_none());
+
+        target.sync_refresh_state_from(&source, &RefreshStateSyncScope::Workspace);
+        assert!(target.cached_environments.lock().unwrap().is_none());
     }
 }
