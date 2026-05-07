@@ -472,7 +472,7 @@ fn get_winpython_search_paths() -> Vec<PathBuf> {
 /// WINPYTHON_HOME values. Extracted from `get_winpython_search_paths` so
 /// tests can pin down the policy without mutating process env vars (which
 /// races between parallel tests).
-#[allow(dead_code)]
+#[cfg(any(windows, test))]
 fn build_search_paths(userprofile: Option<String>, winpython_home: Option<String>) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = Vec::new();
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
@@ -747,7 +747,11 @@ mod tests {
     fn test_search_paths_exclude_drive_roots_and_program_files() {
         let paths = build_search_paths(Some(r"C:\Users\test".to_string()), None);
 
-        assert_eq!(paths, vec![PathBuf::from(r"C:\Users\test\WinPython")]);
+        // `norm_case` may rewrite casing or representation when the path
+        // happens to exist on the test host; compare against the same
+        // normalization to keep the assertion machine-independent.
+        let expected = norm_case(PathBuf::from(r"C:\Users\test\WinPython"));
+        assert_eq!(paths, vec![expected]);
 
         for p in &paths {
             let s = p.to_string_lossy().to_lowercase();
@@ -791,11 +795,14 @@ mod tests {
 
         #[cfg(windows)]
         let expected = vec![
-            PathBuf::from(r"D:\WPy64-31300"),
-            PathBuf::from(r"E:\custom"),
+            norm_case(PathBuf::from(r"D:\WPy64-31300")),
+            norm_case(PathBuf::from(r"E:\custom")),
         ];
         #[cfg(not(windows))]
-        let expected = vec![PathBuf::from("/opt/wpy"), PathBuf::from("/srv/wpy")];
+        let expected = vec![
+            norm_case(PathBuf::from("/opt/wpy")),
+            norm_case(PathBuf::from("/srv/wpy")),
+        ];
 
         assert_eq!(paths, expected);
     }
@@ -812,6 +819,6 @@ mod tests {
         let extra = default_path.to_string_lossy().to_string();
 
         let paths = build_search_paths(Some(home), Some(extra));
-        assert_eq!(paths, vec![default_path]);
+        assert_eq!(paths, vec![norm_case(default_path)]);
     }
 }
