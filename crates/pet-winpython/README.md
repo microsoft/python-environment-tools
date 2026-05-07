@@ -43,8 +43,8 @@ If your WinPython installation lives elsewhere, point the locator at it
 with the `WINPYTHON_HOME` environment variable. The value can be a
 single path or a `;`-separated list of paths. Each entry can either:
 
-- *be* a WinPython installation (e.g. `D:\WPy64-31300`), or
-- *contain* one or more WinPython installations (e.g. `D:\python-tools`
+- _be_ a WinPython installation (e.g. `D:\WPy64-31300`), or
+- _contain_ one or more WinPython installations (e.g. `D:\python-tools`
   with `D:\python-tools\WPy64-31300` inside).
 
 Examples:

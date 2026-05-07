@@ -308,28 +308,40 @@ fn build_environment(
     explicit_version: Option<String>,
     extra_symlinks: Option<Vec<PathBuf>>,
 ) -> PythonEnvironment {
+    // Normalize the canonical executable too so it matches its corresponding
+    // entry in `symlinks` on Windows (where path comparisons are case-insensitive
+    // but `PathBuf` equality is not).
+    let executable = norm_case(&executable);
+
     // Get version from folder name first; fall back to a caller-supplied value.
     let version = python_folder
         .file_name()
         .and_then(|n| version_from_folder_name(&n.to_string_lossy()))
         .or(explicit_version);
 
-    // Collect all Python executables in the installation.
-    let mut symlinks: Vec<PathBuf> = vec![executable.clone()];
+    // Collect all Python executables in the installation. We normalize *every*
+    // candidate before comparing so case-only or separator-only differences on
+    // Windows don't slip past `contains()` and produce duplicates after dedup.
+    let mut symlinks: Vec<PathBuf> = Vec::new();
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let push =
+        |p: PathBuf, symlinks: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
+            let normed = norm_case(&p);
+            if seen.insert(normed.clone()) {
+                symlinks.push(normed);
+            }
+        };
+
+    push(executable.clone(), &mut symlinks, &mut seen);
     if let Some(extra) = extra_symlinks {
         for s in extra {
-            if !symlinks.contains(&s) {
-                symlinks.push(s);
-            }
+            push(s, &mut symlinks, &mut seen);
         }
     }
 
     // Add executables from the python folder root.
     for exe in find_executables(&python_folder) {
-        let normed = norm_case(&exe);
-        if !symlinks.contains(&normed) {
-            symlinks.push(normed);
-        }
+        push(exe, &mut symlinks, &mut seen);
     }
 
     // Add python* (but not pip*) executables from Scripts/.
@@ -341,16 +353,12 @@ fn build_environment(
                 .as_ref()
                 .is_some_and(|n| n.starts_with("python") && !n.contains("pip"))
             {
-                let normed = norm_case(&exe);
-                if !symlinks.contains(&normed) {
-                    symlinks.push(normed);
-                }
+                push(exe, &mut symlinks, &mut seen);
             }
         }
     }
 
     symlinks.sort();
-    symlinks.dedup();
 
     let display_name = get_display_name(&winpython_root, version.as_deref());
 
@@ -709,18 +717,28 @@ mod tests {
     }
 
     /// `find_with_cache` should populate and reuse the cache; `clear` resets it.
+    /// Pre-populates the cache directly so the test never touches the real
+    /// filesystem or `WINPYTHON_HOME`, keeping it deterministic regardless of
+    /// the host machine's WinPython state.
     #[test]
     #[cfg(windows)]
     fn test_find_with_cache_reuses_results_until_cleared() {
         let locator = WinPython::new();
+        // Seed the cache with an empty Vec so `find_with_cache` short-circuits
+        // without calling `discover_environments`.
+        locator
+            .cached_environments
+            .lock()
+            .unwrap()
+            .replace(Arc::new(Vec::new()));
+
         let first = locator.find_with_cache();
         let second = locator.find_with_cache();
         // Same Arc allocation indicates the cache was reused.
         assert!(Arc::ptr_eq(&first, &second));
 
         locator.clear();
-        let third = locator.find_with_cache();
-        assert!(!Arc::ptr_eq(&first, &third));
+        assert!(locator.cached_environments.lock().unwrap().is_none());
     }
 
     /// `WINPYTHON_HOME` is the only opt-in for non-default locations now.
