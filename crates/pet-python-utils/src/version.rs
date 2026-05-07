@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+use crate::build_details::BuildDetails;
 use crate::headers::{self, Headers};
 use log::{trace, warn};
 use pet_core::pyvenv_cfg::PyVenvCfg;
@@ -15,6 +16,13 @@ pub fn from_header_files(prefix: &Path) -> Option<String> {
 }
 pub fn from_pyvenv_cfg(prefix: &Path) -> Option<String> {
     PyVenvCfg::find(prefix).and_then(|cfg| cfg.version)
+}
+/// Reads the Python version from a `build-details.json` file ([PEP 739])
+/// installed by Python 3.14+ in the platform-independent stdlib directory.
+///
+/// [PEP 739]: https://peps.python.org/pep-0739/
+pub fn from_build_details(prefix: &Path) -> Option<String> {
+    BuildDetails::find(prefix).map(|bd| bd.version_string())
 }
 pub fn from_creator_for_virtual_env(prefix: &Path) -> Option<String> {
     if let Some(version) = Headers::get_version(prefix) {
@@ -51,7 +59,11 @@ pub fn from_creator_for_virtual_env(prefix: &Path) -> Option<String> {
             } else {
                 None
             };
-            headers::get_version(sys_root, pyver)
+            // Prefer build-details.json (Python 3.14+) over header parsing — it's
+            // a single small file read vs. recursively scanning include/Headers.
+            BuildDetails::find_with_hint(sys_root, pyver)
+                .map(|bd| bd.version_string())
+                .or_else(|| headers::get_version(sys_root, pyver))
         }
     } else if cfg!(windows) {
         // Only on windows is it difficult to get the creator of the virtual environment.
@@ -63,6 +75,8 @@ pub fn from_creator_for_virtual_env(prefix: &Path) -> Option<String> {
 
 pub fn from_prefix(prefix: &Path) -> Option<String> {
     if let Some(version) = from_pyvenv_cfg(prefix) {
+        Some(version)
+    } else if let Some(version) = from_build_details(prefix) {
         Some(version)
     } else {
         from_header_files(prefix)
@@ -133,5 +147,89 @@ fn get_version_from_pyvenv_if_pyvenv_cfg_and_exe_created_same_time(
         cfg.version
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let mut f = fs::File::create(path).unwrap();
+        f.write_all(contents.as_bytes()).unwrap();
+    }
+
+    /// `pyvenv.cfg` must take priority over `build-details.json` when both
+    /// exist in the same prefix; otherwise we'd report the *base* interpreter's
+    /// version for a venv whose stdlib is shared with its base.
+    #[test]
+    fn from_prefix_prefers_pyvenv_cfg_over_build_details() {
+        let dir = tempdir().unwrap();
+        let prefix = dir.path();
+        write_file(
+            &prefix.join("pyvenv.cfg"),
+            "home = /usr/bin\nversion = 3.11.5\n",
+        );
+        write_file(
+            &prefix
+                .join("lib")
+                .join("python3.14")
+                .join("build-details.json"),
+            r#"{
+                "schema_version": "1.0",
+                "language": {
+                    "version": "3.14",
+                    "version_info": {
+                        "major": 3,
+                        "minor": 14,
+                        "micro": 1,
+                        "releaselevel": "final",
+                        "serial": 0
+                    }
+                }
+            }"#,
+        );
+
+        assert_eq!(from_prefix(prefix), Some("3.11.5".to_string()));
+    }
+
+    /// `build-details.json` should win over header parsing when both exist —
+    /// it's cheaper to read and is the authoritative source on Python 3.14+.
+    #[test]
+    fn from_prefix_prefers_build_details_over_headers() {
+        let dir = tempdir().unwrap();
+        let prefix = dir.path();
+        // Conflicting sources: headers say 3.13.0, build-details says 3.14.1.
+        write_file(
+            &prefix.join("include").join("patchlevel.h"),
+            "#define PY_VERSION              \"3.13.0\"\n",
+        );
+        write_file(
+            &prefix
+                .join("lib")
+                .join("python3.14")
+                .join("build-details.json"),
+            r#"{
+                "schema_version": "1.0",
+                "language": {
+                    "version": "3.14",
+                    "version_info": {
+                        "major": 3,
+                        "minor": 14,
+                        "micro": 1,
+                        "releaselevel": "final",
+                        "serial": 0
+                    }
+                }
+            }"#,
+        );
+
+        assert_eq!(from_prefix(prefix), Some("3.14.1".to_string()));
     }
 }

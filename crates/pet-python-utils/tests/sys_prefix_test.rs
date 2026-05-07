@@ -82,3 +82,27 @@ fn version_from_header_files() {
     let version = version::from_prefix(&path).unwrap();
     assert_eq!(version, "3.13.0a5");
 }
+
+#[cfg(unix)]
+#[test]
+fn version_from_build_details_json() {
+    // Final release: micro version, no pre-release suffix.
+    let path: PathBuf = resolve_test_path(&["unix", "build_details", "python3.14"]);
+    let version = version::from_prefix(&path).unwrap();
+    assert_eq!(version, "3.14.2");
+
+    let path: PathBuf = resolve_test_path(&["unix", "build_details", "python3.14", "bin"]);
+    let version = version::from_prefix(&path).unwrap();
+    assert_eq!(version, "3.14.2");
+
+    // Alpha pre-release: serial appended as `aN`.
+    let path: PathBuf = resolve_test_path(&["unix", "build_details", "python3.15a"]);
+    let version = version::from_prefix(&path).unwrap();
+    assert_eq!(version, "3.15.0a1");
+
+    // Direct accessor returns the same value.
+    let direct =
+        version::from_build_details(&resolve_test_path(&["unix", "build_details", "python3.14"]))
+            .unwrap();
+    assert_eq!(direct, "3.14.2");
+}

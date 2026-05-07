@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+pub mod build_details;
 pub mod cache;
 pub mod env;
 pub mod executable;
