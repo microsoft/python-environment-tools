@@ -125,14 +125,28 @@ fn find_file(prefix: &Path, pyver: Option<(u64, u64)>) -> Option<PathBuf> {
         return Some(win_path);
     }
 
-    // Unix-style: <prefix>/lib/python<X.Y>[t]/build-details.json
-    // (also catches pypy<X.Y> and any other implementation that follows the
-    // same convention).
     let lib_dir = prefix.join("lib");
-    let entries = fs::read_dir(&lib_dir).ok()?;
 
-    let mut preferred: Option<PathBuf> = None;
-    let mut fallback: Option<PathBuf> = None;
+    // Fast path: if we have a (major, minor) hint, probe the expected paths
+    // directly and skip the directory scan entirely.
+    if let Some((major, minor)) = pyver {
+        for impl_prefix in ["python", "pypy"] {
+            for suffix in ["", "t"] {
+                let candidate = lib_dir
+                    .join(format!("{impl_prefix}{major}.{minor}{suffix}"))
+                    .join(BUILD_DETAILS_FILE);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
+    // Slow path: enumerate `lib/` and pick deterministically (highest
+    // `(major, minor)`) so multi-version prefixes don't depend on `read_dir`
+    // iteration order.
+    let entries = fs::read_dir(&lib_dir).ok()?;
+    let mut best: Option<(u64, u64, PathBuf)> = None;
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         if !path.is_dir() {
@@ -150,21 +164,18 @@ fn find_file(prefix: &Path, pyver: Option<(u64, u64)>) -> Option<PathBuf> {
         if !candidate.is_file() {
             continue;
         }
-        if let Some((want_major, want_minor)) = pyver {
-            // `unwrap()`s here are safe: the regex guarantees both groups are
-            // present and contain only digits, so `parse::<u64>` cannot fail.
-            let major: u64 = captures[2].parse().unwrap();
-            let minor: u64 = captures[3].parse().unwrap();
-            if major == want_major && minor == want_minor {
-                preferred = Some(candidate);
-                break;
-            }
-        }
-        if fallback.is_none() {
-            fallback = Some(candidate);
+        // `unwrap()`s here are safe: the regex guarantees both groups are
+        // present and contain only digits, so `parse::<u64>` cannot fail.
+        let major: u64 = captures[2].parse().unwrap();
+        let minor: u64 = captures[3].parse().unwrap();
+        if best
+            .as_ref()
+            .is_none_or(|(bm, bn, _)| (major, minor) > (*bm, *bn))
+        {
+            best = Some((major, minor, candidate));
         }
     }
-    preferred.or(fallback)
+    best.map(|(_, _, path)| path)
 }
 
 fn strip_bin(prefix: &Path) -> PathBuf {
@@ -428,6 +439,38 @@ mod tests {
         assert_eq!(bd.version_string(), "3.14.0");
         let bd = BuildDetails::find_with_hint(prefix, Some((3, 10))).unwrap();
         assert_eq!(bd.version_string(), "3.10.0");
+    }
+
+    #[test]
+    fn no_hint_picks_highest_version_deterministically() {
+        // Multiple stdlib dirs side by side: pick the highest (major, minor)
+        // regardless of `read_dir` ordering.
+        let dir = tempdir().unwrap();
+        let prefix = dir.path();
+        write(
+            &prefix
+                .join("lib")
+                .join("python3.10")
+                .join("build-details.json"),
+            &sample_with_minor(10),
+        );
+        write(
+            &prefix
+                .join("lib")
+                .join("python3.15")
+                .join("build-details.json"),
+            &sample_with_minor(15),
+        );
+        write(
+            &prefix
+                .join("lib")
+                .join("python3.14")
+                .join("build-details.json"),
+            &sample_with_minor(14),
+        );
+
+        let bd = BuildDetails::find(prefix).unwrap();
+        assert_eq!(bd.version_string(), "3.15.0");
     }
 
     #[test]
