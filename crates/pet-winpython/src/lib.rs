@@ -30,6 +30,7 @@ use std::{
 ///
 /// Multiple paths can be provided, separated by the platform path separator
 /// (`;` on Windows, `:` elsewhere).
+#[cfg(any(windows, test))]
 const WINPYTHON_HOME_ENV_VAR: &str = "WINPYTHON_HOME";
 
 lazy_static! {
@@ -465,12 +466,6 @@ fn get_winpython_search_paths() -> Vec<PathBuf> {
         env::var("USERPROFILE").ok(),
         env::var(WINPYTHON_HOME_ENV_VAR).ok(),
     )
-}
-
-#[cfg(not(windows))]
-fn get_winpython_search_paths() -> Vec<PathBuf> {
-    // WinPython is Windows-only, return empty on other platforms
-    Vec::new()
 }
 
 /// Pure helper that builds the search-path list from user-profile and
