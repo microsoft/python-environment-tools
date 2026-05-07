@@ -8,7 +8,6 @@ use pet_core::reporter::Reporter;
 #[cfg(windows)]
 use pet_core::{
     arch::Architecture,
-    manager::EnvManager,
     python_environment::{PythonEnvironmentBuilder, PythonEnvironmentKind},
     LocatorResult,
 };
@@ -20,59 +19,154 @@ use std::{path::PathBuf, sync::Arc};
 use winreg::RegKey;
 
 #[cfg(windows)]
+fn empty_result() -> LocatorResult {
+    LocatorResult {
+        environments: vec![],
+        managers: vec![],
+    }
+}
+
+/// Logs a warning if a spawned registry-walk thread panicked, then
+/// substitutes an empty result so the surviving hive/companies still
+/// surface their environments. Without this we'd silently lose the entire
+/// hive when one company's walk panics — exactly the kind of regression
+/// that's hardest to debug after the fact.
+#[cfg(windows)]
+fn join_or_warn(join_result: std::thread::Result<LocatorResult>, label: &str) -> LocatorResult {
+    use log::warn;
+    match join_result {
+        Ok(result) => result,
+        Err(panic_payload) => {
+            // Try to render the payload for the log; payloads are commonly
+            // either a `&'static str` or a `String`.
+            let message = panic_payload
+                .downcast_ref::<&'static str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| panic_payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+            warn!("Registry walk thread for {} panicked: {}", label, message);
+            empty_result()
+        }
+    }
+}
+
+#[cfg(windows)]
 pub fn get_registry_pythons(
     conda_locator: &Arc<dyn CondaLocator>,
     reporter: &Option<&dyn Reporter>,
 ) -> LocatorResult {
+    use std::thread;
+
+    // Walk both hives in parallel. Each hive walks its companies in parallel
+    // too (see `get_registry_pythons_for_hive`). HKLM and HKCU sit on
+    // independent registry trees and Defender intercepts every read, so the
+    // serial baseline was paying for both round-trips back to back; the
+    // scope-spawn pattern matches `pet-pyenv` / `pet-homebrew` / `pet-conda`.
+    let (hklm_result, hkcu_result) = thread::scope(|s| {
+        let hklm = s.spawn(|| {
+            get_registry_pythons_for_hive(
+                "HKLM",
+                RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE),
+                conda_locator,
+                reporter,
+            )
+        });
+        let hkcu = s.spawn(|| {
+            get_registry_pythons_for_hive(
+                "HKCU",
+                RegKey::predef(winreg::enums::HKEY_CURRENT_USER),
+                conda_locator,
+                reporter,
+            )
+        });
+        (
+            join_or_warn(hklm.join(), "HKLM"),
+            join_or_warn(hkcu.join(), "HKCU"),
+        )
+    });
+
+    let mut environments = hklm_result.environments;
+    environments.extend(hkcu_result.environments);
+    let mut managers = hklm_result.managers;
+    managers.extend(hkcu_result.managers);
+
+    LocatorResult {
+        environments,
+        managers,
+    }
+}
+
+/// Walks `<hive>\Software\Python\<company>` for every company in the given
+/// hive. Companies are processed in parallel; each spawned thread owns its
+/// own `RegKey` handle (which is `Send` but not `Sync` in `winreg`).
+#[cfg(windows)]
+fn get_registry_pythons_for_hive(
+    name: &'static str,
+    hive: RegKey,
+    conda_locator: &Arc<dyn CondaLocator>,
+    reporter: &Option<&dyn Reporter>,
+) -> LocatorResult {
     use log::{trace, warn};
+    use std::thread;
+
+    let python_key = match hive.open_subkey("Software\\Python") {
+        Ok(k) => k,
+        Err(err) => {
+            warn!("Failed to open {}\\Software\\Python, {:?}", name, err);
+            return empty_result();
+        }
+    };
+
+    // Open each company subkey serially. Opening a registry handle is cheap
+    // (no recursive enumeration); the heavy work happens once we start
+    // pulling values out of `<company>\<install>\InstallPath`. Collecting
+    // owned `(String, RegKey)` pairs lets us hand each company to its own
+    // thread without sharing a `RegKey` (which is `Send` but not `Sync`).
+    let companies: Vec<(String, RegKey)> = python_key
+        .enum_keys()
+        .filter_map(Result::ok)
+        .filter_map(|company| match python_key.open_subkey(&company) {
+            Ok(company_key) => Some((company, company_key)),
+            Err(err) => {
+                warn!(
+                    "Failed to open {}\\Software\\Python\\{}, {:?}",
+                    name, company, err
+                );
+                None
+            }
+        })
+        .collect();
+
+    let results: Vec<LocatorResult> = thread::scope(|s| {
+        let handles: Vec<_> = companies
+            .into_iter()
+            .map(|(company, company_key)| {
+                s.spawn(move || {
+                    // Trace order is intentionally relaxed: companies are
+                    // walked in parallel, so this line interleaves with the
+                    // others from the same hive.
+                    trace!("Searching {}\\Software\\Python\\{}", name, company);
+                    get_registry_pythons_from_key_for_company(
+                        name,
+                        &company_key,
+                        &company,
+                        conda_locator,
+                        reporter,
+                    )
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| join_or_warn(h.join(), "per-company walk"))
+            .collect()
+    });
 
     let mut environments = vec![];
-    let mut managers: Vec<EnvManager> = vec![];
-
-    struct RegistryKey {
-        pub name: &'static str,
-        pub key: winreg::RegKey,
-    }
-    let search_keys = [
-        RegistryKey {
-            name: "HKLM",
-            key: winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE),
-        },
-        RegistryKey {
-            name: "HKCU",
-            key: winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER),
-        },
-    ];
-    for (name, key) in search_keys.iter().map(|f| (f.name, &f.key)) {
-        match key.open_subkey("Software\\Python") {
-            Ok(python_key) => {
-                for company in python_key.enum_keys().filter_map(Result::ok) {
-                    trace!("Searching {}\\Software\\Python\\{}", name, company);
-                    match python_key.open_subkey(&company) {
-                        Ok(company_key) => {
-                            let result = get_registry_pythons_from_key_for_company(
-                                name,
-                                &company_key,
-                                &company,
-                                conda_locator,
-                                reporter,
-                            );
-                            managers.extend(result.managers);
-                            environments.extend(result.environments);
-                        }
-                        Err(err) => {
-                            warn!(
-                                "Failed to open {}\\Software\\Python\\{}, {:?}",
-                                name, company, err
-                            );
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                warn!("Failed to open {}\\Software\\Python, {:?}", name, err)
-            }
-        }
+    let mut managers = vec![];
+    for r in results {
+        environments.extend(r.environments);
+        managers.extend(r.managers);
     }
     LocatorResult {
         environments,

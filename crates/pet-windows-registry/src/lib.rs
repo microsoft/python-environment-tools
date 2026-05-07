@@ -44,14 +44,6 @@ impl WindowsRegistry {
 
         Some(registry_result)
     }
-    #[cfg(windows)]
-    fn clear(&self) {
-        let mut search_result = self
-            .search_result
-            .lock()
-            .expect("search_result mutex poisoned");
-        search_result.take();
-    }
 
     fn sync_search_result_from(&self, source: &WindowsRegistry) {
         let search_result = source
@@ -132,7 +124,12 @@ impl Locator for WindowsRegistry {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        self.clear();
+        // We no longer reset `search_result` here: `find_with_cache` already
+        // returns the cached result on a hit, and `find()` is invoked on
+        // transient locators per refresh, so the cache is empty by
+        // construction the first time. Re-clearing forced every refresh to
+        // re-walk both registry hives, each of which is intercepted by
+        // Windows Defender (issue #454).
         let _ = self.find_with_cache(Some(reporter));
     }
     #[cfg(unix)]
@@ -325,5 +322,91 @@ mod tests {
         let locator = create_locator();
 
         assert!(locator.try_from(&env).is_none());
+    }
+
+    /// `find()` must NOT clear the cache before populating it. The previous
+    /// implementation called `self.clear()` first, which forced every
+    /// `refresh` RPC to re-walk both registry hives — a Defender-intercepted
+    /// hot path tracked in #454. This test pins down the new contract:
+    /// pre-populate the cache, run `find()`, and assert the original entries
+    /// survived (i.e. `find_with_cache` short-circuited on the cache hit).
+    #[cfg(windows)]
+    #[test]
+    fn test_find_reuses_cached_results_within_locator_lifetime() {
+        use pet_core::manager::EnvManager;
+        use pet_core::python_environment::PythonEnvironment;
+        use pet_core::reporter::Reporter;
+        use pet_core::telemetry::TelemetryEvent;
+
+        struct CountingReporter;
+        impl Reporter for CountingReporter {
+            fn report_manager(&self, _manager: &EnvManager) {}
+            fn report_environment(&self, _env: &PythonEnvironment) {}
+            fn report_telemetry(&self, _event: &TelemetryEvent) {}
+        }
+
+        let locator = create_locator();
+        let cached = LocatorResult {
+            managers: vec![],
+            environments: vec![PythonEnvironment {
+                name: Some("cached".to_string()),
+                ..Default::default()
+            }],
+        };
+        locator
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(cached.clone());
+
+        locator.find(&CountingReporter);
+
+        let after = locator
+            .search_result
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("cache must remain populated after find()");
+        assert_eq!(
+            after.environments.len(),
+            1,
+            "find() must not clear the cache before populating",
+        );
+        assert_eq!(after.environments[0].name.as_deref(), Some("cached"));
+    }
+
+    /// Smoke test: on a fresh locator (empty cache), `find()` runs the new
+    /// parallel walk through HKLM and HKCU and never panics or deadlocks.
+    /// The discovered environment list may legitimately be empty on a CI
+    /// runner without any Python registry installs — we only assert the
+    /// cache was populated (i.e. the walk completed and `Some(_)` was
+    /// stored), not its contents.
+    #[cfg(windows)]
+    #[test]
+    fn test_find_on_fresh_locator_completes_parallel_walk() {
+        use pet_core::manager::EnvManager;
+        use pet_core::python_environment::PythonEnvironment;
+        use pet_core::reporter::Reporter;
+        use pet_core::telemetry::TelemetryEvent;
+
+        struct NoopReporter;
+        impl Reporter for NoopReporter {
+            fn report_manager(&self, _manager: &EnvManager) {}
+            fn report_environment(&self, _env: &PythonEnvironment) {}
+            fn report_telemetry(&self, _event: &TelemetryEvent) {}
+        }
+
+        let locator = create_locator();
+        assert!(
+            locator.search_result.lock().unwrap().is_none(),
+            "freshly built locator must start with an empty cache",
+        );
+
+        locator.find(&NoopReporter);
+
+        assert!(
+            locator.search_result.lock().unwrap().is_some(),
+            "find() must populate the cache after walking both hives",
+        );
     }
 }
