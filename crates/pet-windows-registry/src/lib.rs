@@ -162,21 +162,17 @@ impl Locator for WindowsRegistry {
         }
         #[cfg(windows)]
         {
-            // Read-only cache lookup. We deliberately do NOT trigger a
-            // registry walk from `try_from`: the walk has reporter-only
-            // side effects (notably `conda_locator.find_and_report(...)`)
-            // and `try_from` can't supply a reporter. Populating the
-            // cache here would let a later `find(reporter)` short-circuit
-            // on the cache hit and silently drop those conda
-            // notifications (issue #454).
-            let cached = {
-                let result = self
-                    .search_result
-                    .lock()
-                    .expect("search_result mutex poisoned");
-                result.as_ref().map(Arc::clone)
-            };
-            if let Some(cached) = cached {
+            // Populate (or reuse) the registry-walk cache so we can answer
+            // `try_from` queries for installs that are only discoverable
+            // via HKLM/HKCU. The walk has reporter-only side effects
+            // (notably `conda_locator.find_and_report(...)`) and
+            // `try_from` can't supply a reporter, but that's safe now:
+            // `find_with_cache` records every conda install dir on the
+            // cached `CachedRegistryWalk`, and a later `find(reporter)`
+            // cache hit replays those via `conda_locator.find_and_report`
+            // (#454). Without this `try_from` would never identify
+            // registry-only Pythons before the first `find()` runs.
+            if let Some((cached, _did_walk)) = self.find_with_cache(None) {
                 for found_env in &cached.result.environments {
                     if let Some(ref python_executable_path) = found_env.executable {
                         if python_executable_path == &env.executable {
