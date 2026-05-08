@@ -31,21 +31,39 @@ impl WindowsRegistry {
     }
     #[cfg(windows)]
     fn find_with_cache(&self, reporter: Option<&dyn Reporter>) -> Option<Arc<LocatorResult>> {
-        let mut result = self
-            .search_result
-            .lock()
-            .expect("search_result mutex poisoned");
-        if let Some(result) = result.as_ref() {
-            return Some(Arc::clone(result));
+        // Quick cache check, then drop the lock before doing any expensive
+        // work. Holding `search_result`'s mutex across `get_registry_pythons`
+        // would serialize all callers behind one Defender-intercepted
+        // registry walk and create lock-order risk against any locks the
+        // reporter / conda locator take downstream (issue #454).
+        {
+            let cached = self
+                .search_result
+                .lock()
+                .expect("search_result mutex poisoned");
+            if let Some(cached) = cached.as_ref() {
+                return Some(Arc::clone(cached));
+            }
         }
 
         let outcome = get_registry_pythons(&self.conda_locator, &reporter);
         let registry_result = Arc::new(outcome.result);
+
         // If any worker thread panicked, the result is potentially partial.
         // Skip persisting it so the next refresh can retry the walk instead
         // of replaying a stale empty/partial cache forever (issue #454).
         if !outcome.had_panic {
-            result.replace(Arc::clone(&registry_result));
+            let mut cached = self
+                .search_result
+                .lock()
+                .expect("search_result mutex poisoned");
+            // Re-check under the lock: another caller may have populated
+            // the cache while we were walking. Prefer their value so all
+            // callers observe the same identity.
+            if let Some(existing) = cached.as_ref() {
+                return Some(Arc::clone(existing));
+            }
+            cached.replace(Arc::clone(&registry_result));
         }
 
         Some(registry_result)
@@ -115,12 +133,27 @@ impl Locator for WindowsRegistry {
             }
         }
         #[cfg(windows)]
-        if let Some(result) = self.find_with_cache(None) {
-            // Find the same env here
-            for found_env in &result.environments {
-                if let Some(ref python_executable_path) = found_env.executable {
-                    if python_executable_path == &env.executable {
-                        return Some(found_env.clone());
+        {
+            // Read-only cache lookup. We deliberately do NOT trigger a
+            // registry walk from `try_from`: the walk has reporter-only
+            // side effects (notably `conda_locator.find_and_report(...)`)
+            // and `try_from` can't supply a reporter. Populating the
+            // cache here would let a later `find(reporter)` short-circuit
+            // on the cache hit and silently drop those conda
+            // notifications (issue #454).
+            let cached = {
+                let result = self
+                    .search_result
+                    .lock()
+                    .expect("search_result mutex poisoned");
+                result.as_ref().map(Arc::clone)
+            };
+            if let Some(result) = cached {
+                for found_env in &result.environments {
+                    if let Some(ref python_executable_path) = found_env.executable {
+                        if python_executable_path == &env.executable {
+                            return Some(found_env.clone());
+                        }
                     }
                 }
             }
