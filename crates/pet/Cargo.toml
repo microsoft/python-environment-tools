@@ -26,6 +26,7 @@ pet-jsonrpc = { path = "../pet-jsonrpc" }
 pet-fs = { path = "../pet-fs" }
 pet-pyenv = { path = "../pet-pyenv" }
 pet-poetry = { path = "../pet-poetry" }
+pet-hatch = { path = "../pet-hatch" }
 pet-reporter = { path = "../pet-reporter" }
 pet-virtualenvwrapper = { path = "../pet-virtualenvwrapper" }
 pet-python-utils = { path = "../pet-python-utils" }
