@@ -11,14 +11,33 @@ use pet_core::{
     Locator, LocatorKind, LocatorResult, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use pet_virtualenv::is_virtualenv;
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 mod environments;
+
+/// Cached output of a full registry walk. Holds the registry-derived
+/// `LocatorResult` plus the conda install dirs discovered via the
+/// registry. The conda dirs are kept separately because
+/// `conda_locator.find_and_report` writes its findings directly to the
+/// reporter (not into `LocatorResult`); without remembering the dirs,
+/// every cache hit in `find()` would silently drop registry-only conda
+/// notifications (issue #454).
+#[cfg(windows)]
+struct CachedRegistryWalk {
+    result: LocatorResult,
+    conda_install_dirs: Vec<PathBuf>,
+}
 
 pub struct WindowsRegistry {
     #[allow(dead_code)]
     conda_locator: Arc<dyn CondaLocator>,
     #[allow(dead_code)]
+    #[cfg(windows)]
+    search_result: Arc<Mutex<Option<Arc<CachedRegistryWalk>>>>,
+    #[allow(dead_code)]
+    #[cfg(not(windows))]
     search_result: Arc<Mutex<Option<Arc<LocatorResult>>>>,
 }
 
@@ -30,24 +49,35 @@ impl WindowsRegistry {
         }
     }
     #[cfg(windows)]
-    fn find_with_cache(&self, reporter: Option<&dyn Reporter>) -> Option<Arc<LocatorResult>> {
+    fn find_with_cache(
+        &self,
+        reporter: Option<&dyn Reporter>,
+    ) -> Option<(Arc<CachedRegistryWalk>, bool)> {
         // Quick cache check, then drop the lock before doing any expensive
         // work. Holding `search_result`'s mutex across `get_registry_pythons`
         // would serialize all callers behind one Defender-intercepted
         // registry walk and create lock-order risk against any locks the
         // reporter / conda locator take downstream (issue #454).
+        //
+        // Returns `(walk, did_walk)` so the caller can replay
+        // notifications when we did NOT walk (cache hit) and avoid
+        // double-reporting when we did (the walk already reported
+        // inline).
         {
             let cached = self
                 .search_result
                 .lock()
                 .expect("search_result mutex poisoned");
             if let Some(cached) = cached.as_ref() {
-                return Some(Arc::clone(cached));
+                return Some((Arc::clone(cached), false));
             }
         }
 
         let outcome = get_registry_pythons(&self.conda_locator, &reporter);
-        let registry_result = Arc::new(outcome.result);
+        let cached_walk = Arc::new(CachedRegistryWalk {
+            result: outcome.result,
+            conda_install_dirs: outcome.conda_install_dirs,
+        });
 
         // If any worker thread panicked, the result is potentially partial.
         // Skip persisting it so the next refresh can retry the walk instead
@@ -59,14 +89,16 @@ impl WindowsRegistry {
                 .expect("search_result mutex poisoned");
             // Re-check under the lock: another caller may have populated
             // the cache while we were walking. Prefer their value so all
-            // callers observe the same identity.
+            // callers observe the same identity. We still report
+            // `did_walk = true` because OUR reporter (if any) already
+            // received inline notifications during the walk.
             if let Some(existing) = cached.as_ref() {
-                return Some(Arc::clone(existing));
+                return Some((Arc::clone(existing), true));
             }
-            cached.replace(Arc::clone(&registry_result));
+            cached.replace(Arc::clone(&cached_walk));
         }
 
-        Some(registry_result)
+        Some((cached_walk, true))
     }
 
     fn sync_search_result_from(&self, source: &WindowsRegistry) {
@@ -141,15 +173,8 @@ impl Locator for WindowsRegistry {
             // cache here would let a later `find(reporter)` short-circuit
             // on the cache hit and silently drop those conda
             // notifications (issue #454).
-            let cached = {
-                let result = self
-                    .search_result
-                    .lock()
-                    .expect("search_result mutex poisoned");
-                result.as_ref().map(Arc::clone)
-            };
-            if let Some(result) = cached {
-                for found_env in &result.environments {
+            if let Some((cached, _did_walk)) = self.find_with_cache(None) {
+                for found_env in &cached.result.environments {
                     if let Some(ref python_executable_path) = found_env.executable {
                         if python_executable_path == &env.executable {
                             return Some(found_env.clone());
@@ -170,32 +195,29 @@ impl Locator for WindowsRegistry {
         // forced every refresh to re-walk both registry hives, each of
         // which is intercepted by Windows Defender (issue #454).
         //
-        // On a cache hit `get_registry_pythons` is NOT called, so we must
-        // replay the cached environments/managers to the reporter
-        // ourselves — otherwise WindowsRegistry discoveries would silently
-        // disappear on every refresh after the first.
-        //
-        // The cache stores an `Arc<LocatorResult>`, so the lookup is a
-        // cheap pointer clone — no deep copy of the underlying vectors.
-        let cached = {
-            let result = self
-                .search_result
-                .lock()
-                .expect("search_result mutex poisoned");
-            result.as_ref().map(Arc::clone)
-        };
-        if let Some(cached) = cached {
-            for manager in &cached.managers {
-                reporter.report_manager(manager);
+        // `find_with_cache` returns `(cached, did_walk)`. When it walked,
+        // `get_registry_pythons` already reported entries inline to our
+        // reporter, so we must NOT replay (that would double-report).
+        // When it did NOT walk — either the first cache check hit, or
+        // another thread populated the cache while we were entering — we
+        // own the replay: registry environments and managers, plus a
+        // re-invocation of `conda_locator.find_and_report` for each
+        // cached conda install dir (those notifications go straight to
+        // the reporter and aren't part of `LocatorResult`, so they would
+        // otherwise silently disappear after the first refresh, #454).
+        if let Some((cached, did_walk)) = self.find_with_cache(Some(reporter)) {
+            if !did_walk {
+                for manager in &cached.result.managers {
+                    reporter.report_manager(manager);
+                }
+                for env in &cached.result.environments {
+                    reporter.report_environment(env);
+                }
+                for conda_dir in &cached.conda_install_dirs {
+                    self.conda_locator.find_and_report(reporter, conda_dir);
+                }
             }
-            for env in &cached.environments {
-                reporter.report_environment(env);
-            }
-            return;
         }
-        // Cache miss: walk the registry. `get_registry_pythons` reports
-        // inline as it discovers entries, so no separate replay is needed.
-        let _ = self.find_with_cache(Some(reporter));
     }
     #[cfg(unix)]
     fn find(&self, _reporter: &dyn Reporter) {
@@ -240,6 +262,14 @@ mod tests {
         WindowsRegistry::from(Arc::new(Conda::from(&environment)))
     }
 
+    #[cfg(windows)]
+    fn wrap_cached(result: LocatorResult) -> Arc<CachedRegistryWalk> {
+        Arc::new(CachedRegistryWalk {
+            result,
+            conda_install_dirs: vec![],
+        })
+    }
+
     #[test]
     fn test_windows_registry_reports_kind_categories_and_refresh_state() {
         let locator = create_locator();
@@ -267,7 +297,7 @@ mod tests {
             .search_result
             .lock()
             .unwrap()
-            .replace(Arc::new(LocatorResult {
+            .replace(wrap_cached(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("stale".to_string()),
@@ -278,7 +308,7 @@ mod tests {
             .search_result
             .lock()
             .unwrap()
-            .replace(Arc::new(LocatorResult {
+            .replace(wrap_cached(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("fresh".to_string()),
@@ -289,7 +319,7 @@ mod tests {
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
 
         let result = shared.search_result.lock().unwrap().clone().unwrap();
-        assert_eq!(result.environments[0].name.as_deref(), Some("fresh"));
+        assert_eq!(result.result.environments[0].name.as_deref(), Some("fresh"));
     }
 
     #[test]
@@ -301,7 +331,7 @@ mod tests {
             .search_result
             .lock()
             .unwrap()
-            .replace(Arc::new(LocatorResult {
+            .replace(wrap_cached(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("stale".to_string()),
@@ -312,7 +342,7 @@ mod tests {
             .search_result
             .lock()
             .unwrap()
-            .replace(Arc::new(LocatorResult {
+            .replace(wrap_cached(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("fresh".to_string()),
@@ -323,7 +353,7 @@ mod tests {
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Workspace);
 
         let result = shared.search_result.lock().unwrap().clone().unwrap();
-        assert_eq!(result.environments[0].name.as_deref(), Some("stale"));
+        assert_eq!(result.result.environments[0].name.as_deref(), Some("stale"));
     }
 
     #[test]
@@ -335,7 +365,7 @@ mod tests {
             .search_result
             .lock()
             .unwrap()
-            .replace(Arc::new(LocatorResult {
+            .replace(wrap_cached(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("stale".to_string()),
@@ -346,7 +376,7 @@ mod tests {
             .search_result
             .lock()
             .unwrap()
-            .replace(Arc::new(LocatorResult {
+            .replace(wrap_cached(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("fresh".to_string()),
@@ -359,13 +389,13 @@ mod tests {
             &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::WindowsRegistry),
         );
         let result = shared.search_result.lock().unwrap().clone().unwrap();
-        assert_eq!(result.environments[0].name.as_deref(), Some("fresh"));
+        assert_eq!(result.result.environments[0].name.as_deref(), Some("fresh"));
 
         shared
             .search_result
             .lock()
             .unwrap()
-            .replace(Arc::new(LocatorResult {
+            .replace(wrap_cached(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("stale".to_string()),
@@ -378,7 +408,7 @@ mod tests {
             &RefreshStateSyncScope::GlobalFiltered(PythonEnvironmentKind::Venv),
         );
         let result = shared.search_result.lock().unwrap().clone().unwrap();
-        assert_eq!(result.environments[0].name.as_deref(), Some("stale"));
+        assert_eq!(result.result.environments[0].name.as_deref(), Some("stale"));
     }
 
     #[test]
@@ -460,7 +490,7 @@ mod tests {
             .search_result
             .lock()
             .unwrap()
-            .replace(Arc::new(cached.clone()));
+            .replace(wrap_cached(cached.clone()));
 
         let reporter = RecordingReporter::default();
         locator.find(&reporter);
@@ -473,11 +503,11 @@ mod tests {
             .clone()
             .expect("cache must remain populated after find()");
         assert_eq!(
-            after.environments.len(),
+            after.result.environments.len(),
             1,
             "find() must not clear the cache before populating",
         );
-        assert_eq!(after.environments[0].name.as_deref(), Some("cached"));
+        assert_eq!(after.result.environments[0].name.as_deref(), Some("cached"));
         // (b) The cached entries must have been replayed to the reporter
         // — otherwise WindowsRegistry discoveries would silently
         // disappear on every refresh after the first.

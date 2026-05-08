@@ -26,23 +26,45 @@ fn empty_result() -> LocatorResult {
     }
 }
 
+/// What a single company-level worker thread produces: the registry-derived
+/// `PythonEnvironment`s plus the install dirs that turned out to be conda
+/// roots. We capture conda dirs (instead of just calling
+/// `conda_locator.find_and_report` and forgetting) so that subsequent
+/// `find()` calls on a cache hit can replay them — otherwise registry-only
+/// conda installs would silently disappear after the first refresh.
+#[cfg(windows)]
+struct CompanyWalkOutcome {
+    result: LocatorResult,
+    conda_install_dirs: Vec<PathBuf>,
+}
+
+#[cfg(windows)]
+impl CompanyWalkOutcome {
+    fn empty() -> Self {
+        Self {
+            result: empty_result(),
+            conda_install_dirs: vec![],
+        }
+    }
+}
+
 /// Logs a warning if a spawned registry-walk thread panicked, then
-/// substitutes an empty result so the surviving hive/companies still
+/// substitutes an empty outcome so the surviving hive/companies still
 /// surface their environments. Without this we'd silently lose the entire
 /// hive when one company's walk panics — exactly the kind of regression
 /// that's hardest to debug after the fact.
 ///
-/// Returns `(result, had_panic)` so callers can decide not to cache a
+/// Returns `(outcome, had_panic)` so callers can decide not to cache a
 /// partial result (otherwise a single transient panic would persist as a
 /// stale empty/partial cache across refreshes — see issue #454).
 #[cfg(windows)]
 fn join_or_warn(
-    join_result: std::thread::Result<LocatorResult>,
+    join_result: std::thread::Result<CompanyWalkOutcome>,
     label: &str,
-) -> (LocatorResult, bool) {
+) -> (CompanyWalkOutcome, bool) {
     use log::warn;
     match join_result {
-        Ok(result) => (result, false),
+        Ok(outcome) => (outcome, false),
         Err(panic_payload) => {
             // Try to render the payload for the log; payloads are commonly
             // either a `&'static str` or a `String`.
@@ -52,18 +74,21 @@ fn join_or_warn(
                 .or_else(|| panic_payload.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "<non-string panic payload>".to_string());
             warn!("Registry walk thread for {} panicked: {}", label, message);
-            (empty_result(), true)
+            (CompanyWalkOutcome::empty(), true)
         }
     }
 }
 
-/// Outcome of a registry walk: the discovered environments/managers and a
-/// flag indicating whether any worker thread panicked. Callers should
-/// avoid caching a result with `had_panic = true` so a transient failure
-/// can be retried on the next refresh instead of becoming sticky.
+/// Outcome of a registry walk: the discovered environments/managers, the
+/// conda install dirs found via the registry (so cache-hit replays can
+/// re-invoke `conda_locator.find_and_report`), and a flag indicating
+/// whether any worker thread panicked. Callers should avoid caching a
+/// result with `had_panic = true` so a transient failure can be retried
+/// on the next refresh instead of becoming sticky.
 #[cfg(windows)]
 pub struct RegistryWalkOutcome {
     pub result: LocatorResult,
+    pub conda_install_dirs: Vec<PathBuf>,
     pub had_panic: bool,
 }
 
@@ -79,7 +104,7 @@ pub fn get_registry_pythons(
     // independent registry trees and Defender intercepts every read, so the
     // serial baseline was paying for both round-trips back to back; the
     // scope-spawn pattern matches `pet-pyenv` / `pet-homebrew` / `pet-conda`.
-    let ((hklm_result, hklm_panic), (hkcu_result, hkcu_panic)) = thread::scope(|s| {
+    let (hklm_outcome, hkcu_outcome) = thread::scope(|s| {
         let hklm = s.spawn(|| {
             get_registry_pythons_for_hive(
                 "HKLM",
@@ -102,31 +127,34 @@ pub fn get_registry_pythons(
         )
     });
 
-    let mut environments = hklm_result.environments;
-    environments.extend(hkcu_result.environments);
-    let mut managers = hklm_result.managers;
-    managers.extend(hkcu_result.managers);
+    let mut environments = hklm_outcome.result.environments;
+    environments.extend(hkcu_outcome.result.environments);
+    let mut managers = hklm_outcome.result.managers;
+    managers.extend(hkcu_outcome.result.managers);
+    let mut conda_install_dirs = hklm_outcome.conda_install_dirs;
+    conda_install_dirs.extend(hkcu_outcome.conda_install_dirs);
 
     RegistryWalkOutcome {
         result: LocatorResult {
             environments,
             managers,
         },
-        had_panic: hklm_panic || hkcu_panic,
+        conda_install_dirs,
+        had_panic: hklm_outcome.had_panic || hkcu_outcome.had_panic,
     }
 }
 
 /// Sibling of `join_or_warn` for hive-level threads. Returns the recovered
-/// `LocatorResult` plus a `had_panic` flag that already accounts for any
-/// company-level panics propagated through `RegistryWalkOutcome`.
+/// outcome (already aggregating any company-level panics) so the top
+/// level can OR the panic flags and concatenate the conda install dirs.
 #[cfg(windows)]
 fn join_hive_outcome(
     join_result: std::thread::Result<RegistryWalkOutcome>,
     label: &str,
-) -> (LocatorResult, bool) {
+) -> RegistryWalkOutcome {
     use log::warn;
     match join_result {
-        Ok(outcome) => (outcome.result, outcome.had_panic),
+        Ok(outcome) => outcome,
         Err(panic_payload) => {
             let message = panic_payload
                 .downcast_ref::<&'static str>()
@@ -134,7 +162,11 @@ fn join_hive_outcome(
                 .or_else(|| panic_payload.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "<non-string panic payload>".to_string());
             warn!("Registry walk thread for {} panicked: {}", label, message);
-            (empty_result(), true)
+            RegistryWalkOutcome {
+                result: empty_result(),
+                conda_install_dirs: vec![],
+                had_panic: true,
+            }
         }
     }
 }
@@ -158,6 +190,7 @@ fn get_registry_pythons_for_hive(
             warn!("Failed to open {}\\Software\\Python, {:?}", name, err);
             return RegistryWalkOutcome {
                 result: empty_result(),
+                conda_install_dirs: vec![],
                 had_panic: false,
             };
         }
@@ -183,7 +216,7 @@ fn get_registry_pythons_for_hive(
         })
         .collect();
 
-    let results: Vec<(LocatorResult, bool)> = thread::scope(|s| {
+    let results: Vec<(CompanyWalkOutcome, bool)> = thread::scope(|s| {
         let handles: Vec<_> = companies
             .into_iter()
             .map(|(company, company_key)| {
@@ -214,10 +247,12 @@ fn get_registry_pythons_for_hive(
 
     let mut environments = vec![];
     let mut managers = vec![];
+    let mut conda_install_dirs = vec![];
     let mut had_panic = false;
-    for (r, panicked) in results {
-        environments.extend(r.environments);
-        managers.extend(r.managers);
+    for (outcome, panicked) in results {
+        environments.extend(outcome.result.environments);
+        managers.extend(outcome.result.managers);
+        conda_install_dirs.extend(outcome.conda_install_dirs);
         had_panic |= panicked;
     }
     RegistryWalkOutcome {
@@ -225,6 +260,7 @@ fn get_registry_pythons_for_hive(
             environments,
             managers,
         },
+        conda_install_dirs,
         had_panic,
     }
 }
@@ -236,12 +272,13 @@ fn get_registry_pythons_from_key_for_company(
     company: &str,
     conda_locator: &Arc<dyn CondaLocator>,
     reporter: &Option<&dyn Reporter>,
-) -> LocatorResult {
+) -> CompanyWalkOutcome {
     use log::{trace, warn};
     use pet_conda::utils::is_conda_env;
     use pet_fs::path::norm_case;
 
     let mut environments = vec![];
+    let mut conda_install_dirs = vec![];
     // let company_display_name: Option<String> = company_key.get_value("DisplayName").ok();
     for installed_python in company_key.enum_keys().filter_map(Result::ok) {
         match company_key.open_subkey(installed_python.clone()) {
@@ -281,6 +318,15 @@ fn get_registry_pythons_from_key_for_company(
                             if let Some(reporter) = reporter {
                                 conda_locator.find_and_report(*reporter, &env_path);
                             }
+                            // Capture the dir even when no reporter is
+                            // attached (e.g. cache-warming via
+                            // `find_with_cache(None)`) so a later cache
+                            // hit in `find()` can replay
+                            // `conda_locator.find_and_report` against
+                            // each dir; without this, registry-only conda
+                            // installs would silently disappear from
+                            // every refresh after the first (#454).
+                            conda_install_dirs.push(env_path);
                             continue;
                         }
 
@@ -366,8 +412,11 @@ fn get_registry_pythons_from_key_for_company(
         }
     }
 
-    LocatorResult {
-        environments,
-        managers: vec![],
+    CompanyWalkOutcome {
+        result: LocatorResult {
+            environments,
+            managers: vec![],
+        },
+        conda_install_dirs,
     }
 }
