@@ -39,8 +39,14 @@ impl WindowsRegistry {
             return Some(Arc::clone(result));
         }
 
-        let registry_result = Arc::new(get_registry_pythons(&self.conda_locator, &reporter));
-        result.replace(Arc::clone(&registry_result));
+        let outcome = get_registry_pythons(&self.conda_locator, &reporter);
+        let registry_result = Arc::new(outcome.result);
+        // If any worker thread panicked, the result is potentially partial.
+        // Skip persisting it so the next refresh can retry the walk instead
+        // of replaying a stale empty/partial cache forever (issue #454).
+        if !outcome.had_panic {
+            result.replace(Arc::clone(&registry_result));
+        }
 
         Some(registry_result)
     }

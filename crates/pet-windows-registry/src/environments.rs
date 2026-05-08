@@ -31,11 +31,18 @@ fn empty_result() -> LocatorResult {
 /// surface their environments. Without this we'd silently lose the entire
 /// hive when one company's walk panics — exactly the kind of regression
 /// that's hardest to debug after the fact.
+///
+/// Returns `(result, had_panic)` so callers can decide not to cache a
+/// partial result (otherwise a single transient panic would persist as a
+/// stale empty/partial cache across refreshes — see issue #454).
 #[cfg(windows)]
-fn join_or_warn(join_result: std::thread::Result<LocatorResult>, label: &str) -> LocatorResult {
+fn join_or_warn(
+    join_result: std::thread::Result<LocatorResult>,
+    label: &str,
+) -> (LocatorResult, bool) {
     use log::warn;
     match join_result {
-        Ok(result) => result,
+        Ok(result) => (result, false),
         Err(panic_payload) => {
             // Try to render the payload for the log; payloads are commonly
             // either a `&'static str` or a `String`.
@@ -45,16 +52,26 @@ fn join_or_warn(join_result: std::thread::Result<LocatorResult>, label: &str) ->
                 .or_else(|| panic_payload.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "<non-string panic payload>".to_string());
             warn!("Registry walk thread for {} panicked: {}", label, message);
-            empty_result()
+            (empty_result(), true)
         }
     }
+}
+
+/// Outcome of a registry walk: the discovered environments/managers and a
+/// flag indicating whether any worker thread panicked. Callers should
+/// avoid caching a result with `had_panic = true` so a transient failure
+/// can be retried on the next refresh instead of becoming sticky.
+#[cfg(windows)]
+pub struct RegistryWalkOutcome {
+    pub result: LocatorResult,
+    pub had_panic: bool,
 }
 
 #[cfg(windows)]
 pub fn get_registry_pythons(
     conda_locator: &Arc<dyn CondaLocator>,
     reporter: &Option<&dyn Reporter>,
-) -> LocatorResult {
+) -> RegistryWalkOutcome {
     use std::thread;
 
     // Walk both hives in parallel. Each hive walks its companies in parallel
@@ -62,7 +79,7 @@ pub fn get_registry_pythons(
     // independent registry trees and Defender intercepts every read, so the
     // serial baseline was paying for both round-trips back to back; the
     // scope-spawn pattern matches `pet-pyenv` / `pet-homebrew` / `pet-conda`.
-    let (hklm_result, hkcu_result) = thread::scope(|s| {
+    let ((hklm_result, hklm_panic), (hkcu_result, hkcu_panic)) = thread::scope(|s| {
         let hklm = s.spawn(|| {
             get_registry_pythons_for_hive(
                 "HKLM",
@@ -80,8 +97,8 @@ pub fn get_registry_pythons(
             )
         });
         (
-            join_or_warn(hklm.join(), "HKLM"),
-            join_or_warn(hkcu.join(), "HKCU"),
+            join_hive_outcome(hklm.join(), "HKLM"),
+            join_hive_outcome(hkcu.join(), "HKCU"),
         )
     });
 
@@ -90,9 +107,35 @@ pub fn get_registry_pythons(
     let mut managers = hklm_result.managers;
     managers.extend(hkcu_result.managers);
 
-    LocatorResult {
-        environments,
-        managers,
+    RegistryWalkOutcome {
+        result: LocatorResult {
+            environments,
+            managers,
+        },
+        had_panic: hklm_panic || hkcu_panic,
+    }
+}
+
+/// Sibling of `join_or_warn` for hive-level threads. Returns the recovered
+/// `LocatorResult` plus a `had_panic` flag that already accounts for any
+/// company-level panics propagated through `RegistryWalkOutcome`.
+#[cfg(windows)]
+fn join_hive_outcome(
+    join_result: std::thread::Result<RegistryWalkOutcome>,
+    label: &str,
+) -> (LocatorResult, bool) {
+    use log::warn;
+    match join_result {
+        Ok(outcome) => (outcome.result, outcome.had_panic),
+        Err(panic_payload) => {
+            let message = panic_payload
+                .downcast_ref::<&'static str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| panic_payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+            warn!("Registry walk thread for {} panicked: {}", label, message);
+            (empty_result(), true)
+        }
     }
 }
 
@@ -105,7 +148,7 @@ fn get_registry_pythons_for_hive(
     hive: RegKey,
     conda_locator: &Arc<dyn CondaLocator>,
     reporter: &Option<&dyn Reporter>,
-) -> LocatorResult {
+) -> RegistryWalkOutcome {
     use log::{trace, warn};
     use std::thread;
 
@@ -113,7 +156,10 @@ fn get_registry_pythons_for_hive(
         Ok(k) => k,
         Err(err) => {
             warn!("Failed to open {}\\Software\\Python, {:?}", name, err);
-            return empty_result();
+            return RegistryWalkOutcome {
+                result: empty_result(),
+                had_panic: false,
+            };
         }
     };
 
@@ -137,7 +183,7 @@ fn get_registry_pythons_for_hive(
         })
         .collect();
 
-    let results: Vec<LocatorResult> = thread::scope(|s| {
+    let results: Vec<(LocatorResult, bool)> = thread::scope(|s| {
         let handles: Vec<_> = companies
             .into_iter()
             .map(|(company, company_key)| {
@@ -168,13 +214,18 @@ fn get_registry_pythons_for_hive(
 
     let mut environments = vec![];
     let mut managers = vec![];
-    for r in results {
+    let mut had_panic = false;
+    for (r, panicked) in results {
         environments.extend(r.environments);
         managers.extend(r.managers);
+        had_panic |= panicked;
     }
-    LocatorResult {
-        environments,
-        managers,
+    RegistryWalkOutcome {
+        result: LocatorResult {
+            environments,
+            managers,
+        },
+        had_panic,
     }
 }
 
