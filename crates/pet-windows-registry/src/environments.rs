@@ -142,8 +142,7 @@ fn get_registry_pythons_for_hive(
             .into_iter()
             .map(|(company, company_key)| {
                 // Build the panic-warning label up-front so a panicking
-                // company thread is identifiable in logs (issue #454
-                // Copilot review feedback).
+                // company thread is identifiable in logs (issue #454).
                 let label = format!("{name}\\Software\\Python\\{company}");
                 let handle = s.spawn(move || {
                     // Trace order is intentionally relaxed: companies are

@@ -19,7 +19,7 @@ pub struct WindowsRegistry {
     #[allow(dead_code)]
     conda_locator: Arc<dyn CondaLocator>,
     #[allow(dead_code)]
-    search_result: Arc<Mutex<Option<LocatorResult>>>,
+    search_result: Arc<Mutex<Option<Arc<LocatorResult>>>>,
 }
 
 impl WindowsRegistry {
@@ -30,17 +30,17 @@ impl WindowsRegistry {
         }
     }
     #[cfg(windows)]
-    fn find_with_cache(&self, reporter: Option<&dyn Reporter>) -> Option<LocatorResult> {
+    fn find_with_cache(&self, reporter: Option<&dyn Reporter>) -> Option<Arc<LocatorResult>> {
         let mut result = self
             .search_result
             .lock()
             .expect("search_result mutex poisoned");
-        if let Some(result) = result.clone() {
-            return Some(result);
+        if let Some(result) = result.as_ref() {
+            return Some(Arc::clone(result));
         }
 
-        let registry_result = get_registry_pythons(&self.conda_locator, &reporter);
-        result.replace(registry_result.clone());
+        let registry_result = Arc::new(get_registry_pythons(&self.conda_locator, &reporter));
+        result.replace(Arc::clone(&registry_result));
 
         Some(registry_result)
     }
@@ -111,10 +111,10 @@ impl Locator for WindowsRegistry {
         #[cfg(windows)]
         if let Some(result) = self.find_with_cache(None) {
             // Find the same env here
-            for found_env in result.environments {
+            for found_env in &result.environments {
                 if let Some(ref python_executable_path) = found_env.executable {
                     if python_executable_path == &env.executable {
-                        return Some(found_env);
+                        return Some(found_env.clone());
                     }
                 }
             }
@@ -135,12 +135,15 @@ impl Locator for WindowsRegistry {
         // replay the cached environments/managers to the reporter
         // ourselves — otherwise WindowsRegistry discoveries would silently
         // disappear on every refresh after the first.
+        //
+        // The cache stores an `Arc<LocatorResult>`, so the lookup is a
+        // cheap pointer clone — no deep copy of the underlying vectors.
         let cached = {
             let result = self
                 .search_result
                 .lock()
                 .expect("search_result mutex poisoned");
-            result.clone()
+            result.as_ref().map(Arc::clone)
         };
         if let Some(cached) = cached {
             for manager in &cached.managers {
@@ -221,24 +224,28 @@ mod tests {
         let shared = create_locator();
         let refreshed = create_locator();
 
-        shared.search_result.lock().unwrap().replace(LocatorResult {
-            managers: vec![],
-            environments: vec![PythonEnvironment {
-                name: Some("stale".to_string()),
-                ..Default::default()
-            }],
-        });
+        shared
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(Arc::new(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("stale".to_string()),
+                    ..Default::default()
+                }],
+            }));
         refreshed
             .search_result
             .lock()
             .unwrap()
-            .replace(LocatorResult {
+            .replace(Arc::new(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("fresh".to_string()),
                     ..Default::default()
                 }],
-            });
+            }));
 
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
 
@@ -251,24 +258,28 @@ mod tests {
         let shared = create_locator();
         let refreshed = create_locator();
 
-        shared.search_result.lock().unwrap().replace(LocatorResult {
-            managers: vec![],
-            environments: vec![PythonEnvironment {
-                name: Some("stale".to_string()),
-                ..Default::default()
-            }],
-        });
+        shared
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(Arc::new(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("stale".to_string()),
+                    ..Default::default()
+                }],
+            }));
         refreshed
             .search_result
             .lock()
             .unwrap()
-            .replace(LocatorResult {
+            .replace(Arc::new(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("fresh".to_string()),
                     ..Default::default()
                 }],
-            });
+            }));
 
         shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Workspace);
 
@@ -281,24 +292,28 @@ mod tests {
         let shared = create_locator();
         let refreshed = create_locator();
 
-        shared.search_result.lock().unwrap().replace(LocatorResult {
-            managers: vec![],
-            environments: vec![PythonEnvironment {
-                name: Some("stale".to_string()),
-                ..Default::default()
-            }],
-        });
+        shared
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(Arc::new(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("stale".to_string()),
+                    ..Default::default()
+                }],
+            }));
         refreshed
             .search_result
             .lock()
             .unwrap()
-            .replace(LocatorResult {
+            .replace(Arc::new(LocatorResult {
                 managers: vec![],
                 environments: vec![PythonEnvironment {
                     name: Some("fresh".to_string()),
                     ..Default::default()
                 }],
-            });
+            }));
 
         shared.sync_refresh_state_from(
             &refreshed,
@@ -307,13 +322,17 @@ mod tests {
         let result = shared.search_result.lock().unwrap().clone().unwrap();
         assert_eq!(result.environments[0].name.as_deref(), Some("fresh"));
 
-        shared.search_result.lock().unwrap().replace(LocatorResult {
-            managers: vec![],
-            environments: vec![PythonEnvironment {
-                name: Some("stale".to_string()),
-                ..Default::default()
-            }],
-        });
+        shared
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(Arc::new(LocatorResult {
+                managers: vec![],
+                environments: vec![PythonEnvironment {
+                    name: Some("stale".to_string()),
+                    ..Default::default()
+                }],
+            }));
 
         shared.sync_refresh_state_from(
             &refreshed,
@@ -402,7 +421,7 @@ mod tests {
             .search_result
             .lock()
             .unwrap()
-            .replace(cached.clone());
+            .replace(Arc::new(cached.clone()));
 
         let reporter = RecordingReporter::default();
         locator.find(&reporter);
