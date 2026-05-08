@@ -11,7 +11,6 @@ use pet_core::{
     Locator, LocatorKind, LocatorResult, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use pet_virtualenv::is_virtualenv;
-#[cfg(windows)]
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -24,9 +23,10 @@ mod environments;
 /// reporter (not into `LocatorResult`); without remembering the dirs,
 /// every cache hit in `find()` would silently drop registry-only conda
 /// notifications (issue #454).
-#[cfg(windows)]
 struct CachedRegistryWalk {
+    #[cfg_attr(not(windows), allow(dead_code))]
     result: LocatorResult,
+    #[cfg_attr(not(windows), allow(dead_code))]
     conda_install_dirs: Vec<PathBuf>,
 }
 
@@ -34,11 +34,7 @@ pub struct WindowsRegistry {
     #[allow(dead_code)]
     conda_locator: Arc<dyn CondaLocator>,
     #[allow(dead_code)]
-    #[cfg(windows)]
     search_result: Arc<Mutex<Option<Arc<CachedRegistryWalk>>>>,
-    #[allow(dead_code)]
-    #[cfg(not(windows))]
-    search_result: Arc<Mutex<Option<Arc<LocatorResult>>>>,
 }
 
 impl WindowsRegistry {
@@ -262,7 +258,6 @@ mod tests {
         WindowsRegistry::from(Arc::new(Conda::from(&environment)))
     }
 
-    #[cfg(windows)]
     fn wrap_cached(result: LocatorResult) -> Arc<CachedRegistryWalk> {
         Arc::new(CachedRegistryWalk {
             result,
