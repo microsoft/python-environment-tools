@@ -141,7 +141,11 @@ fn get_registry_pythons_for_hive(
         let handles: Vec<_> = companies
             .into_iter()
             .map(|(company, company_key)| {
-                s.spawn(move || {
+                // Build the panic-warning label up-front so a panicking
+                // company thread is identifiable in logs (issue #454
+                // Copilot review feedback).
+                let label = format!("{name}\\Software\\Python\\{company}");
+                let handle = s.spawn(move || {
                     // Trace order is intentionally relaxed: companies are
                     // walked in parallel, so this line interleaves with the
                     // others from the same hive.
@@ -153,12 +157,13 @@ fn get_registry_pythons_for_hive(
                         conda_locator,
                         reporter,
                     )
-                })
+                });
+                (label, handle)
             })
             .collect();
         handles
             .into_iter()
-            .map(|h| join_or_warn(h.join(), "per-company walk"))
+            .map(|(label, h)| join_or_warn(h.join(), &label))
             .collect()
     });
 

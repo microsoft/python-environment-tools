@@ -124,12 +124,35 @@ impl Locator for WindowsRegistry {
 
     #[cfg(windows)]
     fn find(&self, reporter: &dyn Reporter) {
-        // We no longer reset `search_result` here: `find_with_cache` already
-        // returns the cached result on a hit, and `find()` is invoked on
-        // transient locators per refresh, so the cache is empty by
-        // construction the first time. Re-clearing forced every refresh to
-        // re-walk both registry hives, each of which is intercepted by
-        // Windows Defender (issue #454).
+        // We no longer reset `search_result` here: the cache may have been
+        // populated via `sync_refresh_state_from` between refreshes, and
+        // `find()` is invoked on transient locators per refresh, so on the
+        // first refresh the cache is empty by construction. Re-clearing
+        // forced every refresh to re-walk both registry hives, each of
+        // which is intercepted by Windows Defender (issue #454).
+        //
+        // On a cache hit `get_registry_pythons` is NOT called, so we must
+        // replay the cached environments/managers to the reporter
+        // ourselves — otherwise WindowsRegistry discoveries would silently
+        // disappear on every refresh after the first.
+        let cached = {
+            let result = self
+                .search_result
+                .lock()
+                .expect("search_result mutex poisoned");
+            result.clone()
+        };
+        if let Some(cached) = cached {
+            for manager in &cached.managers {
+                reporter.report_manager(manager);
+            }
+            for env in &cached.environments {
+                reporter.report_environment(env);
+            }
+            return;
+        }
+        // Cache miss: walk the registry. `get_registry_pythons` reports
+        // inline as it discovers entries, so no separate replay is needed.
         let _ = self.find_with_cache(Some(reporter));
     }
     #[cfg(unix)]
@@ -328,8 +351,10 @@ mod tests {
     /// implementation called `self.clear()` first, which forced every
     /// `refresh` RPC to re-walk both registry hives — a Defender-intercepted
     /// hot path tracked in #454. This test pins down the new contract:
-    /// pre-populate the cache, run `find()`, and assert the original entries
-    /// survived (i.e. `find_with_cache` short-circuited on the cache hit).
+    /// pre-populate the cache, run `find()`, and assert (a) the original
+    /// entries survived (i.e. the cache was not cleared) and (b) the
+    /// reporter was notified with the cached environments and managers,
+    /// so cached results are still observable to refresh consumers.
     #[cfg(windows)]
     #[test]
     fn test_find_reuses_cached_results_within_locator_lifetime() {
@@ -337,17 +362,37 @@ mod tests {
         use pet_core::python_environment::PythonEnvironment;
         use pet_core::reporter::Reporter;
         use pet_core::telemetry::TelemetryEvent;
+        use std::sync::Mutex;
 
-        struct CountingReporter;
-        impl Reporter for CountingReporter {
-            fn report_manager(&self, _manager: &EnvManager) {}
-            fn report_environment(&self, _env: &PythonEnvironment) {}
+        #[derive(Default)]
+        struct RecordingReporter {
+            environments: Mutex<Vec<String>>,
+            managers: Mutex<Vec<PathBuf>>,
+        }
+        impl Reporter for RecordingReporter {
+            fn report_manager(&self, manager: &EnvManager) {
+                self.managers
+                    .lock()
+                    .unwrap()
+                    .push(manager.executable.clone());
+            }
+            fn report_environment(&self, env: &PythonEnvironment) {
+                self.environments
+                    .lock()
+                    .unwrap()
+                    .push(env.name.clone().unwrap_or_default());
+            }
             fn report_telemetry(&self, _event: &TelemetryEvent) {}
         }
 
         let locator = create_locator();
+        let cached_manager = EnvManager::new(
+            PathBuf::from("C:\\fake\\python.exe"),
+            pet_core::manager::EnvManagerType::Conda,
+            None,
+        );
         let cached = LocatorResult {
-            managers: vec![],
+            managers: vec![cached_manager.clone()],
             environments: vec![PythonEnvironment {
                 name: Some("cached".to_string()),
                 ..Default::default()
@@ -359,8 +404,10 @@ mod tests {
             .unwrap()
             .replace(cached.clone());
 
-        locator.find(&CountingReporter);
+        let reporter = RecordingReporter::default();
+        locator.find(&reporter);
 
+        // (a) The cache must still be populated and unchanged.
         let after = locator
             .search_result
             .lock()
@@ -373,6 +420,19 @@ mod tests {
             "find() must not clear the cache before populating",
         );
         assert_eq!(after.environments[0].name.as_deref(), Some("cached"));
+        // (b) The cached entries must have been replayed to the reporter
+        // — otherwise WindowsRegistry discoveries would silently
+        // disappear on every refresh after the first.
+        assert_eq!(
+            reporter.environments.lock().unwrap().as_slice(),
+            &["cached".to_string()],
+            "find() must replay cached environments to the reporter on a cache hit",
+        );
+        assert_eq!(
+            reporter.managers.lock().unwrap().as_slice(),
+            &[PathBuf::from("C:\\fake\\python.exe")],
+            "find() must replay cached managers to the reporter on a cache hit",
+        );
     }
 
     /// Smoke test: on a fresh locator (empty cache), `find()` runs the new
