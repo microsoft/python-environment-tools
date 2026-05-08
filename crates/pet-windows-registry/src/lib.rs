@@ -169,7 +169,14 @@ impl Locator for WindowsRegistry {
             // cache here would let a later `find(reporter)` short-circuit
             // on the cache hit and silently drop those conda
             // notifications (issue #454).
-            if let Some((cached, _did_walk)) = self.find_with_cache(None) {
+            let cached = {
+                let result = self
+                    .search_result
+                    .lock()
+                    .expect("search_result mutex poisoned");
+                result.as_ref().map(Arc::clone)
+            };
+            if let Some(cached) = cached {
                 for found_env in &cached.result.environments {
                     if let Some(ref python_executable_path) = found_env.executable {
                         if python_executable_path == &env.executable {
