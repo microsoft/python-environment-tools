@@ -43,7 +43,7 @@ use pet_core::{
     reporter::Reporter,
     Configuration, Locator, LocatorKind, RefreshStatePersistence,
 };
-use pet_fs::path::norm_case;
+use pet_fs::path::{expand_path, norm_case};
 use pet_python_utils::executable::{find_executable, find_executables};
 use serde::Deserialize;
 
@@ -54,14 +54,19 @@ use serde::Deserialize;
 /// plugin's `PLUGIN_NAME` in Hatch's source.
 const VIRTUAL_ENV_SUBDIR: [&str; 2] = ["env", "virtual"];
 
+/// Per-workspace cache of resolved Hatch virtual directories. Each entry is
+/// `(workspace_root, resolved_virtual_dirs)` and is populated by `configure()`.
+type WorkspaceVirtualDirs = Vec<(PathBuf, Vec<PathBuf>)>;
+
 pub struct Hatch {
     /// Default storage directory for Hatch virtual environments — i.e.
     /// `<data_dir>/env/virtual`. Resolved at construction. None if the
     /// directory does not yet exist (it is created lazily by Hatch).
     default_virtual_dir: Option<PathBuf>,
-    /// Workspace directories supplied via configuration. Used to discover
-    /// project-local Hatch environments via parsed `dirs.env.virtual` config.
-    workspace_directories: Arc<Mutex<Vec<PathBuf>>>,
+    /// Per-workspace resolved virtual directories, computed during
+    /// `configure()` so that hot-path identification (`try_from`) does no
+    /// disk I/O or TOML parsing.
+    workspace_virtual_dirs: Arc<Mutex<WorkspaceVirtualDirs>>,
 }
 
 impl Default for Hatch {
@@ -78,7 +83,7 @@ impl Hatch {
     pub fn from(environment: &dyn Environment) -> Self {
         Self {
             default_virtual_dir: get_default_virtual_dir(environment),
-            workspace_directories: Arc::new(Mutex::new(Vec::new())),
+            workspace_virtual_dirs: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -97,14 +102,21 @@ impl Locator for Hatch {
     }
 
     fn configure(&self, config: &Configuration) {
-        let mut ws = self
-            .workspace_directories
-            .lock()
-            .expect("workspace_directories mutex poisoned");
-        ws.clear();
+        // Precompute and cache each workspace's resolved Hatch virtual dirs so
+        // `try_from()` does not have to re-read/parse pyproject.toml/hatch.toml
+        // on every executable identification attempt. We build the new cache
+        // *outside* the lock to keep disk I/O out of the critical section.
+        let mut new_cache: WorkspaceVirtualDirs = Vec::new();
         if let Some(dirs) = config.workspace_directories.as_ref() {
-            ws.extend(dirs.iter().cloned());
+            for workspace in dirs {
+                let virtual_dirs = resolve_project_virtual_dirs(workspace);
+                new_cache.push((workspace.clone(), virtual_dirs));
+            }
         }
+        *self
+            .workspace_virtual_dirs
+            .lock()
+            .expect("workspace_virtual_dirs mutex poisoned") = new_cache;
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -136,13 +148,13 @@ impl Locator for Hatch {
         // Case 2: prefix lives one level under a workspace's configured
         // `dirs.env.virtual` directory (flat layout).
         let workspaces = self
-            .workspace_directories
+            .workspace_virtual_dirs
             .lock()
-            .expect("workspace_directories mutex poisoned")
+            .expect("workspace_virtual_dirs mutex poisoned")
             .clone();
-        for workspace in &workspaces {
-            for virtual_dir in resolve_project_virtual_dirs(workspace) {
-                if prefix_is_directly_under(&prefix, &virtual_dir) {
+        for (workspace, virtual_dirs) in &workspaces {
+            for virtual_dir in virtual_dirs {
+                if prefix_is_directly_under(&prefix, virtual_dir) {
                     let env_name = prefix
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
@@ -176,13 +188,13 @@ impl Locator for Hatch {
 
         // 2. Walk project-local virtual directories for each configured workspace.
         let workspaces = self
-            .workspace_directories
+            .workspace_virtual_dirs
             .lock()
-            .expect("workspace_directories mutex poisoned")
+            .expect("workspace_virtual_dirs mutex poisoned")
             .clone();
-        for workspace in &workspaces {
-            for virtual_dir in resolve_project_virtual_dirs(workspace) {
-                for env in find_envs_in_flat_dir(&virtual_dir, Some(workspace.clone())) {
+        for (workspace, virtual_dirs) in &workspaces {
+            for virtual_dir in virtual_dirs {
+                for env in find_envs_in_flat_dir(virtual_dir, Some(workspace.clone())) {
                     reporter.report_environment(&env);
                 }
             }
@@ -355,10 +367,14 @@ struct HatchDirs {
 fn resolve_project_virtual_dirs(workspace: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     for raw in read_configured_virtual_paths(workspace) {
-        let resolved = if Path::new(&raw).is_absolute() {
-            PathBuf::from(&raw)
+        // Expand ~ and ${HOME}/${USERNAME} so configured values like
+        // "~/.virtualenvs" resolve to the user home rather than being
+        // joined onto the workspace as a relative path.
+        let expanded = expand_path(PathBuf::from(&raw));
+        let resolved = if expanded.is_absolute() {
+            expanded
         } else {
-            workspace.join(&raw)
+            workspace.join(expanded)
         };
         if resolved.is_dir() {
             dirs.push(norm_case(resolved));
@@ -507,7 +523,14 @@ fn build_env(
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::sync::Mutex as StdMutex;
     use tempfile::TempDir;
+
+    /// Serializes any test that mutates process-global environment variables
+    /// (HOME / USERPROFILE / etc.) so cargo's default multi-threaded harness
+    /// cannot race. Use `let _guard = ENV_LOCK.lock()...;` at the top of any
+    /// test that reads or writes those variables.
+    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
     struct TestEnv {
         home: Option<PathBuf>,
@@ -553,7 +576,23 @@ mod tests {
     fn make_locator(default_virtual_dir: Option<PathBuf>) -> Hatch {
         Hatch {
             default_virtual_dir,
-            workspace_directories: Arc::new(Mutex::new(vec![])),
+            workspace_virtual_dirs: Arc::new(Mutex::new(vec![])),
+        }
+    }
+
+    /// Build a locator with a single configured workspace whose virtual dirs
+    /// have been resolved up-front (mirrors what `configure()` does).
+    fn make_locator_with_workspace(
+        default_virtual_dir: Option<PathBuf>,
+        workspace: &Path,
+    ) -> Hatch {
+        let virtual_dirs = resolve_project_virtual_dirs(workspace);
+        Hatch {
+            default_virtual_dir,
+            workspace_virtual_dirs: Arc::new(Mutex::new(vec![(
+                workspace.to_path_buf(),
+                virtual_dirs,
+            )])),
         }
     }
 
@@ -640,10 +679,7 @@ mod tests {
         write_pyvenv_cfg(&prefix, "default", "3.11.0");
         let exe = write_python_exe(&prefix);
 
-        let locator = Hatch {
-            default_virtual_dir: None,
-            workspace_directories: Arc::new(Mutex::new(vec![project.clone()])),
-        };
+        let locator = make_locator_with_workspace(None, &project);
         let env = PythonEnv::new(exe, Some(prefix), None);
         let identified = locator.try_from(&env).expect("project-local env match");
         assert_eq!(identified.kind, Some(PythonEnvironmentKind::Hatch));
@@ -665,10 +701,7 @@ mod tests {
         write_pyvenv_cfg(&prefix, "default", "3.11.0");
         let exe = write_python_exe(&prefix);
 
-        let locator = Hatch {
-            default_virtual_dir: None,
-            workspace_directories: Arc::new(Mutex::new(vec![project.clone()])),
-        };
+        let locator = make_locator_with_workspace(None, &project);
         let env = PythonEnv::new(exe, Some(prefix), None);
         let identified = locator.try_from(&env).expect("project-local env match");
         assert_eq!(identified.project, Some(norm_case(&project)));
@@ -689,10 +722,7 @@ mod tests {
         write_pyvenv_cfg(&prefix, "default", "3.11.0");
         let exe = write_python_exe(&prefix);
 
-        let locator = Hatch {
-            default_virtual_dir: None,
-            workspace_directories: Arc::new(Mutex::new(vec![project])),
-        };
+        let locator = make_locator_with_workspace(None, &project);
         let env = PythonEnv::new(exe, Some(prefix), None);
         assert!(locator.try_from(&env).is_none());
     }
@@ -769,6 +799,80 @@ mod tests {
 
         let dirs = resolve_project_virtual_dirs(&project);
         assert_eq!(dirs, vec![norm_case(&absolute)]);
+    }
+
+    #[test]
+    fn resolve_project_virtual_dirs_expands_tilde() {
+        // A configured value of "~/.virtualenvs" must resolve against the
+        // user's home directory, not be joined onto the workspace as a
+        // relative path. We fake $HOME / %USERPROFILE% to point at a
+        // tempdir we control, then make sure the expanded path is what we
+        // get back.
+        //
+        // `expand_path()` reads HOME / USERPROFILE from the *process* env, so
+        // this test mutates global state. We serialize against any other
+        // env-mutating test in this crate via `ENV_LOCK` so cargo's default
+        // multi-threaded harness cannot race.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
+        let temp = TempDir::new().unwrap();
+        let fake_home = temp.path().join("home");
+        let virtualenvs = fake_home.join(".virtualenvs");
+        fs::create_dir_all(&virtualenvs).unwrap();
+        let project = temp.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \"~/.virtualenvs\"\n",
+        )
+        .unwrap();
+
+        let prev_home = std::env::var_os("HOME");
+        let prev_user_profile = std::env::var_os("USERPROFILE");
+        std::env::set_var("HOME", &fake_home);
+        std::env::set_var("USERPROFILE", &fake_home);
+
+        let dirs = resolve_project_virtual_dirs(&project);
+
+        // Restore env regardless of assertion outcome.
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_user_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+
+        assert_eq!(dirs, vec![norm_case(&virtualenvs)]);
+    }
+
+    #[test]
+    fn configure_caches_workspace_virtual_dirs() {
+        // try_from() must not re-read pyproject.toml on every call; configure()
+        // is responsible for resolving and caching the virtual dirs once.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+        )
+        .unwrap();
+        let virtual_dir = project.join(".hatch");
+        fs::create_dir_all(&virtual_dir).unwrap();
+
+        let locator = make_locator(None);
+        let config = Configuration {
+            workspace_directories: Some(vec![project.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+
+        let cached = locator.workspace_virtual_dirs.lock().unwrap().clone();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].0, project);
+        assert_eq!(cached[0].1, vec![norm_case(&virtual_dir)]);
     }
 
     #[cfg(target_os = "linux")]
