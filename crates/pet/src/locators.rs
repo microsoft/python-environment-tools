@@ -69,8 +69,12 @@ pub fn create_locators(
     locators.push(Arc::new(Uv::from(environment)));
     locators.push(poetry_locator);
     locators.push(Arc::new(PipEnv::from(environment)));
-    locators.push(Arc::new(VirtualEnvWrapper::from(environment)));
+    // Hatch must run before VirtualEnvWrapper: a Hatch project can configure
+    // `dirs.env.virtual = "~/.virtualenvs"` (or any other directory that
+    // overlaps with `WORKON_HOME`), and we want Hatch to claim its envs
+    // first when the workspace marks them as Hatch-managed.
     locators.push(Arc::new(Hatch::from(environment)));
+    locators.push(Arc::new(VirtualEnvWrapper::from(environment)));
     locators.push(Arc::new(Venv::new()));
     // VirtualEnv is the most generic, hence should be the last.
     locators.push(Arc::new(VirtualEnv::new()));
