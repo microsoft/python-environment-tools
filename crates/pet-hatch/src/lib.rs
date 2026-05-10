@@ -128,61 +128,76 @@ impl Locator for Hatch {
                 .map(Path::to_path_buf)
         })?;
 
-        // A pyvenv.cfg must be present — Hatch envs are always venvs.
-        let cfg = PyVenvCfg::find(&prefix)?;
-
+        // Do the cheap path-shape classification *first* so we don't pay for
+        // a `pyvenv.cfg` filesystem read on every non-Hatch venv that flows
+        // through the locator chain.
+        //
         // Case 1: prefix lives in the default `<data_dir>/env/virtual` storage,
         // exactly three components deep:
         //   <storage>/<project_name>/<project_id>/<venv_name>
+        let mut classification: Option<(String, Option<PathBuf>)> = None;
         if let Some(storage) = self.default_virtual_dir.as_deref() {
             if let Some(env_name) = match_default_storage_layout(&prefix, storage) {
-                trace!(
-                    "Hatch env (default storage) {} found at {}",
-                    env_name,
-                    env.executable.display()
-                );
-                return Some(build_env(&prefix, &cfg, env_name, None, &env.executable));
+                classification = Some((env_name, None));
             }
         }
 
         // Case 2: prefix lives one level under a workspace's configured
-        // `dirs.env.virtual` directory (flat layout).
-        let workspaces = self
-            .workspace_virtual_dirs
-            .lock()
-            .expect("workspace_virtual_dirs mutex poisoned")
-            .clone();
-        for (workspace, virtual_dirs) in &workspaces {
-            for virtual_dir in virtual_dirs {
-                if prefix_is_directly_under(&prefix, virtual_dir) {
-                    let env_name = prefix
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    trace!(
-                        "Hatch env (project-local) {} found at {}",
-                        env_name,
-                        env.executable.display()
-                    );
-                    return Some(build_env(
-                        &prefix,
-                        &cfg,
-                        env_name,
-                        Some(workspace.clone()),
-                        &env.executable,
-                    ));
+        // `dirs.env.virtual` directory (flat layout). Inspect the cached
+        // workspaces under the lock and capture the match instead of cloning
+        // the entire cache.
+        if classification.is_none() {
+            let cache = self
+                .workspace_virtual_dirs
+                .lock()
+                .expect("workspace_virtual_dirs mutex poisoned");
+            'workspaces: for (workspace, virtual_dirs) in cache.iter() {
+                for virtual_dir in virtual_dirs {
+                    if prefix_is_directly_under(&prefix, virtual_dir) {
+                        let env_name = prefix
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        classification = Some((env_name, Some(workspace.clone())));
+                        break 'workspaces;
+                    }
                 }
             }
         }
 
-        None
+        let (env_name, project_path) = classification?;
+
+        // Now that we know this is (likely) a Hatch env, read pyvenv.cfg.
+        // Hatch always writes one; if it's missing this isn't actually a
+        // Hatch-managed env.
+        let cfg = PyVenvCfg::find(&prefix)?;
+
+        trace!(
+            "Hatch env {} found at {}",
+            env_name,
+            env.executable.display()
+        );
+        Some(build_env(
+            &prefix,
+            &cfg,
+            env_name,
+            project_path,
+            &env.executable,
+        ))
     }
 
     fn find(&self, reporter: &dyn Reporter) {
-        // 1. Walk the default storage directory.
+        // 1. Walk the default storage directory if it currently exists. We
+        //    re-check existence here (rather than caching the result of the
+        //    check at construction) because the long-lived locator graph is
+        //    built once at server startup; the user may install Hatch or
+        //    create their first env after that point and we still want to
+        //    discover it without a restart.
         if let Some(storage) = self.default_virtual_dir.as_deref() {
-            for env in find_envs_in_default_storage(storage) {
-                reporter.report_environment(&env);
+            if storage.is_dir() {
+                for env in find_envs_in_default_storage(storage) {
+                    reporter.report_environment(&env);
+                }
             }
         }
 
@@ -214,29 +229,23 @@ impl Locator for Hatch {
 /// 2. Platform default for `platformdirs.user_data_dir("hatch", appauthor=False)`
 ///    (then append `env/virtual`).
 ///
-/// Returns `None` if the resulting directory does not exist on disk.
+/// The returned path may not exist on disk yet; callers must check existence
+/// at use time. This lets us correctly identify Hatch envs created later in
+/// the same long-lived PET process without a restart.
 fn get_default_virtual_dir(environment: &dyn Environment) -> Option<PathBuf> {
-    // If HATCH_DATA_DIR is set and non-empty, Hatch *only* uses that location —
-    // it never falls back to the platform default. Mirror that behaviour: return
-    // the env/virtual subdir when it exists on disk, otherwise None. Do not
-    // fall through to platform defaults, or we'd risk attributing platform-
-    // default envs to Hatch when the user has redirected Hatch elsewhere.
+    // If HATCH_DATA_DIR is set and non-empty, Hatch *only* uses that location
+    // — it never falls back to the platform default. Mirror that behaviour.
+    // Do not fall through to platform defaults, or we'd risk attributing
+    // platform-default envs to Hatch when the user has redirected Hatch
+    // elsewhere.
     if let Some(custom) = environment.get_env_var("HATCH_DATA_DIR".to_string()) {
         if !custom.is_empty() {
-            let path = append_virtual_subdir(PathBuf::from(custom));
-            return if path.is_dir() {
-                Some(norm_case(path))
-            } else {
-                None
-            };
+            return Some(norm_case(append_virtual_subdir(PathBuf::from(custom))));
         }
     }
-    let path = append_virtual_subdir(platform_default_data_dir(environment)?);
-    if path.is_dir() {
-        Some(norm_case(path))
-    } else {
-        None
-    }
+    Some(norm_case(append_virtual_subdir(platform_default_data_dir(
+        environment,
+    )?)))
 }
 
 fn append_virtual_subdir(data_dir: PathBuf) -> PathBuf {
@@ -962,18 +971,22 @@ mod tests {
         // If HATCH_DATA_DIR is set, Hatch only uses that location. We must
         // never silently fall through to the platform default — that could
         // misattribute platform-default envs to Hatch when the user has
-        // redirected Hatch elsewhere.
+        // redirected Hatch elsewhere. The path itself does not need to
+        // exist at construction time (it may be created later in the
+        // process lifetime); we only require that the returned value
+        // points at HATCH_DATA_DIR/env/virtual, not the platform default.
         let temp = TempDir::new().unwrap();
-        // Set HATCH_DATA_DIR to a directory whose env/virtual subdir does not exist.
+        let custom = temp.path().join("does-not-exist-yet");
         let mut vars = HashMap::new();
         vars.insert(
             "HATCH_DATA_DIR".to_string(),
-            temp.path().to_string_lossy().to_string(),
+            custom.to_string_lossy().to_string(),
         );
         let env = TestEnv {
             home: Some(temp.path().to_path_buf()),
             vars,
         };
-        assert_eq!(get_default_virtual_dir(&env), None);
+        let expected = norm_case(custom.join("env").join("virtual"));
+        assert_eq!(get_default_virtual_dir(&env), Some(expected));
     }
 }
