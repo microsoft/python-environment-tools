@@ -25,8 +25,10 @@
 //! virtual = ".hatch"
 //! ```
 //!
-//! When the configured `virtual` path is relative or matches `~/.virtualenvs`,
-//! Hatch uses a flat layout: `<configured_dir>/<venv_name>/`.
+//! For these workspace-configured locations Hatch uses a flat layout:
+//! `<configured_dir>/<venv_name>/`. Configured paths may be relative
+//! (resolved against the workspace root), absolute, or use `~` /
+//! `${HOME}` style expansion (e.g. `~/.virtualenvs`).
 
 use std::{
     fs,
@@ -60,8 +62,12 @@ type WorkspaceVirtualDirs = Vec<(PathBuf, Vec<PathBuf>)>;
 
 pub struct Hatch {
     /// Default storage directory for Hatch virtual environments — i.e.
-    /// `<data_dir>/env/virtual`. Resolved at construction. None if the
-    /// directory does not yet exist (it is created lazily by Hatch).
+    /// `<data_dir>/env/virtual`. Resolved at construction. The path may not
+    /// exist on disk yet (Hatch creates it lazily on first use); existence
+    /// is re-checked by `find()` at discovery time so envs created later in
+    /// this process lifetime are still discoverable without a restart.
+    /// `None` only when the platform data directory itself cannot be
+    /// resolved (e.g. no home directory).
     default_virtual_dir: Option<PathBuf>,
     /// Per-workspace resolved virtual directories, computed during
     /// `configure()` so that hot-path identification (`try_from`) does no
@@ -370,9 +376,15 @@ struct HatchDirs {
 /// each to an absolute directory. Both `pyproject.toml` (`[tool.hatch.dirs.env]`)
 /// and a top-level `hatch.toml` (`[dirs.env]`) are checked.
 ///
-/// Each value may be relative (resolved against the workspace root) or
-/// absolute. Returns an empty Vec if the workspace is not a Hatch project,
-/// or if no `virtual` value is configured.
+/// Each value may be relative (resolved against the workspace root),
+/// absolute, or use `~` / `${HOME}` expansion. Returns an empty Vec if the
+/// workspace is not a Hatch project, or if no `virtual` value is configured.
+///
+/// The returned paths are cached regardless of whether they currently exist
+/// on disk — a user may configure `virtual = ".hatch"` and create the env
+/// later in this process lifetime, and we want subsequent `try_from()`
+/// calls to recognise it without requiring the client to re-send `configure`.
+/// `find_envs_in_flat_dir()` handles missing directories at discovery time.
 fn resolve_project_virtual_dirs(workspace: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     for raw in read_configured_virtual_paths(workspace) {
@@ -385,9 +397,7 @@ fn resolve_project_virtual_dirs(workspace: &Path) -> Vec<PathBuf> {
         } else {
             workspace.join(expanded)
         };
-        if resolved.is_dir() {
-            dirs.push(norm_case(resolved));
-        }
+        dirs.push(norm_case(resolved));
     }
     dirs
 }
