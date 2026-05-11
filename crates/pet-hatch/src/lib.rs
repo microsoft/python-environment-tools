@@ -337,18 +337,27 @@ fn platform_default_data_dir(environment: &dyn Environment) -> Option<PathBuf> {
 fn match_default_storage_layout(prefix: &Path, storage: &Path) -> Option<String> {
     let normalized = norm_case(prefix);
     let rel = normalized.strip_prefix(storage).ok()?;
-    let parts: Vec<_> = rel.iter().collect();
-    if parts.len() == 3 {
-        Some(parts[2].to_string_lossy().to_string())
-    } else {
-        None
+    // Iterate components directly to avoid a per-call Vec allocation on the
+    // identification hot path. We need exactly three components.
+    let mut iter = rel.iter();
+    let _project_name = iter.next()?;
+    let _project_id = iter.next()?;
+    let venv_name = iter.next()?;
+    if iter.next().is_some() {
+        return None;
     }
+    Some(venv_name.to_string_lossy().to_string())
 }
 
 /// True iff `prefix`'s parent equals `dir` (case-insensitive on Windows).
+///
+/// `dir` is expected to be already normalized via `norm_case()` (entries
+/// cached in `resolve_project_virtual_dirs()` always are), so we only
+/// normalize `prefix.parent()` here — avoiding redundant `GetLongPathNameW`
+/// / case-folding work on Windows in the identification hot path.
 fn prefix_is_directly_under(prefix: &Path, dir: &Path) -> bool {
     match prefix.parent() {
-        Some(parent) => norm_case(parent) == norm_case(dir),
+        Some(parent) => norm_case(parent) == dir,
         None => false,
     }
 }
