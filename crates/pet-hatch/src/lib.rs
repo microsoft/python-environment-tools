@@ -245,8 +245,13 @@ fn get_default_virtual_dir(environment: &dyn Environment) -> Option<PathBuf> {
     // platform-default envs to Hatch when the user has redirected Hatch
     // elsewhere.
     if let Some(custom) = environment.get_env_var("HATCH_DATA_DIR".to_string()) {
-        if !custom.is_empty() {
-            return Some(norm_case(append_virtual_subdir(PathBuf::from(custom))));
+        let trimmed = custom.trim();
+        if !trimmed.is_empty() {
+            // Expand ~ / ${HOME} / ${USERNAME} so a value like
+            // `HATCH_DATA_DIR=~/.local/share/hatch` resolves to the user
+            // home rather than a literal `~` directory.
+            let expanded = expand_path(PathBuf::from(trimmed));
+            return Some(norm_case(append_virtual_subdir(expanded)));
         }
     }
     Some(norm_case(append_virtual_subdir(platform_default_data_dir(
@@ -388,10 +393,17 @@ struct HatchDirs {
 fn resolve_project_virtual_dirs(workspace: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     for raw in read_configured_virtual_paths(workspace) {
+        // Skip empty/whitespace values. Without this, `virtual = ""` would
+        // resolve to the workspace root and we'd misclassify any venv
+        // directly under the workspace (e.g. `./.venv`) as Hatch-managed.
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
         // Expand ~ and ${HOME}/${USERNAME} so configured values like
         // "~/.virtualenvs" resolve to the user home rather than being
         // joined onto the workspace as a relative path.
-        let expanded = expand_path(PathBuf::from(&raw));
+        let expanded = expand_path(PathBuf::from(trimmed));
         let resolved = if expanded.is_absolute() {
             expanded
         } else {
@@ -998,5 +1010,100 @@ mod tests {
         };
         let expected = norm_case(custom.join("env").join("virtual"));
         assert_eq!(get_default_virtual_dir(&env), Some(expected));
+    }
+
+    #[test]
+    fn default_virtual_dir_expands_tilde_in_hatch_data_dir() {
+        // A value like `HATCH_DATA_DIR=~/.local/share/hatch` must be
+        // expanded against the user's home rather than be treated as a
+        // literal `~` directory.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
+        let temp = TempDir::new().unwrap();
+        let fake_home = temp.path().join("home");
+        fs::create_dir_all(&fake_home).unwrap();
+
+        let prev_home = std::env::var_os("HOME");
+        let prev_user_profile = std::env::var_os("USERPROFILE");
+        std::env::set_var("HOME", &fake_home);
+        std::env::set_var("USERPROFILE", &fake_home);
+
+        let mut vars = HashMap::new();
+        vars.insert(
+            "HATCH_DATA_DIR".to_string(),
+            "~/.local/share/hatch".to_string(),
+        );
+        let env = TestEnv {
+            home: Some(fake_home.clone()),
+            vars,
+        };
+        let resolved = get_default_virtual_dir(&env);
+
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_user_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+
+        let expected = norm_case(
+            fake_home
+                .join(".local")
+                .join("share")
+                .join("hatch")
+                .join("env")
+                .join("virtual"),
+        );
+        assert_eq!(resolved, Some(expected));
+    }
+
+    #[test]
+    fn default_virtual_dir_treats_whitespace_hatch_data_dir_as_unset() {
+        // Whitespace-only HATCH_DATA_DIR must be treated as unset so we
+        // fall back to the platform default rather than resolving to
+        // a literal whitespace directory.
+        let temp = TempDir::new().unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("HATCH_DATA_DIR".to_string(), "   ".to_string());
+        let env = TestEnv {
+            home: Some(temp.path().to_path_buf()),
+            vars,
+        };
+        // Should NOT be the literal "   /env/virtual"; should resolve via
+        // the platform default (or None if home is unavailable).
+        let resolved = get_default_virtual_dir(&env);
+        if let Some(p) = resolved {
+            assert!(!p.to_string_lossy().contains("   "));
+        }
+    }
+
+    #[test]
+    fn resolve_project_virtual_dirs_skips_empty_value() {
+        // `virtual = ""` must not resolve to the workspace root and
+        // misclassify unrelated venvs under the workspace as Hatch.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \"\"\n",
+        )
+        .unwrap();
+        assert!(resolve_project_virtual_dirs(&project).is_empty());
+    }
+
+    #[test]
+    fn resolve_project_virtual_dirs_skips_whitespace_value() {
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \"   \"\n",
+        )
+        .unwrap();
+        assert!(resolve_project_virtual_dirs(&project).is_empty());
     }
 }
