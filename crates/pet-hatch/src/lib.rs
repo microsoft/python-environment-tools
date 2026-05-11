@@ -57,20 +57,28 @@ use serde::Deserialize;
 /// plugin's `PLUGIN_NAME` in Hatch's source.
 const VIRTUAL_ENV_SUBDIR: [&str; 2] = ["env", "virtual"];
 
-/// Per-workspace cache of resolved Hatch virtual directories and the set
-/// of declared env names for that workspace. Each entry is
-/// `(workspace_root, resolved_virtual_dirs, env_matcher)` and is
-/// populated by `configure()`.
+/// Per-workspace cache entry: workspace root, resolved
+/// `dirs.env.virtual` paths, and the precomputed env-name allowlist.
 ///
-/// `env_matcher` is used as a Hatch-specific guard when matching
-/// venvs in workspace-configured `dirs.env.virtual` directories: a shared
+/// `matcher` is used as a Hatch-specific guard when matching venvs in
+/// workspace-configured `dirs.env.virtual` directories: a shared
 /// directory like `~/.virtualenvs` can contain non-Hatch envs (created by
 /// virtualenvwrapper, plain `venv`, etc.), so we only claim a venv if its
 /// leaf directory name matches one of the env names declared in the
 /// project's Hatch configuration. The matcher pre-normalizes names so the
 /// `try_from()` hot path avoids per-call `to_lowercase()` / `format!()`
 /// allocations over the allowlist.
-type WorkspaceVirtualDirs = Vec<(PathBuf, Vec<PathBuf>, EnvNameMatcher)>;
+struct WorkspaceEntry {
+    workspace: PathBuf,
+    virtual_dirs: Vec<PathBuf>,
+    matcher: EnvNameMatcher,
+}
+
+/// Per-workspace cache populated by `configure()`. Entries are wrapped in
+/// `Arc` so `find()` can snapshot the cache (clone the Vec of Arcs) and
+/// release the lock cheaply before doing filesystem I/O — no deep
+/// `Vec<PathBuf>` / matcher clone per call.
+type WorkspaceVirtualDirs = Vec<Arc<WorkspaceEntry>>;
 
 pub struct Hatch {
     /// Default storage directory for Hatch virtual environments — i.e.
@@ -132,11 +140,11 @@ impl Locator for Hatch {
                 // — both `virtual_dirs` and `env_names` come from the same
                 // TOML sections, so we read each file once here.
                 let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
-                new_cache.push((
-                    workspace.clone(),
+                new_cache.push(Arc::new(WorkspaceEntry {
+                    workspace: workspace.clone(),
                     virtual_dirs,
-                    EnvNameMatcher::from_names(env_names),
-                ));
+                    matcher: EnvNameMatcher::from_names(env_names),
+                }));
             }
         }
         *self
@@ -184,17 +192,17 @@ impl Locator for Hatch {
                 .workspace_virtual_dirs
                 .lock()
                 .expect("workspace_virtual_dirs mutex poisoned");
-            'workspaces: for (workspace, virtual_dirs, matcher) in cache.iter() {
-                for virtual_dir in virtual_dirs {
+            'workspaces: for entry in cache.iter() {
+                for virtual_dir in &entry.virtual_dirs {
                     if prefix_is_directly_under(&prefix, virtual_dir) {
                         let env_name = prefix
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
-                        if !matcher.matches(&env_name) {
+                        if !entry.matcher.matches(&env_name) {
                             continue;
                         }
-                        classification = Some((env_name, Some(workspace.clone())));
+                        classification = Some((env_name, Some(entry.workspace.clone())));
                         break 'workspaces;
                     }
                 }
@@ -238,16 +246,22 @@ impl Locator for Hatch {
         }
 
         // 2. Walk project-local virtual directories for each configured workspace.
-        //    Apply the same env-name guard as `try_from()` so shared directories
-        //    (e.g. `~/.virtualenvs`) only yield the workspace's declared envs.
-        let workspaces = self
+        //    Snapshot the cache (cheap `Arc` clones) under the lock, then
+        //    release the lock before doing filesystem I/O. Apply the same
+        //    env-name guard as `try_from()` so shared directories (e.g.
+        //    `~/.virtualenvs`) only yield the workspace's declared envs.
+        let workspaces: Vec<Arc<WorkspaceEntry>> = self
             .workspace_virtual_dirs
             .lock()
             .expect("workspace_virtual_dirs mutex poisoned")
             .clone();
-        for (workspace, virtual_dirs, matcher) in &workspaces {
-            for virtual_dir in virtual_dirs {
-                for env in find_envs_in_flat_dir(virtual_dir, Some(workspace.clone()), matcher) {
+        for entry in &workspaces {
+            for virtual_dir in &entry.virtual_dirs {
+                for env in find_envs_in_flat_dir(
+                    virtual_dir,
+                    Some(entry.workspace.clone()),
+                    &entry.matcher,
+                ) {
                     reporter.report_environment(&env);
                 }
             }
@@ -616,9 +630,13 @@ fn find_envs_in_default_storage(storage: &Path) -> Vec<PythonEnvironment> {
 /// (`try_from()` / `find_envs_in_flat_dir()`) avoids per-call `format!()`
 /// allocations.
 ///
-/// On case-insensitive filesystems (Windows / default macOS) the on-disk
-/// leaf may differ in case from the TOML key, so we lowercase both sides
-/// on those platforms at construction time.
+/// On case-insensitive filesystems (default on Windows) the on-disk leaf
+/// may differ in case from the TOML key, so we lowercase both sides on
+/// Windows at construction time. macOS volumes can be either case-sensitive
+/// (default APFS) or case-insensitive (HFS+ / case-insensitive APFS), and
+/// `norm_case()` itself does not case-fold on macOS — so we keep the
+/// allowlist comparison byte-exact there to stay consistent with how paths
+/// are normalized elsewhere in this crate.
 #[derive(Clone, Default, Debug)]
 struct EnvNameMatcher {
     /// (normalized_name, normalized_name + ".") pairs.
@@ -626,11 +644,11 @@ struct EnvNameMatcher {
 }
 
 fn normalize_env_name(s: &str) -> String {
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(windows)]
     {
         s.to_lowercase()
     }
-    #[cfg(not(any(windows, target_os = "macos")))]
+    #[cfg(not(windows))]
     {
         s.to_string()
     }
@@ -802,11 +820,11 @@ mod tests {
         let env_names = resolve_project_env_names(workspace);
         Hatch {
             default_virtual_dir,
-            workspace_virtual_dirs: Arc::new(Mutex::new(vec![(
-                workspace.to_path_buf(),
+            workspace_virtual_dirs: Arc::new(Mutex::new(vec![Arc::new(WorkspaceEntry {
+                workspace: workspace.to_path_buf(),
                 virtual_dirs,
-                EnvNameMatcher::from_names(env_names),
-            )])),
+                matcher: EnvNameMatcher::from_names(env_names),
+            })])),
         }
     }
 
@@ -1126,8 +1144,8 @@ mod tests {
 
         let cached = locator.workspace_virtual_dirs.lock().unwrap().clone();
         assert_eq!(cached.len(), 1);
-        assert_eq!(cached[0].0, project);
-        assert_eq!(cached[0].1, vec![norm_case(&virtual_dir)]);
+        assert_eq!(cached[0].workspace, project);
+        assert_eq!(cached[0].virtual_dirs, vec![norm_case(&virtual_dir)]);
     }
 
     #[cfg(target_os = "linux")]
@@ -1424,9 +1442,9 @@ mod tests {
         assert_eq!(envs.len(), 2);
     }
 
-    #[cfg(any(windows, target_os = "macos"))]
+    #[cfg(windows)]
     #[test]
-    fn env_name_matches_is_case_insensitive_on_case_folding_filesystems() {
+    fn env_name_matches_is_case_insensitive_on_windows() {
         let mut names = HashSet::new();
         names.insert("Default".to_string());
         let matcher = EnvNameMatcher::from_names(names);
