@@ -59,16 +59,18 @@ const VIRTUAL_ENV_SUBDIR: [&str; 2] = ["env", "virtual"];
 
 /// Per-workspace cache of resolved Hatch virtual directories and the set
 /// of declared env names for that workspace. Each entry is
-/// `(workspace_root, resolved_virtual_dirs, allowed_env_names)` and is
+/// `(workspace_root, resolved_virtual_dirs, env_matcher)` and is
 /// populated by `configure()`.
 ///
-/// `allowed_env_names` is used as a Hatch-specific guard when matching
+/// `env_matcher` is used as a Hatch-specific guard when matching
 /// venvs in workspace-configured `dirs.env.virtual` directories: a shared
 /// directory like `~/.virtualenvs` can contain non-Hatch envs (created by
 /// virtualenvwrapper, plain `venv`, etc.), so we only claim a venv if its
 /// leaf directory name matches one of the env names declared in the
-/// project's Hatch configuration.
-type WorkspaceVirtualDirs = Vec<(PathBuf, Vec<PathBuf>, HashSet<String>)>;
+/// project's Hatch configuration. The matcher pre-normalizes names so the
+/// `try_from()` hot path avoids per-call `to_lowercase()` / `format!()`
+/// allocations over the allowlist.
+type WorkspaceVirtualDirs = Vec<(PathBuf, Vec<PathBuf>, EnvNameMatcher)>;
 
 pub struct Hatch {
     /// Default storage directory for Hatch virtual environments — i.e.
@@ -126,9 +128,15 @@ impl Locator for Hatch {
         let mut new_cache: WorkspaceVirtualDirs = Vec::new();
         if let Some(dirs) = config.workspace_directories.as_ref() {
             for workspace in dirs {
-                let virtual_dirs = resolve_project_virtual_dirs(workspace);
-                let env_names = resolve_project_env_names(workspace);
-                new_cache.push((workspace.clone(), virtual_dirs, env_names));
+                // Single parse of pyproject.toml + hatch.toml per workspace
+                // — both `virtual_dirs` and `env_names` come from the same
+                // TOML sections, so we read each file once here.
+                let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
+                new_cache.push((
+                    workspace.clone(),
+                    virtual_dirs,
+                    EnvNameMatcher::from_names(env_names),
+                ));
             }
         }
         *self
@@ -176,14 +184,14 @@ impl Locator for Hatch {
                 .workspace_virtual_dirs
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
-            'workspaces: for (workspace, virtual_dirs, env_names) in cache.iter() {
+            'workspaces: for (workspace, virtual_dirs, matcher) in cache.iter() {
                 for virtual_dir in virtual_dirs {
                     if prefix_is_directly_under(&prefix, virtual_dir) {
                         let env_name = prefix
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
-                        if !env_name_matches(&env_name, env_names) {
+                        if !matcher.matches(&env_name) {
                             continue;
                         }
                         classification = Some((env_name, Some(workspace.clone())));
@@ -237,9 +245,9 @@ impl Locator for Hatch {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .clone();
-        for (workspace, virtual_dirs, env_names) in &workspaces {
+        for (workspace, virtual_dirs, matcher) in &workspaces {
             for virtual_dir in virtual_dirs {
-                for env in find_envs_in_flat_dir(virtual_dir, Some(workspace.clone()), env_names) {
+                for env in find_envs_in_flat_dir(virtual_dir, Some(workspace.clone()), matcher) {
                     reporter.report_environment(&env);
                 }
             }
@@ -411,26 +419,58 @@ struct HatchDirs {
     env: Option<toml::value::Table>,
 }
 
-/// Read the configured `dirs.env.virtual` paths for a workspace and resolve
-/// each to an absolute directory. Both `pyproject.toml` (`[tool.hatch.dirs.env]`)
-/// and a top-level `hatch.toml` (`[dirs.env]`) are checked.
-///
-/// Each value may be relative (resolved against the workspace root),
-/// absolute, or use `~` / `${HOME}` expansion. Returns an empty Vec if the
-/// workspace is not a Hatch project, or if no `virtual` value is configured.
-///
-/// The returned paths are cached regardless of whether they currently exist
-/// on disk — a user may configure `virtual = ".hatch"` and create the env
-/// later in this process lifetime, and we want subsequent `try_from()`
-/// calls to recognise it without requiring the client to re-send `configure`.
-/// `find_envs_in_flat_dir()` handles missing directories at discovery time.
-fn resolve_project_virtual_dirs(workspace: &Path) -> Vec<PathBuf> {
+/// Parse `pyproject.toml`'s `[tool.hatch]` table and `hatch.toml` (which
+/// has the same shape as `HatchConfig`) for `workspace`, returning both
+/// in a single pass. Returns `(pyproject_hatch, hatch_toml)` where each
+/// is `None` if the corresponding file is missing or unparseable.
+fn read_workspace_hatch_sections(workspace: &Path) -> (Option<HatchConfig>, Option<HatchConfig>) {
+    let pyproject = fs::read_to_string(workspace.join("pyproject.toml"))
+        .ok()
+        .and_then(|s| toml::from_str::<PyProject>(&s).ok())
+        .and_then(|pp| pp.tool)
+        .and_then(|t| t.hatch);
+    let hatch_toml = fs::read_to_string(workspace.join("hatch.toml"))
+        .ok()
+        .and_then(|s| toml::from_str::<HatchConfig>(&s).ok());
+    (pyproject, hatch_toml)
+}
+
+fn extract_virtual_paths(sections: &(Option<HatchConfig>, Option<HatchConfig>)) -> Vec<String> {
+    let mut paths = Vec::new();
+    for section in [&sections.0, &sections.1].iter().copied().flatten() {
+        if let Some(virtual_value) = section
+            .dirs
+            .as_ref()
+            .and_then(|d| d.env.as_ref())
+            .and_then(|env| env.get("virtual"))
+            .and_then(|v| v.as_str().map(str::to_string))
+        {
+            paths.push(virtual_value);
+        }
+    }
+    paths
+}
+
+fn extract_env_names(sections: &(Option<HatchConfig>, Option<HatchConfig>)) -> HashSet<String> {
+    let mut names = HashSet::new();
+    names.insert(HATCH_IMPLICIT_DEFAULT_ENV.to_string());
+    for section in [&sections.0, &sections.1].iter().copied().flatten() {
+        if let Some(envs) = section.envs.as_ref() {
+            for key in envs.keys() {
+                names.insert(key.clone());
+            }
+        }
+    }
+    names
+}
+
+fn resolve_virtual_paths_against_workspace(workspace: &Path, raw: Vec<String>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    for raw in read_configured_virtual_paths(workspace) {
+    for raw_value in raw {
         // Skip empty/whitespace values. Without this, `virtual = ""` would
         // resolve to the workspace root and we'd misclassify any venv
         // directly under the workspace (e.g. `./.venv`) as Hatch-managed.
-        let trimmed = raw.trim();
+        let trimmed = raw_value.trim();
         if trimmed.is_empty() {
             continue;
         }
@@ -448,37 +488,34 @@ fn resolve_project_virtual_dirs(workspace: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-fn read_configured_virtual_paths(workspace: &Path) -> Vec<String> {
-    let mut paths = Vec::new();
-    // pyproject.toml: [tool.hatch.dirs.env]
-    if let Ok(contents) = fs::read_to_string(workspace.join("pyproject.toml")) {
-        if let Ok(pyproject) = toml::from_str::<PyProject>(&contents) {
-            if let Some(virtual_value) = pyproject
-                .tool
-                .and_then(|t| t.hatch)
-                .and_then(|h| h.dirs)
-                .and_then(|d| d.env)
-                .and_then(|env| env.get("virtual").cloned())
-                .and_then(|v| v.as_str().map(str::to_string))
-            {
-                paths.push(virtual_value);
-            }
-        }
-    }
-    // hatch.toml: [dirs.env]
-    if let Ok(contents) = fs::read_to_string(workspace.join("hatch.toml")) {
-        if let Ok(hatch) = toml::from_str::<HatchConfig>(&contents) {
-            if let Some(virtual_value) = hatch
-                .dirs
-                .and_then(|d| d.env)
-                .and_then(|env| env.get("virtual").cloned())
-                .and_then(|v| v.as_str().map(str::to_string))
-            {
-                paths.push(virtual_value);
-            }
-        }
-    }
-    paths
+/// Single entry point used by `configure()`: parses `pyproject.toml` and
+/// `hatch.toml` ONCE each per workspace and derives both the resolved
+/// virtual directories and the declared env names from the same parse.
+fn resolve_workspace_hatch_config(workspace: &Path) -> (Vec<PathBuf>, HashSet<String>) {
+    let sections = read_workspace_hatch_sections(workspace);
+    let virtual_dirs =
+        resolve_virtual_paths_against_workspace(workspace, extract_virtual_paths(&sections));
+    let env_names = extract_env_names(&sections);
+    (virtual_dirs, env_names)
+}
+
+/// Read the configured `dirs.env.virtual` paths for a workspace and resolve
+/// each to an absolute directory. Both `pyproject.toml` (`[tool.hatch.dirs.env]`)
+/// and a top-level `hatch.toml` (`[dirs.env]`) are checked.
+///
+/// Each value may be relative (resolved against the workspace root),
+/// absolute, or use `~` / `${HOME}` expansion. Returns an empty Vec if the
+/// workspace is not a Hatch project, or if no `virtual` value is configured.
+///
+/// The returned paths are cached regardless of whether they currently exist
+/// on disk — a user may configure `virtual = ".hatch"` and create the env
+/// later in this process lifetime, and we want subsequent `try_from()`
+/// calls to recognise it without requiring the client to re-send `configure`.
+/// `find_envs_in_flat_dir()` handles missing directories at discovery time.
+#[cfg(test)]
+fn resolve_project_virtual_dirs(workspace: &Path) -> Vec<PathBuf> {
+    let sections = read_workspace_hatch_sections(workspace);
+    resolve_virtual_paths_against_workspace(workspace, extract_virtual_paths(&sections))
 }
 
 /// Hatch's `default` environment is always implicitly available — Hatch
@@ -496,30 +533,10 @@ const HATCH_IMPLICIT_DEFAULT_ENV: &str = "default";
 /// are only claimed when their leaf directory name matches a declared
 /// env name — otherwise unrelated virtualenvwrapper / `venv` envs in
 /// the same directory would be misclassified as Hatch.
+#[cfg(test)]
 fn resolve_project_env_names(workspace: &Path) -> HashSet<String> {
-    let mut names = HashSet::new();
-    names.insert(HATCH_IMPLICIT_DEFAULT_ENV.to_string());
-    // pyproject.toml: [tool.hatch.envs.<name>]
-    if let Ok(contents) = fs::read_to_string(workspace.join("pyproject.toml")) {
-        if let Ok(pyproject) = toml::from_str::<PyProject>(&contents) {
-            if let Some(envs) = pyproject.tool.and_then(|t| t.hatch).and_then(|h| h.envs) {
-                for key in envs.keys() {
-                    names.insert(key.clone());
-                }
-            }
-        }
-    }
-    // hatch.toml: [envs.<name>]
-    if let Ok(contents) = fs::read_to_string(workspace.join("hatch.toml")) {
-        if let Ok(hatch) = toml::from_str::<HatchConfig>(&contents) {
-            if let Some(envs) = hatch.envs {
-                for key in envs.keys() {
-                    names.insert(key.clone());
-                }
-            }
-        }
-    }
-    names
+    let sections = read_workspace_hatch_sections(workspace);
+    extract_env_names(&sections)
 }
 
 // ---------------------------------------------------------------------------
@@ -566,45 +583,66 @@ fn find_envs_in_default_storage(storage: &Path) -> Vec<PythonEnvironment> {
     envs
 }
 
-/// Returns true if `leaf` (a directory name) matches one of the declared
-/// Hatch env names in `allowed`.
+/// Pre-normalized allowlist of declared Hatch env names for a workspace,
+/// used to filter venvs in a configured `dirs.env.virtual` directory.
 ///
 /// Hatch's matrix feature creates per-variant directories named
 /// `<env_name>.<variant>` (e.g. `test.py3.10`), so a leaf matches if it
-/// equals a declared name *or* starts with `"<declared>."`.
+/// equals a declared name *or* starts with `"<declared>."`. We precompute
+/// both the normalized name and its `"<name>."` prefix so the hot path
+/// (`try_from()` / `find_envs_in_flat_dir()`) avoids per-call `format!()`
+/// allocations.
 ///
 /// On case-insensitive filesystems (Windows / default macOS) the on-disk
-/// leaf may differ in case from the TOML key; compare lowercased on those
-/// platforms.
-fn env_name_matches(leaf: &str, allowed: &HashSet<String>) -> bool {
-    fn normalize(s: &str) -> String {
-        #[cfg(any(windows, target_os = "macos"))]
-        {
-            s.to_lowercase()
-        }
-        #[cfg(not(any(windows, target_os = "macos")))]
-        {
-            s.to_string()
-        }
-    }
-    let leaf_n = normalize(leaf);
-    allowed.iter().any(|name| {
-        let n = normalize(name);
-        if n.is_empty() {
-            return false;
-        }
-        leaf_n == n || leaf_n.starts_with(&format!("{n}."))
-    })
+/// leaf may differ in case from the TOML key, so we lowercase both sides
+/// on those platforms at construction time.
+#[derive(Clone, Default, Debug)]
+struct EnvNameMatcher {
+    /// (normalized_name, normalized_name + ".") pairs.
+    entries: Vec<(String, String)>,
 }
 
-/// Walk `<dir>/<venv_name>/` and report each venv discovered. `env_names`
+fn normalize_env_name(s: &str) -> String {
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        s.to_lowercase()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        s.to_string()
+    }
+}
+
+impl EnvNameMatcher {
+    fn from_names<I: IntoIterator<Item = String>>(names: I) -> Self {
+        let mut entries: Vec<(String, String)> = Vec::new();
+        for raw in names {
+            let n = normalize_env_name(&raw);
+            if n.is_empty() {
+                continue;
+            }
+            let prefix = format!("{n}.");
+            entries.push((n, prefix));
+        }
+        Self { entries }
+    }
+
+    fn matches(&self, leaf: &str) -> bool {
+        let leaf_n = normalize_env_name(leaf);
+        self.entries
+            .iter()
+            .any(|(n, p)| leaf_n == *n || leaf_n.starts_with(p.as_str()))
+    }
+}
+
+/// Walk `<dir>/<venv_name>/` and report each venv discovered. `matcher`
 /// is the allow-list of leaf directory names that are considered Hatch
 /// envs (so a shared dir like `~/.virtualenvs` only yields envs the
 /// workspace actually declares).
 fn find_envs_in_flat_dir(
     dir: &Path,
     project: Option<PathBuf>,
-    env_names: &HashSet<String>,
+    matcher: &EnvNameMatcher,
 ) -> Vec<PythonEnvironment> {
     let mut envs = Vec::new();
     let entries = match fs::read_dir(dir) {
@@ -620,7 +658,7 @@ fn find_envs_in_flat_dir(
             Some(n) => n.to_string_lossy().to_string(),
             None => continue,
         };
-        if !env_name_matches(&leaf, env_names) {
+        if !matcher.matches(&leaf) {
             continue;
         }
         if let Some(env) = build_env_from_prefix(&env_dir, project.clone()) {
@@ -744,7 +782,7 @@ mod tests {
             workspace_virtual_dirs: Arc::new(Mutex::new(vec![(
                 workspace.to_path_buf(),
                 virtual_dirs,
-                env_names,
+                EnvNameMatcher::from_names(env_names),
             )])),
         }
     }
@@ -916,8 +954,8 @@ mod tests {
 
         let virtual_dirs = resolve_project_virtual_dirs(&project);
         assert_eq!(virtual_dirs.len(), 1);
-        let env_names = resolve_project_env_names(&project);
-        let envs = find_envs_in_flat_dir(&virtual_dirs[0], Some(project.clone()), &env_names);
+        let matcher = EnvNameMatcher::from_names(resolve_project_env_names(&project));
+        let envs = find_envs_in_flat_dir(&virtual_dirs[0], Some(project.clone()), &matcher);
         assert_eq!(envs.len(), 1);
         assert_eq!(envs[0].project, Some(norm_case(&project)));
     }
@@ -1288,9 +1326,10 @@ mod tests {
         write_pyvenv_cfg(&foreign, "some-other-project", "3.11.0");
         write_python_exe(&foreign);
 
-        let mut names = HashSet::new();
-        names.insert("default".to_string());
-        let envs = find_envs_in_flat_dir(&shared, None, &names);
+        let mut raw = HashSet::new();
+        raw.insert("default".to_string());
+        let matcher = EnvNameMatcher::from_names(raw);
+        let envs = find_envs_in_flat_dir(&shared, None, &matcher);
         assert_eq!(envs.len(), 1);
         assert_eq!(envs[0].prefix, Some(hatch_env));
     }
@@ -1315,9 +1354,10 @@ mod tests {
         write_pyvenv_cfg(&foreign, "unrelated", "3.11.0");
         write_python_exe(&foreign);
 
-        let mut names = HashSet::new();
-        names.insert("test".to_string());
-        let envs = find_envs_in_flat_dir(&shared, None, &names);
+        let mut raw = HashSet::new();
+        raw.insert("test".to_string());
+        let matcher = EnvNameMatcher::from_names(raw);
+        let envs = find_envs_in_flat_dir(&shared, None, &matcher);
         assert_eq!(envs.len(), 2);
     }
 
@@ -1326,8 +1366,9 @@ mod tests {
     fn env_name_matches_is_case_insensitive_on_case_folding_filesystems() {
         let mut names = HashSet::new();
         names.insert("Default".to_string());
-        assert!(env_name_matches("default", &names));
-        assert!(env_name_matches("DEFAULT", &names));
+        let matcher = EnvNameMatcher::from_names(names);
+        assert!(matcher.matches("default"));
+        assert!(matcher.matches("DEFAULT"));
     }
 
     #[test]
