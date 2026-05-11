@@ -188,10 +188,14 @@ impl Locator for Hatch {
         // unrelated virtualenvwrapper / `venv` env in the same directory
         // would be misclassified as Hatch-managed.
         if classification.is_none() {
-            let cache = self
+            // Snapshot the cache (cheap `Arc` clones) under the lock and
+            // release it before iterating, to keep `configure()` from being
+            // blocked by callers on the hot identification path.
+            let cache: Vec<Arc<WorkspaceEntry>> = self
                 .workspace_virtual_dirs
                 .lock()
-                .expect("workspace_virtual_dirs mutex poisoned");
+                .expect("workspace_virtual_dirs mutex poisoned")
+                .clone();
             'workspaces: for entry in cache.iter() {
                 for virtual_dir in &entry.virtual_dirs {
                     if prefix_is_directly_under(&prefix, virtual_dir) {
