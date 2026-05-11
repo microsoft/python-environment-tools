@@ -139,10 +139,7 @@ impl Locator for Hatch {
                 ));
             }
         }
-        *self
-            .workspace_virtual_dirs
-            .lock()
-            .unwrap_or_else(|p| p.into_inner()) = new_cache;
+        *self.workspace_virtual_dirs.lock().unwrap() = new_cache;
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -180,10 +177,7 @@ impl Locator for Hatch {
         // unrelated virtualenvwrapper / `venv` env in the same directory
         // would be misclassified as Hatch-managed.
         if classification.is_none() {
-            let cache = self
-                .workspace_virtual_dirs
-                .lock()
-                .unwrap_or_else(|p| p.into_inner());
+            let cache = self.workspace_virtual_dirs.lock().unwrap();
             'workspaces: for (workspace, virtual_dirs, matcher) in cache.iter() {
                 for virtual_dir in virtual_dirs {
                     if prefix_is_directly_under(&prefix, virtual_dir) {
@@ -240,11 +234,7 @@ impl Locator for Hatch {
         // 2. Walk project-local virtual directories for each configured workspace.
         //    Apply the same env-name guard as `try_from()` so shared directories
         //    (e.g. `~/.virtualenvs`) only yield the workspace's declared envs.
-        let workspaces = self
-            .workspace_virtual_dirs
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone();
+        let workspaces = self.workspace_virtual_dirs.lock().unwrap().clone();
         for (workspace, virtual_dirs, matcher) in &workspaces {
             for virtual_dir in virtual_dirs {
                 for env in find_envs_in_flat_dir(virtual_dir, Some(workspace.clone()), matcher) {
@@ -383,10 +373,12 @@ fn match_default_storage_layout(prefix: &Path, storage: &Path) -> Option<String>
 
 /// True iff `prefix`'s parent equals `dir` (case-insensitive on Windows).
 ///
-/// `dir` is expected to be already normalized via `norm_case()` (entries
-/// cached in `resolve_project_virtual_dirs()` always are), so we only
-/// normalize `prefix.parent()` here — avoiding redundant `GetLongPathNameW`
-/// / case-folding work on Windows in the identification hot path.
+/// `dir` is expected to be already normalized via `norm_case()` — entries
+/// cached on the `Hatch` locator are normalized at `configure()`-time by
+/// `resolve_virtual_paths_against_workspace()` (called from
+/// `resolve_workspace_hatch_config()`), so we only normalize
+/// `prefix.parent()` here — avoiding redundant `GetLongPathNameW` /
+/// case-folding work on Windows in the identification hot path.
 fn prefix_is_directly_under(prefix: &Path, dir: &Path) -> bool {
     match prefix.parent() {
         Some(parent) => norm_case(parent) == dir,
