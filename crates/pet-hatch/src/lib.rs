@@ -31,6 +31,7 @@
 //! `${HOME}` style expansion (e.g. `~/.virtualenvs`).
 
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -56,9 +57,18 @@ use serde::Deserialize;
 /// plugin's `PLUGIN_NAME` in Hatch's source.
 const VIRTUAL_ENV_SUBDIR: [&str; 2] = ["env", "virtual"];
 
-/// Per-workspace cache of resolved Hatch virtual directories. Each entry is
-/// `(workspace_root, resolved_virtual_dirs)` and is populated by `configure()`.
-type WorkspaceVirtualDirs = Vec<(PathBuf, Vec<PathBuf>)>;
+/// Per-workspace cache of resolved Hatch virtual directories and the set
+/// of declared env names for that workspace. Each entry is
+/// `(workspace_root, resolved_virtual_dirs, allowed_env_names)` and is
+/// populated by `configure()`.
+///
+/// `allowed_env_names` is used as a Hatch-specific guard when matching
+/// venvs in workspace-configured `dirs.env.virtual` directories: a shared
+/// directory like `~/.virtualenvs` can contain non-Hatch envs (created by
+/// virtualenvwrapper, plain `venv`, etc.), so we only claim a venv if its
+/// leaf directory name matches one of the env names declared in the
+/// project's Hatch configuration.
+type WorkspaceVirtualDirs = Vec<(PathBuf, Vec<PathBuf>, HashSet<String>)>;
 
 pub struct Hatch {
     /// Default storage directory for Hatch virtual environments — i.e.
@@ -108,21 +118,23 @@ impl Locator for Hatch {
     }
 
     fn configure(&self, config: &Configuration) {
-        // Precompute and cache each workspace's resolved Hatch virtual dirs so
-        // `try_from()` does not have to re-read/parse pyproject.toml/hatch.toml
-        // on every executable identification attempt. We build the new cache
-        // *outside* the lock to keep disk I/O out of the critical section.
+        // Precompute and cache each workspace's resolved Hatch virtual dirs
+        // and declared env names so `try_from()` does not have to re-read
+        // or re-parse pyproject.toml / hatch.toml on every executable
+        // identification attempt. We build the new cache *outside* the
+        // lock to keep disk I/O out of the critical section.
         let mut new_cache: WorkspaceVirtualDirs = Vec::new();
         if let Some(dirs) = config.workspace_directories.as_ref() {
             for workspace in dirs {
                 let virtual_dirs = resolve_project_virtual_dirs(workspace);
-                new_cache.push((workspace.clone(), virtual_dirs));
+                let env_names = resolve_project_env_names(workspace);
+                new_cache.push((workspace.clone(), virtual_dirs, env_names));
             }
         }
         *self
             .workspace_virtual_dirs
             .lock()
-            .expect("workspace_virtual_dirs mutex poisoned") = new_cache;
+            .unwrap_or_else(|p| p.into_inner()) = new_cache;
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -152,18 +164,28 @@ impl Locator for Hatch {
         // `dirs.env.virtual` directory (flat layout). Inspect the cached
         // workspaces under the lock and capture the match instead of cloning
         // the entire cache.
+        //
+        // Because configured `dirs.env.virtual` may point at a shared
+        // directory (e.g. `~/.virtualenvs`), we additionally require that
+        // the venv's leaf directory name matches one of the env names
+        // declared in the workspace's Hatch configuration. Otherwise an
+        // unrelated virtualenvwrapper / `venv` env in the same directory
+        // would be misclassified as Hatch-managed.
         if classification.is_none() {
             let cache = self
                 .workspace_virtual_dirs
                 .lock()
-                .expect("workspace_virtual_dirs mutex poisoned");
-            'workspaces: for (workspace, virtual_dirs) in cache.iter() {
+                .unwrap_or_else(|p| p.into_inner());
+            'workspaces: for (workspace, virtual_dirs, env_names) in cache.iter() {
                 for virtual_dir in virtual_dirs {
                     if prefix_is_directly_under(&prefix, virtual_dir) {
                         let env_name = prefix
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
+                        if !env_name_matches(&env_name, env_names) {
+                            continue;
+                        }
                         classification = Some((env_name, Some(workspace.clone())));
                         break 'workspaces;
                     }
@@ -208,14 +230,16 @@ impl Locator for Hatch {
         }
 
         // 2. Walk project-local virtual directories for each configured workspace.
+        //    Apply the same env-name guard as `try_from()` so shared directories
+        //    (e.g. `~/.virtualenvs`) only yield the workspace's declared envs.
         let workspaces = self
             .workspace_virtual_dirs
             .lock()
-            .expect("workspace_virtual_dirs mutex poisoned")
+            .unwrap_or_else(|p| p.into_inner())
             .clone();
-        for (workspace, virtual_dirs) in &workspaces {
+        for (workspace, virtual_dirs, env_names) in &workspaces {
             for virtual_dir in virtual_dirs {
-                for env in find_envs_in_flat_dir(virtual_dir, Some(workspace.clone())) {
+                for env in find_envs_in_flat_dir(virtual_dir, Some(workspace.clone()), env_names) {
                     reporter.report_environment(&env);
                 }
             }
@@ -379,6 +403,7 @@ struct PyProjectTool {
 #[derive(Deserialize, Default)]
 struct HatchConfig {
     dirs: Option<HatchDirs>,
+    envs: Option<toml::value::Table>,
 }
 
 #[derive(Deserialize, Default)]
@@ -456,6 +481,47 @@ fn read_configured_virtual_paths(workspace: &Path) -> Vec<String> {
     paths
 }
 
+/// Hatch's `default` environment is always implicitly available — Hatch
+/// docs: "every project has a `default` environment". So even when
+/// `[tool.hatch.envs.*]` declares no env, `default` is still a valid
+/// env name. We include it in the allowlist unconditionally.
+const HATCH_IMPLICIT_DEFAULT_ENV: &str = "default";
+
+/// Read the set of Hatch env names declared for `workspace`. Reads
+/// `[tool.hatch.envs.<name>]` from `pyproject.toml` and `[envs.<name>]`
+/// from `hatch.toml`. The implicit `default` env is always included.
+///
+/// Used as a Hatch-specific guard so that venvs in a configured but
+/// potentially shared `dirs.env.virtual` directory (e.g. `~/.virtualenvs`)
+/// are only claimed when their leaf directory name matches a declared
+/// env name — otherwise unrelated virtualenvwrapper / `venv` envs in
+/// the same directory would be misclassified as Hatch.
+fn resolve_project_env_names(workspace: &Path) -> HashSet<String> {
+    let mut names = HashSet::new();
+    names.insert(HATCH_IMPLICIT_DEFAULT_ENV.to_string());
+    // pyproject.toml: [tool.hatch.envs.<name>]
+    if let Ok(contents) = fs::read_to_string(workspace.join("pyproject.toml")) {
+        if let Ok(pyproject) = toml::from_str::<PyProject>(&contents) {
+            if let Some(envs) = pyproject.tool.and_then(|t| t.hatch).and_then(|h| h.envs) {
+                for key in envs.keys() {
+                    names.insert(key.clone());
+                }
+            }
+        }
+    }
+    // hatch.toml: [envs.<name>]
+    if let Ok(contents) = fs::read_to_string(workspace.join("hatch.toml")) {
+        if let Ok(hatch) = toml::from_str::<HatchConfig>(&contents) {
+            if let Some(envs) = hatch.envs {
+                for key in envs.keys() {
+                    names.insert(key.clone());
+                }
+            }
+        }
+    }
+    names
+}
+
 // ---------------------------------------------------------------------------
 // Discovery
 // ---------------------------------------------------------------------------
@@ -500,8 +566,46 @@ fn find_envs_in_default_storage(storage: &Path) -> Vec<PythonEnvironment> {
     envs
 }
 
-/// Walk `<dir>/<venv_name>/` and report each venv discovered.
-fn find_envs_in_flat_dir(dir: &Path, project: Option<PathBuf>) -> Vec<PythonEnvironment> {
+/// Returns true if `leaf` (a directory name) matches one of the declared
+/// Hatch env names in `allowed`.
+///
+/// Hatch's matrix feature creates per-variant directories named
+/// `<env_name>.<variant>` (e.g. `test.py3.10`), so a leaf matches if it
+/// equals a declared name *or* starts with `"<declared>."`.
+///
+/// On case-insensitive filesystems (Windows / default macOS) the on-disk
+/// leaf may differ in case from the TOML key; compare lowercased on those
+/// platforms.
+fn env_name_matches(leaf: &str, allowed: &HashSet<String>) -> bool {
+    fn normalize(s: &str) -> String {
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            s.to_lowercase()
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            s.to_string()
+        }
+    }
+    let leaf_n = normalize(leaf);
+    allowed.iter().any(|name| {
+        let n = normalize(name);
+        if n.is_empty() {
+            return false;
+        }
+        leaf_n == n || leaf_n.starts_with(&format!("{n}."))
+    })
+}
+
+/// Walk `<dir>/<venv_name>/` and report each venv discovered. `env_names`
+/// is the allow-list of leaf directory names that are considered Hatch
+/// envs (so a shared dir like `~/.virtualenvs` only yields envs the
+/// workspace actually declares).
+fn find_envs_in_flat_dir(
+    dir: &Path,
+    project: Option<PathBuf>,
+    env_names: &HashSet<String>,
+) -> Vec<PythonEnvironment> {
     let mut envs = Vec::new();
     let entries = match fs::read_dir(dir) {
         Ok(d) => d,
@@ -510,6 +614,13 @@ fn find_envs_in_flat_dir(dir: &Path, project: Option<PathBuf>) -> Vec<PythonEnvi
     for entry in entries.filter_map(Result::ok) {
         let env_dir = entry.path();
         if !env_dir.is_dir() {
+            continue;
+        }
+        let leaf = match env_dir.file_name() {
+            Some(n) => n.to_string_lossy().to_string(),
+            None => continue,
+        };
+        if !env_name_matches(&leaf, env_names) {
             continue;
         }
         if let Some(env) = build_env_from_prefix(&env_dir, project.clone()) {
@@ -627,11 +738,13 @@ mod tests {
         workspace: &Path,
     ) -> Hatch {
         let virtual_dirs = resolve_project_virtual_dirs(workspace);
+        let env_names = resolve_project_env_names(workspace);
         Hatch {
             default_virtual_dir,
             workspace_virtual_dirs: Arc::new(Mutex::new(vec![(
                 workspace.to_path_buf(),
                 virtual_dirs,
+                env_names,
             )])),
         }
     }
@@ -803,7 +916,8 @@ mod tests {
 
         let virtual_dirs = resolve_project_virtual_dirs(&project);
         assert_eq!(virtual_dirs.len(), 1);
-        let envs = find_envs_in_flat_dir(&virtual_dirs[0], Some(project.clone()));
+        let env_names = resolve_project_env_names(&project);
+        let envs = find_envs_in_flat_dir(&virtual_dirs[0], Some(project.clone()), &env_names);
         assert_eq!(envs.len(), 1);
         assert_eq!(envs[0].project, Some(norm_case(&project)));
     }
@@ -1057,15 +1171,22 @@ mod tests {
             None => std::env::remove_var("USERPROFILE"),
         }
 
-        let expected = norm_case(
-            fake_home
-                .join(".local")
-                .join("share")
-                .join("hatch")
-                .join("env")
-                .join("virtual"),
-        );
-        assert_eq!(resolved, Some(expected));
+        // Compare via path components rather than byte-exact strings: on
+        // Windows, `expand_path` may preserve the forward-slash separators
+        // present in the input value (`~/.local/share/hatch`) while
+        // `PathBuf::join` adds backslashes, leading to a mixed-separator
+        // representation that still refers to the same logical path. Path
+        // component iteration is separator-agnostic.
+        let resolved = resolved.expect("HATCH_DATA_DIR resolution returned None");
+        let expected = fake_home
+            .join(".local")
+            .join("share")
+            .join("hatch")
+            .join("env")
+            .join("virtual");
+        let expected_components: Vec<_> = expected.components().collect();
+        let resolved_components: Vec<_> = resolved.components().collect();
+        assert_eq!(resolved_components, expected_components);
     }
 
     #[test]
@@ -1114,5 +1235,129 @@ mod tests {
         )
         .unwrap();
         assert!(resolve_project_virtual_dirs(&project).is_empty());
+    }
+
+    #[test]
+    fn resolve_project_env_names_includes_implicit_default() {
+        // Hatch always provides a `default` env, even if `[tool.hatch.envs.*]`
+        // declares none.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+        )
+        .unwrap();
+        let names = resolve_project_env_names(&project);
+        assert!(names.contains("default"));
+    }
+
+    #[test]
+    fn resolve_project_env_names_reads_declared_envs() {
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.envs.default]\n[tool.hatch.envs.test]\n[tool.hatch.envs.docs]\n",
+        )
+        .unwrap();
+        let names = resolve_project_env_names(&project);
+        assert!(names.contains("default"));
+        assert!(names.contains("test"));
+        assert!(names.contains("docs"));
+    }
+
+    #[test]
+    fn find_envs_in_flat_dir_filters_non_declared_envs() {
+        // A shared `dirs.env.virtual` directory (e.g. ~/.virtualenvs) may
+        // contain envs created by other tools. Only envs whose leaf
+        // directory name matches a declared Hatch env should be claimed.
+        let temp = TempDir::new().unwrap();
+        let shared = temp.path().join("shared");
+        fs::create_dir_all(&shared).unwrap();
+
+        // Hatch-managed env.
+        let hatch_env = shared.join("default");
+        write_pyvenv_cfg(&hatch_env, "default", "3.11.0");
+        write_python_exe(&hatch_env);
+
+        // Unrelated env (e.g. virtualenvwrapper) in the same dir.
+        let foreign = shared.join("some-other-project");
+        write_pyvenv_cfg(&foreign, "some-other-project", "3.11.0");
+        write_python_exe(&foreign);
+
+        let mut names = HashSet::new();
+        names.insert("default".to_string());
+        let envs = find_envs_in_flat_dir(&shared, None, &names);
+        assert_eq!(envs.len(), 1);
+        assert_eq!(envs[0].prefix, Some(hatch_env));
+    }
+
+    #[test]
+    fn find_envs_in_flat_dir_accepts_matrix_variants() {
+        // Hatch matrix envs land on disk as `<env>.<variant>` (e.g.
+        // `test.py3.10`). They must still be claimed by the declared env
+        // `test`.
+        let temp = TempDir::new().unwrap();
+        let shared = temp.path().join("shared");
+        fs::create_dir_all(&shared).unwrap();
+
+        let v1 = shared.join("test.py3.10");
+        write_pyvenv_cfg(&v1, "test.py3.10", "3.10.0");
+        write_python_exe(&v1);
+        let v2 = shared.join("test.py3.11");
+        write_pyvenv_cfg(&v2, "test.py3.11", "3.11.0");
+        write_python_exe(&v2);
+        // Foreign env must still be rejected.
+        let foreign = shared.join("unrelated");
+        write_pyvenv_cfg(&foreign, "unrelated", "3.11.0");
+        write_python_exe(&foreign);
+
+        let mut names = HashSet::new();
+        names.insert("test".to_string());
+        let envs = find_envs_in_flat_dir(&shared, None, &names);
+        assert_eq!(envs.len(), 2);
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn env_name_matches_is_case_insensitive_on_case_folding_filesystems() {
+        let mut names = HashSet::new();
+        names.insert("Default".to_string());
+        assert!(env_name_matches("default", &names));
+        assert!(env_name_matches("DEFAULT", &names));
+    }
+
+    #[test]
+    fn try_from_rejects_unknown_leaf_under_configured_virtual_dir() {
+        // Workspace declares only `default`. A sibling venv created by
+        // another tool in the same configured `virtual` directory must
+        // not be claimed.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        let shared = temp.path().join("shared");
+        fs::create_dir_all(&shared).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            format!(
+                "[tool.hatch.dirs.env]\nvirtual = \"{}\"\n[tool.hatch.envs.default]\n",
+                shared.display().to_string().replace('\\', "\\\\")
+            ),
+        )
+        .unwrap();
+
+        let foreign = shared.join("some-other-project");
+        write_pyvenv_cfg(&foreign, "some-other-project", "3.11.0");
+        let exe = write_python_exe(&foreign);
+
+        let locator = make_locator_with_workspace(None, &project);
+        let env = PythonEnv::new(exe, Some(foreign), None);
+        assert!(
+            locator.try_from(&env).is_none(),
+            "Hatch should not claim non-declared envs in a shared virtual dir"
+        );
     }
 }
