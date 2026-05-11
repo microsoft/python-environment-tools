@@ -139,7 +139,10 @@ impl Locator for Hatch {
                 ));
             }
         }
-        *self.workspace_virtual_dirs.lock().unwrap() = new_cache;
+        *self
+            .workspace_virtual_dirs
+            .lock()
+            .expect("workspace_virtual_dirs mutex poisoned") = new_cache;
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -177,7 +180,10 @@ impl Locator for Hatch {
         // unrelated virtualenvwrapper / `venv` env in the same directory
         // would be misclassified as Hatch-managed.
         if classification.is_none() {
-            let cache = self.workspace_virtual_dirs.lock().unwrap();
+            let cache = self
+                .workspace_virtual_dirs
+                .lock()
+                .expect("workspace_virtual_dirs mutex poisoned");
             'workspaces: for (workspace, virtual_dirs, matcher) in cache.iter() {
                 for virtual_dir in virtual_dirs {
                     if prefix_is_directly_under(&prefix, virtual_dir) {
@@ -234,7 +240,11 @@ impl Locator for Hatch {
         // 2. Walk project-local virtual directories for each configured workspace.
         //    Apply the same env-name guard as `try_from()` so shared directories
         //    (e.g. `~/.virtualenvs`) only yield the workspace's declared envs.
-        let workspaces = self.workspace_virtual_dirs.lock().unwrap().clone();
+        let workspaces = self
+            .workspace_virtual_dirs
+            .lock()
+            .expect("workspace_virtual_dirs mutex poisoned")
+            .clone();
         for (workspace, virtual_dirs, matcher) in &workspaces {
             for virtual_dir in virtual_dirs {
                 for env in find_envs_in_flat_dir(virtual_dir, Some(workspace.clone()), matcher) {
