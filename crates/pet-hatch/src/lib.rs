@@ -273,6 +273,13 @@ fn get_default_virtual_dir(environment: &dyn Environment) -> Option<PathBuf> {
             // `HATCH_DATA_DIR=~/.local/share/hatch` resolves to the user
             // home rather than a literal `~` directory.
             let expanded = expand_path(PathBuf::from(trimmed));
+            // If the home directory is unavailable, `expand_path()` returns
+            // the input verbatim. Don't normalize a leading `~` into a
+            // literal directory under cwd — bail out so Hatch envs are not
+            // attributed to a bogus path.
+            if path_starts_with_tilde(&expanded) {
+                return None;
+            }
             return Some(norm_case(append_virtual_subdir(expanded)));
         }
     }
@@ -287,6 +294,14 @@ fn append_virtual_subdir(data_dir: PathBuf) -> PathBuf {
         path.push(segment);
     }
     path
+}
+
+/// Returns true if `path` still begins with a literal `~`, indicating that
+/// `expand_path()` could not resolve the user's home directory (no HOME /
+/// USERPROFILE set). Such paths must not be normalized or joined against
+/// the workspace root, since `~` was not the user's intended directory.
+fn path_starts_with_tilde(path: &Path) -> bool {
+    path.to_str().is_some_and(|s| s.starts_with('~'))
 }
 
 /// Platform default for Hatch's data directory.
@@ -470,6 +485,12 @@ fn resolve_virtual_paths_against_workspace(workspace: &Path, raw: Vec<String>) -
         // "~/.virtualenvs" resolve to the user home rather than being
         // joined onto the workspace as a relative path.
         let expanded = expand_path(PathBuf::from(trimmed));
+        // If the home directory is unavailable, `expand_path()` returns
+        // the input verbatim. Skip such entries rather than joining a
+        // literal `~` onto the workspace root (e.g. `<workspace>/~/...`).
+        if path_starts_with_tilde(&expanded) {
+            continue;
+        }
         let resolved = if expanded.is_absolute() {
             expanded
         } else {
@@ -1029,6 +1050,46 @@ mod tests {
         }
 
         assert_eq!(dirs, vec![norm_case(&virtualenvs)]);
+    }
+
+    #[test]
+    fn resolve_project_virtual_dirs_skips_unexpanded_tilde() {
+        // If HOME / USERPROFILE are unset, `expand_path("~/.virtualenvs")`
+        // returns the input verbatim. We must not join `~` onto the
+        // workspace root (yielding `<workspace>/~/.virtualenvs`) or pass
+        // a tilde-prefixed path through `norm_case()` — both would
+        // misclassify unrelated envs.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("proj");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \"~/.virtualenvs\"\n",
+        )
+        .unwrap();
+
+        let prev_home = std::env::var_os("HOME");
+        let prev_user_profile = std::env::var_os("USERPROFILE");
+        std::env::remove_var("HOME");
+        std::env::remove_var("USERPROFILE");
+
+        let dirs = resolve_project_virtual_dirs(&project);
+
+        match prev_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match prev_user_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+
+        assert!(
+            dirs.is_empty(),
+            "unexpanded tilde paths must not be claimed: got {dirs:?}"
+        );
     }
 
     #[test]
