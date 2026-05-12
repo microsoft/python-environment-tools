@@ -795,6 +795,25 @@ mod tests {
         .unwrap();
     }
 
+    /// Canonicalize a temp path for test comparisons. On Windows, `TempDir`
+    /// roots can come back as 8.3 short names (e.g. `C:\Users\RUNNER~1\...`)
+    /// while paths surfaced via `fs::read_dir` or env-var expansion are in
+    /// long form (`C:\Users\runneradmin\...`). Without this both sides of
+    /// `PathBuf` equality checks would not match on CI runners. The
+    /// `\\?\` verbatim prefix added by `fs::canonicalize` is stripped so the
+    /// resulting path matches what production code produces.
+    fn canonicalize_for_test(p: &Path) -> PathBuf {
+        let canon = fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        #[cfg(windows)]
+        {
+            let s = canon.to_string_lossy().to_string();
+            if let Some(stripped) = s.strip_prefix(r"\\?\") {
+                return PathBuf::from(stripped);
+            }
+        }
+        canon
+    }
+
     fn write_python_exe(prefix: &Path) -> PathBuf {
         let bin = prefix.join(if cfg!(windows) { "Scripts" } else { "bin" });
         fs::create_dir_all(&bin).unwrap();
@@ -1268,6 +1287,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let fake_home = temp.path().join("home");
         fs::create_dir_all(&fake_home).unwrap();
+        // Canonicalize so 8.3 short names on Windows CI runners don't
+        // cause spurious path mismatches when comparing against the
+        // value produced by `expand_path` + `norm_case`.
+        let fake_home = canonicalize_for_test(&fake_home);
 
         let prev_home = std::env::var_os("HOME");
         let prev_user_profile = std::env::var_os("USERPROFILE");
@@ -1400,6 +1423,10 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let shared = temp.path().join("shared");
         fs::create_dir_all(&shared).unwrap();
+        // Canonicalize so 8.3 short names on Windows CI runners don't
+        // cause spurious path mismatches when comparing prefixes that
+        // were surfaced via `fs::read_dir`.
+        let shared = canonicalize_for_test(&shared);
 
         // Hatch-managed env.
         let hatch_env = shared.join("default");
