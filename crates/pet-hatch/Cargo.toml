@@ -1,0 +1,16 @@
+[package]
+name = "pet-hatch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pet-core = { path = "../pet-core" }
+pet-fs = { path = "../pet-fs" }
+pet-python-utils = { path = "../pet-python-utils" }
+serde = { version = "1.0.152", features = ["derive"] }
+toml = "0.9.7"
+log = "0.4.21"
+
+[dev-dependencies]
+tempfile = "3.13"

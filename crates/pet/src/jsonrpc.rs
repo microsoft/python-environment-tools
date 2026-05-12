@@ -2066,6 +2066,7 @@ mod tests {
                 RefreshStatePersistence::SyncedDiscoveryState,
             ),
             (LocatorKind::PipEnv, RefreshStatePersistence::ConfiguredOnly),
+            (LocatorKind::Hatch, RefreshStatePersistence::ConfiguredOnly),
             (
                 LocatorKind::VirtualEnvWrapper,
                 RefreshStatePersistence::Stateless,
