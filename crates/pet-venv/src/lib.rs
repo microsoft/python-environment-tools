@@ -396,4 +396,118 @@ mod tests {
 
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_venv_try_from_without_prefix_derives_from_executable() {
+        let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let cfg_path = dir.path().join("pyvenv.cfg");
+        let mut file = fs::File::create(&cfg_path).unwrap();
+        writeln!(file, "version = 3.12.0").unwrap();
+
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        // No prefix provided — should derive from executable parent's parent
+        let env = PythonEnv::new(python_path, None, None);
+        let venv = Venv::new();
+        let result = venv.try_from(&env);
+
+        assert!(result.is_some());
+        let py_env = result.unwrap();
+        assert_eq!(py_env.kind, Some(PythonEnvironmentKind::Venv));
+        assert!(py_env.prefix.is_some());
+    }
+
+    #[test]
+    fn test_venv_try_from_with_version_in_env() {
+        let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let cfg_path = dir.path().join("pyvenv.cfg");
+        let mut file = fs::File::create(&cfg_path).unwrap();
+        writeln!(file, "version = 3.11.0").unwrap();
+
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        // Version provided in PythonEnv should be used as-is
+        let mut env = PythonEnv::new(python_path, Some(dir.path().to_path_buf()), None);
+        env.version = Some("3.11.5".to_string());
+        let venv = Venv::new();
+        let result = venv.try_from(&env);
+
+        assert!(result.is_some());
+        let py_env = result.unwrap();
+        assert_eq!(py_env.version, Some("3.11.5".to_string()));
+    }
+
+    #[test]
+    fn test_try_environment_from_venv_dir_no_prompt() {
+        let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        // pyvenv.cfg without prompt
+        let cfg_path = dir.path().join("pyvenv.cfg");
+        let mut file = fs::File::create(&cfg_path).unwrap();
+        writeln!(file, "version = 3.10.0").unwrap();
+
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        let result = try_environment_from_venv_dir(dir.path()).unwrap();
+
+        assert_eq!(result.kind, Some(PythonEnvironmentKind::Venv));
+        assert!(result.name.is_none());
+        assert_eq!(result.version, Some("3.10.0".to_string()));
+    }
+
+    #[test]
+    fn test_is_venv_via_executable_parent() {
+        // Test that is_venv works when pyvenv.cfg is found via executable parent
+        let dir = tempdir().unwrap();
+        #[cfg(windows)]
+        let bin_dir = dir.path().join("Scripts");
+        #[cfg(unix)]
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        // Place pyvenv.cfg next to bin dir (parent of executable's parent = dir)
+        let cfg_path = dir.path().join("pyvenv.cfg");
+        let mut file = fs::File::create(&cfg_path).unwrap();
+        writeln!(file, "version = 3.10.0").unwrap();
+
+        #[cfg(windows)]
+        let python_path = bin_dir.join("python.exe");
+        #[cfg(unix)]
+        let python_path = bin_dir.join("python");
+        fs::File::create(&python_path).unwrap();
+
+        // No prefix — relies on executable.parent() finding pyvenv.cfg in bin_dir
+        // Actually pyvenv.cfg is in dir, and PyVenvCfg::find checks the path and parent
+        let env = PythonEnv::new(python_path, None, None);
+        assert!(is_venv(&env));
+    }
 }
