@@ -167,4 +167,105 @@ mod tests {
             Some("3.11.9".to_string())
         );
     }
+
+    #[test]
+    fn extract_version_from_opt_homebrew_path() {
+        assert_eq!(
+            get_version(&PathBuf::from(
+                "/opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+            )),
+            Some("3.12.3".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_version_from_usr_local_cellar_path() {
+        assert_eq!(
+            get_version(&PathBuf::from(
+                "/usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8/bin/python3.8"
+            )),
+            Some("3.8.20".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_version_returns_none_for_path_without_version() {
+        assert_eq!(get_version(&PathBuf::from("/usr/bin/python3")), None);
+    }
+
+    #[test]
+    fn get_prefix_always_returns_none() {
+        assert!(get_prefix(&PathBuf::from(
+            "/opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+        ))
+        .is_none());
+        assert!(get_prefix(&PathBuf::from(
+            "/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12"
+        ))
+        .is_none());
+        assert!(get_prefix(&PathBuf::from(
+            "/usr/local/Cellar/python@3.8/3.8.20/bin/python3.8"
+        ))
+        .is_none());
+    }
+
+    #[test]
+    fn get_python_info_returns_correct_kind_and_executable() {
+        let bin_exe = PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3.12");
+        let resolved_exe =
+            PathBuf::from("/home/linuxbrew/.linuxbrew/Cellar/python@3.12/3.12.4/bin/python3.12");
+
+        let env = get_python_info(&bin_exe, &resolved_exe).unwrap();
+
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::Homebrew));
+        assert_eq!(env.executable, Some(bin_exe.clone()));
+        assert_eq!(env.version, Some("3.12.4".to_string()));
+        assert_eq!(env.prefix, None);
+        // Both bin exe and resolved exe should be in symlinks
+        let symlinks = env.symlinks.unwrap();
+        assert!(symlinks.contains(&bin_exe));
+        assert!(symlinks.contains(&resolved_exe));
+    }
+
+    #[test]
+    fn get_python_info_returns_none_version_for_unversioned_path() {
+        let bin_exe = PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3");
+        let resolved_exe = PathBuf::from("/home/linuxbrew/.linuxbrew/bin/python3");
+
+        let env = get_python_info(&bin_exe, &resolved_exe).unwrap();
+
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::Homebrew));
+        assert_eq!(env.version, None);
+    }
+
+    #[test]
+    fn get_python_info_for_opt_homebrew_path() {
+        let bin_exe = PathBuf::from("/opt/homebrew/bin/python3.12");
+        let resolved_exe = PathBuf::from(
+            "/opt/homebrew/Cellar/python@3.12/3.12.3/Frameworks/Python.framework/Versions/3.12/bin/python3.12",
+        );
+
+        let env = get_python_info(&bin_exe, &resolved_exe).unwrap();
+
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::Homebrew));
+        assert_eq!(env.executable, Some(bin_exe.clone()));
+        assert_eq!(env.version, Some("3.12.3".to_string()));
+        let symlinks = env.symlinks.unwrap();
+        assert!(symlinks.contains(&bin_exe));
+        assert!(symlinks.contains(&resolved_exe));
+    }
+
+    #[test]
+    fn get_python_info_for_usr_local_cellar_path() {
+        let bin_exe = PathBuf::from("/usr/local/bin/python3.8");
+        let resolved_exe = PathBuf::from(
+            "/usr/local/Cellar/python@3.8/3.8.20/Frameworks/Python.framework/Versions/3.8/bin/python3.8",
+        );
+
+        let env = get_python_info(&bin_exe, &resolved_exe).unwrap();
+
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::Homebrew));
+        assert_eq!(env.executable, Some(bin_exe));
+        assert_eq!(env.version, Some("3.8.20".to_string()));
+    }
 }
