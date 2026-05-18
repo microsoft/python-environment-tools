@@ -397,4 +397,109 @@ mod tests {
         let result = shared.environments.read().unwrap().clone().unwrap();
         assert_eq!(result[0].environment.name.as_deref(), Some("stale"));
     }
+
+    #[test]
+    fn test_sync_full_when_source_has_none_cache() {
+        let environment = EnvironmentApi::new();
+        let shared = WindowsStore::from(&environment);
+        let refreshed = WindowsStore::from(&environment);
+
+        // shared has some data, refreshed has None
+        shared
+            .environments
+            .write()
+            .unwrap()
+            .replace(Arc::new(vec![cached_environment("existing")]));
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+
+        // After syncing from source with None cache, shared should also be None
+        assert!(shared.environments.read().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_sync_is_idempotent() {
+        let environment = EnvironmentApi::new();
+        let shared = WindowsStore::from(&environment);
+        let refreshed = WindowsStore::from(&environment);
+
+        refreshed
+            .environments
+            .write()
+            .unwrap()
+            .replace(Arc::new(vec![cached_environment("fresh")]));
+
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+        shared.sync_refresh_state_from(&refreshed, &RefreshStateSyncScope::Full);
+
+        let result = shared.environments.read().unwrap().clone().unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].environment.name.as_deref(), Some("fresh"));
+    }
+
+    #[test]
+    fn is_windows_app_folder_case_insensitive() {
+        assert!(is_windows_app_folder_in_program_files(Path::new(
+            r"C:\PROGRAM FILES\WINDOWSAPPS\Something"
+        )));
+        assert!(is_windows_app_folder_in_program_files(Path::new(
+            r"d:\program files\windowsapps\something"
+        )));
+    }
+
+    #[test]
+    fn is_windows_app_folder_rejects_single_char_input() {
+        assert!(!is_windows_app_folder_in_program_files(Path::new("C")));
+        assert!(!is_windows_app_folder_in_program_files(Path::new("/")));
+    }
+
+    #[test]
+    fn normalize_for_comparison_strips_extended_prefix() {
+        assert_eq!(
+            normalize_for_comparison(Path::new(r"\\?\C:\foo\bar.exe")),
+            PathBuf::from(r"C:\foo\bar.exe")
+        );
+    }
+
+    #[test]
+    fn normalize_for_comparison_strips_extended_unc_prefix() {
+        assert_eq!(
+            normalize_for_comparison(Path::new(r"\\?\UNC\server\share\file.exe")),
+            PathBuf::from(r"\\server\share\file.exe")
+        );
+    }
+
+    #[test]
+    fn normalize_for_comparison_preserves_plain_path() {
+        let path = Path::new(r"C:\Users\User\python.exe");
+        assert_eq!(normalize_for_comparison(path), PathBuf::from(path));
+    }
+
+    #[test]
+    fn cached_environment_with_empty_symlinks() {
+        let cached = CachedStoreEnvironment::from_environment(PythonEnvironment {
+            symlinks: Some(vec![]),
+            ..Default::default()
+        });
+        assert!(cached.normalized_symlinks.is_empty());
+    }
+
+    #[test]
+    fn cached_environment_with_no_symlinks() {
+        let cached = CachedStoreEnvironment::from_environment(PythonEnvironment {
+            symlinks: None,
+            ..Default::default()
+        });
+        assert!(cached.normalized_symlinks.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn try_from_returns_none_on_unix() {
+        let environment = EnvironmentApi::new();
+        let locator = WindowsStore::from(&environment);
+        let env = PythonEnv::new(PathBuf::from("/usr/bin/python3"), None, None);
+
+        assert!(locator.try_from(&env).is_none());
+    }
 }
