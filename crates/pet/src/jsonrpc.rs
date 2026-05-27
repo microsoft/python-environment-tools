@@ -674,11 +674,11 @@ fn apply_configure_options(
     workspace_directories: Option<Vec<PathBuf>>,
     environment_directories: Option<Vec<PathBuf>>,
 ) -> Result<(), String> {
-    // Phase A — Prepare: serialize concurrent configures, then briefly take
-    // the write lock to snapshot the current config and compute the next
-    // one. The write lock is released before invoking any locator so that
-    // refresh threads (which take a `configuration.read()`) are not
-    // blocked by per-locator I/O. See #461.
+    // Phase A — Prepare: serialize concurrent configures, then briefly
+    // take a read lock to snapshot the current config and compute the next
+    // one. No lock is held while locators are invoked, so refresh threads
+    // (which take `configuration.read()`) are not blocked by per-locator
+    // I/O. See #461.
     let _configure_guard = configure_in_progress.lock().unwrap();
 
     let (previous_config, mut next_config, next_generation) = {
@@ -2765,7 +2765,7 @@ mod tests {
         // on the immediately following Exit, and once a configure starts
         // (Enter then Exit pair), the same id must continue running until
         // it has done all its work.
-        for chunk in events.chunks(2) {
+        for chunk in events.chunks_exact(2) {
             match (chunk[0], chunk[1]) {
                 (Event::Enter(a), Event::Exit(b)) => assert_eq!(a, b),
                 other => panic!("unexpected event pair: {other:?}"),
