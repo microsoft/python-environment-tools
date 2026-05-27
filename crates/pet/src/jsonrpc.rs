@@ -469,6 +469,13 @@ impl Reporter for GenerationGuardedReporter {
 
 pub struct Context {
     configuration: Arc<RwLock<ConfigurationState>>,
+    // Serializes overlapping `configure` RPCs so that two configures cannot
+    // interleave their `locator.configure()` calls. Lock ordering: always
+    // acquire `configure_in_progress` BEFORE `configuration.write()`. Refresh
+    // paths never touch this mutex, so no deadlock cycle is possible. See
+    // #461 for why this is decoupled from the configuration `RwLock`: holding
+    // the write lock across locator I/O regresses refresh latency.
+    configure_in_progress: Arc<Mutex<()>>,
     locators: Arc<Vec<Arc<dyn Locator>>>,
     conda_locator: Arc<Conda>,
     os_environment: Arc<dyn Environment>,
@@ -494,6 +501,7 @@ pub fn start_jsonrpc_server() {
         locators: create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         conda_locator,
         configuration: Arc::new(RwLock::new(ConfigurationState::default())),
+        configure_in_progress: Arc::new(Mutex::new(())),
         os_environment: Arc::new(environment),
         refresh_coordinator: RefreshCoordinator::default(),
     };
@@ -581,6 +589,7 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
 
                 if let Err(message) = apply_configure_options(
                     context.configuration.as_ref(),
+                    &context.configure_in_progress,
                     &context.locators,
                     configure_options,
                     workspace_directories,
@@ -659,14 +668,29 @@ fn parse_refresh_options(params: Value) -> Result<RefreshOptions, serde_json::Er
 
 fn apply_configure_options(
     configuration: &RwLock<ConfigurationState>,
+    configure_in_progress: &Mutex<()>,
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     configure_options: ConfigureOptions,
     workspace_directories: Option<Vec<PathBuf>>,
     environment_directories: Option<Vec<PathBuf>>,
 ) -> Result<(), String> {
-    let mut state = configuration.write().unwrap();
-    let mut next_config = state.config.clone();
-    let next_generation = state.generation + 1;
+    // Phase A — Prepare: serialize concurrent configures, then briefly
+    // take a read lock to snapshot the current config and compute the next
+    // one. No lock is held while locators are invoked, so refresh threads
+    // (which take `configuration.read()`) are not blocked by per-locator
+    // I/O. See #461.
+    let _configure_guard = configure_in_progress.lock().unwrap();
+
+    let (previous_config, mut next_config, next_generation) = {
+        // Read-only snapshot. `configure_in_progress` already ensures no
+        // other configure thread is racing, and refresh threads only ever
+        // take read locks, so a read lock here suffices.
+        let state = configuration.read().unwrap();
+        let previous_config = state.config.clone();
+        let next_config = state.config.clone();
+        let next_generation = state.generation + 1;
+        (previous_config, next_config, next_generation)
+    };
 
     next_config.workspace_directories = workspace_directories;
     next_config.conda_executable = configure_options.conda_executable;
@@ -686,6 +710,9 @@ fn apply_configure_options(
         next_config
     );
 
+    // Phase B — Configure locators with no configuration lock held so that
+    // concurrent refreshes can read the (still-old) generation without
+    // blocking on locator I/O.
     let mut configured_locator_count = 0;
     for locator in locators.iter() {
         if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
@@ -698,7 +725,7 @@ fn apply_configure_options(
             );
             rollback_locator_config(
                 locators,
-                &state.config,
+                &previous_config,
                 next_generation,
                 configured_locator_count + 1,
             );
@@ -720,7 +747,7 @@ fn apply_configure_options(
             );
             rollback_locator_config(
                 locators,
-                &state.config,
+                &previous_config,
                 next_generation,
                 configured_locator_count,
             );
@@ -729,13 +756,20 @@ fn apply_configure_options(
             ));
         }
     }
-    state.config = next_config;
-    state.generation = next_generation;
-    // Reset missing-env reporting so that the next refresh after
-    // reconfiguration can trigger it again (Fixes #395). Done inside the write
-    // lock to avoid a TOCTOU window with concurrent refresh threads reading the
-    // generation.
-    MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
+
+    // Phase C — Publish: re-take the write lock and atomically install the
+    // new config + generation. Refresh threads only ever observe the new
+    // generation after every locator has been configured.
+    {
+        let mut state = configuration.write().unwrap();
+        state.config = next_config;
+        state.generation = next_generation;
+        // Reset missing-env reporting so that the next refresh after
+        // reconfiguration can trigger it again (Fixes #395). Done inside the
+        // write lock to avoid a TOCTOU window with concurrent refresh threads
+        // reading the generation.
+        MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
+    }
 
     Ok(())
 }
@@ -1332,8 +1366,7 @@ mod tests {
     use pet_core::LocatorKind;
     use pet_core::RefreshStatePersistence;
     use std::path::PathBuf;
-    use std::sync::mpsc;
-    use std::sync::Mutex;
+    use std::sync::{mpsc, Barrier, Mutex};
     use std::thread;
 
     #[derive(Default)]
@@ -1593,6 +1626,7 @@ mod tests {
     #[test]
     fn test_configure_publishes_state_after_shared_locators_are_configured() {
         let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+        let configure_in_progress = Arc::new(Mutex::new(()));
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let (done_tx, done_rx) = mpsc::channel();
@@ -1606,11 +1640,13 @@ mod tests {
 
         let worker = {
             let configuration = configuration.clone();
+            let configure_in_progress = configure_in_progress.clone();
             let locators = locators.clone();
             let workspace_directories = workspace_directories.clone();
             thread::spawn(move || {
                 apply_configure_options(
                     configuration.as_ref(),
+                    &configure_in_progress,
                     &locators,
                     ConfigureOptions {
                         workspace_directories: None,
@@ -1629,7 +1665,17 @@ mod tests {
         };
 
         started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(configuration.try_read().is_err());
+        // Publish-after-configure invariant (#416): while the locator is
+        // still being configured, the new generation must not yet be
+        // observable. Under the post-#461 lock discipline a concurrent
+        // reader CAN acquire the read lock (refresh must not be blocked by
+        // configure), but the generation must still report the previous
+        // value.
+        {
+            let state = configuration.read().unwrap();
+            assert_eq!(state.generation, 0);
+            assert!(state.config.workspace_directories.is_none());
+        }
 
         release_tx.send(()).unwrap();
         done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1650,6 +1696,7 @@ mod tests {
     #[test]
     fn test_configure_panic_does_not_publish_state_or_poison_lock() {
         let configuration = RwLock::new(ConfigurationState::default());
+        let configure_in_progress = Mutex::new(());
         let panic_locator = Arc::new(PanicConfigureLocator {
             configured_workspace_directories: Mutex::new(None),
         });
@@ -1658,6 +1705,7 @@ mod tests {
 
         let result = apply_configure_options(
             &configuration,
+            &configure_in_progress,
             &locators,
             ConfigureOptions {
                 workspace_directories: None,
@@ -1686,6 +1734,7 @@ mod tests {
     #[test]
     fn test_configure_panic_rolls_back_previously_configured_locators() {
         let configuration = RwLock::new(ConfigurationState::default());
+        let configure_in_progress = Mutex::new(());
         let recording_locator = Arc::new(RecordingConfigureLocator {
             configured_workspace_directories: Mutex::new(None),
         });
@@ -1699,6 +1748,7 @@ mod tests {
 
         let result = apply_configure_options(
             &configuration,
+            &configure_in_progress,
             &locators,
             ConfigureOptions {
                 workspace_directories: None,
@@ -2504,5 +2554,316 @@ mod tests {
 
         // Cleanup.
         MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
+    }
+
+    /// Test for #461: refresh-side `configuration.read()` callers must not
+    /// block on the configure thread while it iterates `locator.configure()`.
+    #[test]
+    fn test_refresh_not_blocked_by_in_flight_configure() {
+        let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+        let configure_in_progress = Arc::new(Mutex::new(()));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let locator = Arc::new(BlockingConfigureLocator {
+            started: started_tx,
+            release: Mutex::new(release_rx),
+            configured_workspace_directories: Mutex::new(None),
+        });
+        let locators = Arc::new(vec![locator.clone() as Arc<dyn Locator>]);
+
+        let worker = {
+            let configuration = configuration.clone();
+            let configure_in_progress = configure_in_progress.clone();
+            let locators = locators.clone();
+            thread::spawn(move || {
+                apply_configure_options(
+                    configuration.as_ref(),
+                    &configure_in_progress,
+                    &locators,
+                    ConfigureOptions {
+                        workspace_directories: None,
+                        conda_executable: None,
+                        pipenv_executable: None,
+                        poetry_executable: None,
+                        environment_directories: None,
+                        cache_directory: None,
+                    },
+                    Some(vec![PathBuf::from("/workspace")]),
+                    None,
+                )
+                .unwrap();
+                done_tx.send(()).unwrap();
+            })
+        };
+
+        // Wait for the configure thread to enter the locator's `configure()`.
+        // At this point Phase B is in progress with no `configuration` lock
+        // held.
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let (read_done_tx, read_done_rx) = mpsc::channel();
+        let read_worker = {
+            let configuration = configuration.clone();
+            thread::spawn(move || {
+                // Exercise the three read sites called out in #461 from another
+                // thread. If a regression holds `configuration.write()` during
+                // Phase B, this worker blocks and the main test thread can fail
+                // with a bounded timeout instead of deadlocking.
+                let read_start = Instant::now();
+                {
+                    // `execute_refresh` snapshot read path.
+                    let _state = configuration.read().unwrap();
+                }
+                // `sync_refresh_locator_state_if_current` read path.
+                let _ = sync_refresh_locator_state_if_current(configuration.as_ref(), 0, || {});
+                // `GenerationGuardedReporter::report_if_current` read path. The
+                // generation here matches the still-old generation (0) so the
+                // inner report is invoked, exercising the full read-lock-then-call
+                // path.
+                let inner = Arc::new(RecordingReporter::default());
+                let reporter = GenerationGuardedReporter::new(inner.clone(), configuration, 0);
+                let env = PythonEnvironment::new(
+                    Some(PathBuf::from("/tmp/python")),
+                    Some(PythonEnvironmentKind::Venv),
+                    Some(PathBuf::from("/tmp")),
+                    None,
+                    Some("3.11.0".to_string()),
+                );
+                reporter.report_environment(&env);
+
+                let _ = read_done_tx.send((
+                    read_start.elapsed(),
+                    inner.environments.lock().unwrap().len(),
+                ));
+            })
+        };
+
+        let (read_elapsed, reported_count) = match read_done_rx.recv_timeout(Duration::from_secs(2))
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = release_tx.send(());
+                let _ = done_rx.recv_timeout(Duration::from_secs(5));
+                worker.join().unwrap();
+                panic!("concurrent refresh reads should not block on configure: {error}");
+            }
+        };
+        read_worker.join().unwrap();
+        assert!(
+            read_elapsed < Duration::from_secs(2),
+            "concurrent refresh reads should not block on configure (took {read_elapsed:?})"
+        );
+        // The reporter should also have actually reported because the
+        // generation has not yet advanced.
+        assert_eq!(reported_count, 1);
+
+        // Release the locator and confirm configure completes and publishes.
+        release_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        worker.join().unwrap();
+
+        let state = configuration.read().unwrap();
+        assert_eq!(state.generation, 1);
+    }
+
+    /// Test for #461: two overlapping `apply_configure_options` calls must
+    /// fully serialize — their per-locator `configure()` invocations cannot
+    /// interleave.
+    #[test]
+    fn test_concurrent_configures_serialize() {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        enum Event {
+            Enter(u32),
+            Exit(u32),
+        }
+
+        struct OrderingLocator {
+            id: u32,
+            events: Arc<Mutex<Vec<Event>>>,
+            entered: mpsc::Sender<u32>,
+            release: Arc<Mutex<mpsc::Receiver<()>>>,
+        }
+
+        impl Locator for OrderingLocator {
+            fn get_kind(&self) -> LocatorKind {
+                LocatorKind::Venv
+            }
+            fn configure(&self, _config: &Configuration) {
+                self.events.lock().unwrap().push(Event::Enter(self.id));
+                self.entered.send(self.id).unwrap();
+                self.release.lock().unwrap().recv().unwrap();
+                self.events.lock().unwrap().push(Event::Exit(self.id));
+            }
+            fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+                vec![PythonEnvironmentKind::Venv]
+            }
+            fn try_from(&self, _env: &pet_core::env::PythonEnv) -> Option<PythonEnvironment> {
+                None
+            }
+            fn find(&self, _reporter: &dyn Reporter) {}
+        }
+
+        let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+        let configure_in_progress = Arc::new(Mutex::new(()));
+        let events = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release = Arc::new(Mutex::new(release_rx));
+        let start_barrier = Arc::new(Barrier::new(3));
+
+        let make_locators = |id: u32| -> Arc<Vec<Arc<dyn Locator>>> {
+            Arc::new(vec![Arc::new(OrderingLocator {
+                id,
+                events: events.clone(),
+                entered: entered_tx.clone(),
+                release: release.clone(),
+            }) as Arc<dyn Locator>])
+        };
+
+        let locators_a = make_locators(1);
+        let locators_b = make_locators(2);
+
+        let worker_a = {
+            let configuration = configuration.clone();
+            let configure_in_progress = configure_in_progress.clone();
+            let start_barrier = start_barrier.clone();
+            thread::spawn(move || {
+                start_barrier.wait();
+                apply_configure_options(
+                    configuration.as_ref(),
+                    &configure_in_progress,
+                    &locators_a,
+                    ConfigureOptions {
+                        workspace_directories: None,
+                        conda_executable: None,
+                        pipenv_executable: None,
+                        poetry_executable: None,
+                        environment_directories: None,
+                        cache_directory: None,
+                    },
+                    Some(vec![PathBuf::from("/workspace/a")]),
+                    None,
+                )
+                .unwrap();
+            })
+        };
+        let worker_b = {
+            let configuration = configuration.clone();
+            let configure_in_progress = configure_in_progress.clone();
+            let start_barrier = start_barrier.clone();
+            thread::spawn(move || {
+                start_barrier.wait();
+                apply_configure_options(
+                    configuration.as_ref(),
+                    &configure_in_progress,
+                    &locators_b,
+                    ConfigureOptions {
+                        workspace_directories: None,
+                        conda_executable: None,
+                        pipenv_executable: None,
+                        poetry_executable: None,
+                        environment_directories: None,
+                        cache_directory: None,
+                    },
+                    Some(vec![PathBuf::from("/workspace/b")]),
+                    None,
+                )
+                .unwrap();
+            })
+        };
+
+        start_barrier.wait();
+        let first_id = entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(configure_in_progress.try_lock().is_err());
+        if let Ok(second_id) = entered_rx.recv_timeout(Duration::from_millis(250)) {
+            let _ = release_tx.send(());
+            let _ = release_tx.send(());
+            worker_a.join().unwrap();
+            worker_b.join().unwrap();
+            panic!(
+                "configure calls interleaved: {first_id} and {second_id} were both inside locator.configure()"
+            );
+        }
+
+        release_tx.send(()).unwrap();
+        let second_id = entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_ne!(first_id, second_id);
+        release_tx.send(()).unwrap();
+
+        worker_a.join().unwrap();
+        worker_b.join().unwrap();
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 4, "two configures × enter+exit");
+        assert_eq!(
+            events.as_slice(),
+            &[
+                Event::Enter(first_id),
+                Event::Exit(first_id),
+                Event::Enter(second_id),
+                Event::Exit(second_id),
+            ]
+        );
+
+        // Both publishes occurred.
+        let state = configuration.read().unwrap();
+        assert_eq!(state.generation, 2);
+    }
+
+    /// Test for #461: rollback after a panicking locator must leave the
+    /// published config unchanged and release configure serialization.
+    #[test]
+    fn test_configure_panic_leaves_state_unchanged_and_releases_mutex() {
+        // The panic locator panics when `workspace_directories` is set.
+        // Place a recording locator first so it is configured, then panics
+        // happen on the second locator; rollback must re-configure the
+        // first locator with the previous (empty) config.
+        let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+        let configure_in_progress = Arc::new(Mutex::new(()));
+        let recording = Arc::new(RecordingConfigureLocator {
+            configured_workspace_directories: Mutex::new(None),
+        });
+        let panic_locator = Arc::new(PanicConfigureLocator {
+            configured_workspace_directories: Mutex::new(None),
+        });
+        let locators = Arc::new(vec![
+            recording.clone() as Arc<dyn Locator>,
+            panic_locator.clone() as Arc<dyn Locator>,
+        ]);
+
+        let result = apply_configure_options(
+            configuration.as_ref(),
+            &configure_in_progress,
+            &locators,
+            ConfigureOptions {
+                workspace_directories: None,
+                conda_executable: None,
+                pipenv_executable: None,
+                poetry_executable: None,
+                environment_directories: None,
+                cache_directory: None,
+            },
+            Some(vec![PathBuf::from("/workspace")]),
+            None,
+        );
+        assert!(result.is_err());
+
+        // Generation and config are unchanged.
+        let state = configuration.read().unwrap();
+        assert_eq!(state.generation, 0);
+        assert!(state.config.workspace_directories.is_none());
+
+        // The recording locator was configured forward then rolled back
+        // (final observed config has no workspace_directories).
+        assert!(recording
+            .configured_workspace_directories
+            .lock()
+            .unwrap()
+            .is_none());
+
+        // The configure mutex is released, so a subsequent configure can
+        // acquire it without blocking.
+        assert!(configure_in_progress.try_lock().is_ok());
     }
 }
