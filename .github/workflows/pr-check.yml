@@ -414,10 +414,12 @@ jobs:
       - name: Homebrew Python
         if: startsWith( matrix.image, 'homebrew')
         run: |
-          # homebrew/brew:4.4.6 broke running `brew install` as root.
-          # As a workaround, running `brew update` and ignoring errors coming from it fixes `brew install`.
-          brew update || true
-          brew install python@3.12 python@3.11
+          # The job container runs as root so Actions checkout/tooling can write to the
+          # mounted workspace, but Homebrew's prefix is owned by linuxbrew and recent
+          # homebrew/brew images have been brittle when `brew install` runs as root.
+          brew_bin="$(command -v brew)"
+          su linuxbrew -c "${brew_bin} update || true"
+          su linuxbrew -c "${brew_bin} install python@3.12 python@3.11"
         shell: bash
 
       # Rust
