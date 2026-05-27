@@ -417,8 +417,9 @@ jobs:
           # The job container runs as root so Actions checkout/tooling can write to the
           # mounted workspace, but Homebrew's prefix is owned by linuxbrew and recent
           # homebrew/brew images have been brittle when `brew install` runs as root.
-          su - linuxbrew -c 'brew update || true'
-          su - linuxbrew -c 'brew install python@3.12 python@3.11'
+          brew_bin="$(command -v brew)"
+          su linuxbrew -c "${brew_bin} update || true"
+          su linuxbrew -c "${brew_bin} install python@3.12 python@3.11"
         shell: bash
 
       # Rust
