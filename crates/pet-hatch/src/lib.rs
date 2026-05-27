@@ -208,9 +208,9 @@ impl Locator for Hatch {
                     // Cold path: parse pyproject.toml + hatch.toml. The
                     // mtimes we store are the ones we just probed (not
                     // post-read). If the file changed between probe and
-                    // read, the next configure() will see a different
-                    // mtime than the one stored here and re-parse —
-                    // self-healing under TOCTOU.
+                    // read, the next configure() with an updated mtime will
+                    // see a different value than the one stored here and
+                    // re-parse.
                     let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
                     Arc::new(CachedWorkspaceConfig {
                         pyproject_mtime,
@@ -232,6 +232,13 @@ impl Locator for Hatch {
         // Publish the new caches. Workspaces no longer present are
         // implicitly evicted because `next_parsed` was built from the
         // current `workspaces` set only.
+        //
+        // `workspace_virtual_dirs` is the only cache read by `try_from()` /
+        // `find()`, so external observers cannot see a half-update. The
+        // separate `parsed_cache` publish only affects future `configure()`
+        // calls; a concurrent configure that snapshots the previous parse
+        // cache will still validate entries against current TOML mtimes
+        // before reusing them.
         *self
             .workspace_virtual_dirs
             .lock()
