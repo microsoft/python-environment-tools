@@ -1366,8 +1366,7 @@ mod tests {
     use pet_core::LocatorKind;
     use pet_core::RefreshStatePersistence;
     use std::path::PathBuf;
-    use std::sync::mpsc;
-    use std::sync::Mutex;
+    use std::sync::{mpsc, Barrier, Mutex};
     use std::thread;
 
     #[derive(Default)]
@@ -2603,38 +2602,61 @@ mod tests {
         // held.
         started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
 
-        // Exercise the three read sites called out in #461 from another
-        // thread and bound their completion time to prove they did not
-        // block on the configure thread.
-        let read_start = Instant::now();
+        let (read_done_tx, read_done_rx) = mpsc::channel();
+        let read_worker = {
+            let configuration = configuration.clone();
+            thread::spawn(move || {
+                // Exercise the three read sites called out in #461 from another
+                // thread. If a regression holds `configuration.write()` during
+                // Phase B, this worker blocks and the main test thread can fail
+                // with a bounded timeout instead of deadlocking.
+                let read_start = Instant::now();
+                {
+                    // `execute_refresh` snapshot read path.
+                    let _state = configuration.read().unwrap();
+                }
+                // `sync_refresh_locator_state_if_current` read path.
+                let _ = sync_refresh_locator_state_if_current(configuration.as_ref(), 0, || {});
+                // `GenerationGuardedReporter::report_if_current` read path. The
+                // generation here matches the still-old generation (0) so the
+                // inner report is invoked, exercising the full read-lock-then-call
+                // path.
+                let inner = Arc::new(RecordingReporter::default());
+                let reporter = GenerationGuardedReporter::new(inner.clone(), configuration, 0);
+                let env = PythonEnvironment::new(
+                    Some(PathBuf::from("/tmp/python")),
+                    Some(PythonEnvironmentKind::Venv),
+                    Some(PathBuf::from("/tmp")),
+                    None,
+                    Some("3.11.0".to_string()),
+                );
+                reporter.report_environment(&env);
+
+                let _ = read_done_tx.send((
+                    read_start.elapsed(),
+                    inner.environments.lock().unwrap().len(),
+                ));
+            })
+        };
+
+        let (read_elapsed, reported_count) = match read_done_rx.recv_timeout(Duration::from_secs(2))
         {
-            // `execute_refresh` snapshot read path.
-            let _state = configuration.read().unwrap();
-        }
-        // `sync_refresh_locator_state_if_current` read path.
-        let _ = sync_refresh_locator_state_if_current(configuration.as_ref(), 0, || {});
-        // `GenerationGuardedReporter::report_if_current` read path. The
-        // generation here matches the still-old generation (0) so the
-        // inner report is invoked, exercising the full read-lock-then-call
-        // path.
-        let inner = Arc::new(RecordingReporter::default());
-        let reporter = GenerationGuardedReporter::new(inner.clone(), configuration.clone(), 0);
-        let env = PythonEnvironment::new(
-            Some(PathBuf::from("/tmp/python")),
-            Some(PythonEnvironmentKind::Venv),
-            Some(PathBuf::from("/tmp")),
-            None,
-            Some("3.11.0".to_string()),
-        );
-        reporter.report_environment(&env);
-        let read_elapsed = read_start.elapsed();
+            Ok(result) => result,
+            Err(error) => {
+                let _ = release_tx.send(());
+                let _ = done_rx.recv_timeout(Duration::from_secs(5));
+                worker.join().unwrap();
+                panic!("concurrent refresh reads should not block on configure: {error}");
+            }
+        };
+        read_worker.join().unwrap();
         assert!(
             read_elapsed < Duration::from_secs(2),
             "concurrent refresh reads should not block on configure (took {read_elapsed:?})"
         );
         // The reporter should also have actually reported because the
         // generation has not yet advanced.
-        assert_eq!(inner.environments.lock().unwrap().len(), 1);
+        assert_eq!(reported_count, 1);
 
         // Release the locator and confirm configure completes and publishes.
         release_tx.send(()).unwrap();
@@ -2659,9 +2681,8 @@ mod tests {
         struct OrderingLocator {
             id: u32,
             events: Arc<Mutex<Vec<Event>>>,
-            // Each call sleeps briefly to amplify any opportunity for
-            // interleaving.
-            sleep: Duration,
+            entered: mpsc::Sender<u32>,
+            release: Arc<Mutex<mpsc::Receiver<()>>>,
         }
 
         impl Locator for OrderingLocator {
@@ -2670,7 +2691,8 @@ mod tests {
             }
             fn configure(&self, _config: &Configuration) {
                 self.events.lock().unwrap().push(Event::Enter(self.id));
-                thread::sleep(self.sleep);
+                self.entered.send(self.id).unwrap();
+                self.release.lock().unwrap().recv().unwrap();
                 self.events.lock().unwrap().push(Event::Exit(self.id));
             }
             fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
@@ -2685,20 +2707,18 @@ mod tests {
         let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
         let configure_in_progress = Arc::new(Mutex::new(()));
         let events = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release = Arc::new(Mutex::new(release_rx));
+        let start_barrier = Arc::new(Barrier::new(3));
 
         let make_locators = |id: u32| -> Arc<Vec<Arc<dyn Locator>>> {
-            Arc::new(vec![
-                Arc::new(OrderingLocator {
-                    id,
-                    events: events.clone(),
-                    sleep: Duration::from_millis(50),
-                }) as Arc<dyn Locator>,
-                Arc::new(OrderingLocator {
-                    id,
-                    events: events.clone(),
-                    sleep: Duration::from_millis(50),
-                }) as Arc<dyn Locator>,
-            ])
+            Arc::new(vec![Arc::new(OrderingLocator {
+                id,
+                events: events.clone(),
+                entered: entered_tx.clone(),
+                release: release.clone(),
+            }) as Arc<dyn Locator>])
         };
 
         let locators_a = make_locators(1);
@@ -2707,7 +2727,9 @@ mod tests {
         let worker_a = {
             let configuration = configuration.clone();
             let configure_in_progress = configure_in_progress.clone();
+            let start_barrier = start_barrier.clone();
             thread::spawn(move || {
+                start_barrier.wait();
                 apply_configure_options(
                     configuration.as_ref(),
                     &configure_in_progress,
@@ -2726,13 +2748,12 @@ mod tests {
                 .unwrap();
             })
         };
-        // Slight delay to make the interleaving window more interesting if
-        // the implementation were broken.
-        thread::sleep(Duration::from_millis(5));
         let worker_b = {
             let configuration = configuration.clone();
             let configure_in_progress = configure_in_progress.clone();
+            let start_barrier = start_barrier.clone();
             thread::spawn(move || {
+                start_barrier.wait();
                 apply_configure_options(
                     configuration.as_ref(),
                     &configure_in_progress,
@@ -2752,61 +2773,52 @@ mod tests {
             })
         };
 
+        start_barrier.wait();
+        let first_id = entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(configure_in_progress.try_lock().is_err());
+        if let Ok(second_id) = entered_rx.recv_timeout(Duration::from_millis(250)) {
+            let _ = release_tx.send(());
+            let _ = release_tx.send(());
+            worker_a.join().unwrap();
+            worker_b.join().unwrap();
+            panic!(
+                "configure calls interleaved: {first_id} and {second_id} were both inside locator.configure()"
+            );
+        }
+
+        release_tx.send(()).unwrap();
+        let second_id = entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_ne!(first_id, second_id);
+        release_tx.send(()).unwrap();
+
         worker_a.join().unwrap();
         worker_b.join().unwrap();
 
         let events = events.lock().unwrap();
+        assert_eq!(events.len(), 4, "two configures × enter+exit");
         assert_eq!(
-            events.len(),
-            8,
-            "two configures × two locators × enter+exit"
+            events.as_slice(),
+            &[
+                Event::Enter(first_id),
+                Event::Exit(first_id),
+                Event::Enter(second_id),
+                Event::Exit(second_id),
+            ]
         );
-        // No interleaving: the id seen on each Enter must match the id seen
-        // on the immediately following Exit, and once a configure starts
-        // (Enter then Exit pair), the same id must continue running until
-        // it has done all its work.
-        for chunk in events.chunks_exact(2) {
-            match (chunk[0], chunk[1]) {
-                (Event::Enter(a), Event::Exit(b)) => assert_eq!(a, b),
-                other => panic!("unexpected event pair: {other:?}"),
-            }
-        }
-        // The first four events belong to one configure, the next four to
-        // the other — never interleaved.
-        let first_id = match events[0] {
-            Event::Enter(id) => id,
-            _ => unreachable!(),
-        };
-        for ev in &events[..4] {
-            match ev {
-                Event::Enter(id) | Event::Exit(id) => assert_eq!(*id, first_id),
-            }
-        }
-        let second_id = match events[4] {
-            Event::Enter(id) => id,
-            _ => unreachable!(),
-        };
-        assert_ne!(first_id, second_id);
-        for ev in &events[4..] {
-            match ev {
-                Event::Enter(id) | Event::Exit(id) => assert_eq!(*id, second_id),
-            }
-        }
 
         // Both publishes occurred.
         let state = configuration.read().unwrap();
         assert_eq!(state.generation, 2);
     }
 
-    /// Test for #461: rollback after a panicking locator must not hold the
-    /// `configuration` write lock.
+    /// Test for #461: rollback after a panicking locator must leave the
+    /// published config unchanged and release configure serialization.
     #[test]
-    fn test_configure_panic_rolls_back_without_holding_lock() {
+    fn test_configure_panic_leaves_state_unchanged_and_releases_mutex() {
         // The panic locator panics when `workspace_directories` is set.
         // Place a recording locator first so it is configured, then panics
         // happen on the second locator; rollback must re-configure the
-        // first locator with the previous (empty) config, all without
-        // holding `configuration.write()`.
+        // first locator with the previous (empty) config.
         let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
         let configure_in_progress = Arc::new(Mutex::new(()));
         let recording = Arc::new(RecordingConfigureLocator {
@@ -2820,9 +2832,6 @@ mod tests {
             panic_locator.clone() as Arc<dyn Locator>,
         ]);
 
-        // Concurrent reader: continuously confirms it can acquire the read
-        // lock without blocking. We just check the result here in the same
-        // thread (after the call returns) because the panic path is fast.
         let result = apply_configure_options(
             configuration.as_ref(),
             &configure_in_progress,
