@@ -31,10 +31,11 @@
 //! `${HOME}` style expansion (e.g. `~/.virtualenvs`).
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
+    time::SystemTime,
 };
 
 use log::trace;
@@ -80,6 +81,31 @@ struct WorkspaceEntry {
 /// `Vec<PathBuf>` / matcher clone per call.
 type WorkspaceVirtualDirs = Vec<Arc<WorkspaceEntry>>;
 
+/// Cached output of parsing one workspace's `pyproject.toml` + `hatch.toml`,
+/// keyed by the mtimes of the two files at parse time.
+///
+/// `pyproject_mtime` / `hatch_toml_mtime` are `None` when the corresponding
+/// file did not exist at probe time. That way a transition between
+/// absent and present (in either direction) invalidates the cache, just
+/// like an mtime change does.
+///
+/// Note on filesystems with coarse mtime resolution (e.g. FAT, some
+/// network filesystems): rapid edits within the resolution window may
+/// not bump the mtime and would therefore be missed. This is acceptable
+/// for the VS Code `configure` cadence (human-scale), and matches the
+/// resolution available without a filesystem watcher.
+struct CachedWorkspaceConfig {
+    pyproject_mtime: Option<SystemTime>,
+    hatch_toml_mtime: Option<SystemTime>,
+    virtual_dirs: Vec<PathBuf>,
+    matcher: EnvNameMatcher,
+}
+
+/// Per-workspace parse cache. Lives on the `Hatch` locator so that
+/// repeated `configure()` calls reuse parsed config when the underlying
+/// TOML files are unchanged. Keyed by workspace path.
+type ParsedCache = HashMap<PathBuf, Arc<CachedWorkspaceConfig>>;
+
 pub struct Hatch {
     /// Default storage directory for Hatch virtual environments — i.e.
     /// `<data_dir>/env/virtual`. Resolved at construction. The path may not
@@ -93,6 +119,11 @@ pub struct Hatch {
     /// `configure()` so that hot-path identification (`try_from`) does no
     /// disk I/O or TOML parsing.
     workspace_virtual_dirs: Arc<Mutex<WorkspaceVirtualDirs>>,
+    /// Per-workspace parse cache keyed by `(pyproject.toml mtime,
+    /// hatch.toml mtime)`. Lets `configure()` skip TOML file reads when
+    /// the workspace's config files have not been modified since the
+    /// previous `configure()` call.
+    parsed_cache: Arc<Mutex<ParsedCache>>,
 }
 
 impl Default for Hatch {
@@ -110,6 +141,7 @@ impl Hatch {
         Self {
             default_virtual_dir: get_default_virtual_dir(environment),
             workspace_virtual_dirs: Arc::new(Mutex::new(Vec::new())),
+            parsed_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -131,26 +163,83 @@ impl Locator for Hatch {
         // Precompute and cache each workspace's resolved Hatch virtual dirs
         // and declared env names so `try_from()` does not have to re-read
         // or re-parse pyproject.toml / hatch.toml on every executable
-        // identification attempt. We build the new cache *outside* the
-        // lock to keep disk I/O out of the critical section.
-        let mut new_cache: WorkspaceVirtualDirs = Vec::new();
-        if let Some(dirs) = config.workspace_directories.as_ref() {
-            for workspace in dirs {
-                // Single parse of pyproject.toml + hatch.toml per workspace
-                // — both `virtual_dirs` and `env_names` come from the same
-                // TOML sections, so we read each file once here.
-                let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
-                new_cache.push(Arc::new(WorkspaceEntry {
-                    workspace: workspace.clone(),
-                    virtual_dirs,
-                    matcher: EnvNameMatcher::from_names(env_names),
-                }));
-            }
+        // identification attempt.
+        //
+        // We additionally consult a per-workspace mtime-keyed cache so
+        // that *repeated* `configure()` calls (VS Code calls configure
+        // whenever workspace folders change, even if no TOML files have
+        // moved) do only `fs::metadata` stat calls per workspace on the
+        // warm path — no file reads, no TOML parsing.
+        //
+        // We build the new cache *outside* the `workspace_virtual_dirs`
+        // lock to keep disk I/O out of the identification critical
+        // section.
+        let workspaces: &[PathBuf] = config.workspace_directories.as_deref().unwrap_or(&[]);
+
+        let mut new_cache: WorkspaceVirtualDirs = Vec::with_capacity(workspaces.len());
+        let mut next_parsed: ParsedCache = HashMap::with_capacity(workspaces.len());
+
+        // Snapshot the existing parse cache so we can release the lock
+        // before doing any I/O.
+        let previous: ParsedCache = self
+            .parsed_cache
+            .lock()
+            .expect("parsed_cache mutex poisoned")
+            .clone();
+
+        for workspace in workspaces {
+            // Stat-only probe of the two TOML files. This is the only
+            // disk operation on the warm path.
+            let (pyproject_mtime, hatch_toml_mtime) = probe_workspace_toml_mtimes(workspace);
+
+            let cached = previous.get(workspace).and_then(|entry| {
+                if entry.pyproject_mtime == pyproject_mtime
+                    && entry.hatch_toml_mtime == hatch_toml_mtime
+                {
+                    Some(entry.clone())
+                } else {
+                    None
+                }
+            });
+
+            let entry = match cached {
+                Some(entry) => entry,
+                None => {
+                    // Cold path: parse pyproject.toml + hatch.toml. The
+                    // mtimes we store are the ones we just probed (not
+                    // post-read). If the file changed between probe and
+                    // read, the next configure() will see a different
+                    // mtime than the one stored here and re-parse —
+                    // self-healing under TOCTOU.
+                    let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
+                    Arc::new(CachedWorkspaceConfig {
+                        pyproject_mtime,
+                        hatch_toml_mtime,
+                        virtual_dirs,
+                        matcher: EnvNameMatcher::from_names(env_names),
+                    })
+                }
+            };
+
+            new_cache.push(Arc::new(WorkspaceEntry {
+                workspace: workspace.clone(),
+                virtual_dirs: entry.virtual_dirs.clone(),
+                matcher: entry.matcher.clone(),
+            }));
+            next_parsed.insert(workspace.clone(), entry);
         }
+
+        // Publish the new caches. Workspaces no longer present are
+        // implicitly evicted because `next_parsed` was built from the
+        // current `workspaces` set only.
         *self
             .workspace_virtual_dirs
             .lock()
             .expect("workspace_virtual_dirs mutex poisoned") = new_cache;
+        *self
+            .parsed_cache
+            .lock()
+            .expect("parsed_cache mutex poisoned") = next_parsed;
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -540,6 +629,24 @@ fn resolve_workspace_hatch_config(workspace: &Path) -> (Vec<PathBuf>, HashSet<St
     (virtual_dirs, env_names)
 }
 
+/// Stat-only probe of `pyproject.toml` and `hatch.toml` mtimes under
+/// `workspace`. Used as the cache key for the per-workspace parse cache
+/// so the warm `configure()` path does not need to read these files.
+///
+/// Returns `(pyproject_mtime, hatch_toml_mtime)`. `None` for either
+/// position means the file either does not exist or its mtime is
+/// unreadable; either way the cache treats the previous parse as stale
+/// and re-parses (`Some` vs `None` mismatch).
+fn probe_workspace_toml_mtimes(workspace: &Path) -> (Option<SystemTime>, Option<SystemTime>) {
+    let pyproject_mtime = fs::metadata(workspace.join("pyproject.toml"))
+        .and_then(|m| m.modified())
+        .ok();
+    let hatch_toml_mtime = fs::metadata(workspace.join("hatch.toml"))
+        .and_then(|m| m.modified())
+        .ok();
+    (pyproject_mtime, hatch_toml_mtime)
+}
+
 /// Read the configured `dirs.env.virtual` paths for a workspace and resolve
 /// each to an absolute directory. Both `pyproject.toml` (`[tool.hatch.dirs.env]`)
 /// and a top-level `hatch.toml` (`[dirs.env]`) are checked.
@@ -830,6 +937,7 @@ mod tests {
         Hatch {
             default_virtual_dir,
             workspace_virtual_dirs: Arc::new(Mutex::new(vec![])),
+            parsed_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -848,6 +956,7 @@ mod tests {
                 virtual_dirs,
                 matcher: EnvNameMatcher::from_names(env_names),
             })])),
+            parsed_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -1169,6 +1278,208 @@ mod tests {
         assert_eq!(cached.len(), 1);
         assert_eq!(cached[0].workspace, project);
         assert_eq!(cached[0].virtual_dirs, vec![norm_case(&virtual_dir)]);
+    }
+
+    #[test]
+    fn configure_does_not_reparse_when_tomls_unchanged() {
+        // Issue #462: a second `configure()` over the same workspace with
+        // unchanged pyproject.toml / hatch.toml mtimes must reuse the
+        // previously parsed `CachedWorkspaceConfig` rather than re-reading
+        // the TOML files. We verify this by asserting that the cached
+        // Arc<CachedWorkspaceConfig> in `parsed_cache` is the *same*
+        // allocation across the two calls.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+        )
+        .unwrap();
+
+        let locator = make_locator(None);
+        let config = Configuration {
+            workspace_directories: Some(vec![project.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+        let first = locator
+            .parsed_cache
+            .lock()
+            .unwrap()
+            .get(&project)
+            .cloned()
+            .expect("first configure should populate parsed_cache");
+
+        locator.configure(&config);
+        let second = locator
+            .parsed_cache
+            .lock()
+            .unwrap()
+            .get(&project)
+            .cloned()
+            .expect("second configure should keep parsed_cache populated");
+
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "warm configure must reuse the cached parse result"
+        );
+    }
+
+    #[test]
+    fn configure_reparses_when_pyproject_mtime_changes() {
+        // After bumping `pyproject.toml`'s mtime, `configure()` must
+        // re-parse and update the cached virtual dirs. We use
+        // `File::set_modified` so the test is independent of filesystem
+        // mtime granularity / wall-clock sleeps.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let pyproject = project.join("pyproject.toml");
+        fs::write(&pyproject, b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n").unwrap();
+
+        let locator = make_locator(None);
+        let config = Configuration {
+            workspace_directories: Some(vec![project.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+        let first = locator
+            .parsed_cache
+            .lock()
+            .unwrap()
+            .get(&project)
+            .cloned()
+            .unwrap();
+
+        // Rewrite with a different virtual dir, then explicitly advance
+        // the mtime by one minute so we don't depend on filesystem mtime
+        // resolution.
+        fs::write(&pyproject, b"[tool.hatch.dirs.env]\nvirtual = \".other\"\n").unwrap();
+        let bumped = SystemTime::now() + std::time::Duration::from_secs(60);
+        fs::File::options()
+            .write(true)
+            .open(&pyproject)
+            .unwrap()
+            .set_modified(bumped)
+            .unwrap();
+
+        locator.configure(&config);
+        let second = locator
+            .parsed_cache
+            .lock()
+            .unwrap()
+            .get(&project)
+            .cloned()
+            .unwrap();
+
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "changed pyproject mtime must trigger re-parse"
+        );
+        let cached = locator.workspace_virtual_dirs.lock().unwrap().clone();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(
+            cached[0].virtual_dirs,
+            vec![norm_case(&project.join(".other"))]
+        );
+    }
+
+    #[test]
+    fn configure_reparses_when_hatch_toml_appears() {
+        // A workspace that initially has only pyproject.toml gets a new
+        // hatch.toml — the cache must invalidate (because the
+        // hatch_toml_mtime moves from `None` to `Some(_)`) and pick up
+        // the new declarations.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+        )
+        .unwrap();
+
+        let locator = make_locator(None);
+        let config = Configuration {
+            workspace_directories: Some(vec![project.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+        let first = locator
+            .parsed_cache
+            .lock()
+            .unwrap()
+            .get(&project)
+            .cloned()
+            .unwrap();
+
+        // hatch.toml's `[dirs.env]` overrides / supplements pyproject's
+        // virtual dir.
+        fs::write(
+            project.join("hatch.toml"),
+            b"[dirs.env]\nvirtual = \".other\"\n\n[envs.prod]\n",
+        )
+        .unwrap();
+
+        locator.configure(&config);
+        let second = locator
+            .parsed_cache
+            .lock()
+            .unwrap()
+            .get(&project)
+            .cloned()
+            .unwrap();
+
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "adding hatch.toml must trigger re-parse"
+        );
+        // The newly declared "prod" env from hatch.toml must be visible
+        // in the matcher.
+        let cached = locator.workspace_virtual_dirs.lock().unwrap().clone();
+        assert!(cached[0].matcher.matches("prod"));
+    }
+
+    #[test]
+    fn configure_evicts_stale_workspaces_from_parse_cache() {
+        // After a configure() that drops a workspace, that workspace's
+        // entry must no longer be present in `parsed_cache` — otherwise
+        // the cache grows unboundedly over the locator's lifetime.
+        let temp = TempDir::new().unwrap();
+        let a = temp.path().join("a");
+        let b = temp.path().join("b");
+        for ws in [&a, &b] {
+            fs::create_dir_all(ws).unwrap();
+            fs::write(
+                ws.join("pyproject.toml"),
+                b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+            )
+            .unwrap();
+        }
+
+        let locator = make_locator(None);
+        locator.configure(&Configuration {
+            workspace_directories: Some(vec![a.clone(), b.clone()]),
+            ..Configuration::default()
+        });
+        {
+            let parsed = locator.parsed_cache.lock().unwrap();
+            assert!(parsed.contains_key(&a));
+            assert!(parsed.contains_key(&b));
+        }
+
+        locator.configure(&Configuration {
+            workspace_directories: Some(vec![a.clone()]),
+            ..Configuration::default()
+        });
+        let parsed = locator.parsed_cache.lock().unwrap();
+        assert!(parsed.contains_key(&a));
+        assert!(
+            !parsed.contains_key(&b),
+            "dropped workspace must be evicted from parsed_cache"
+        );
+        assert_eq!(parsed.len(), 1);
     }
 
     #[cfg(target_os = "linux")]
