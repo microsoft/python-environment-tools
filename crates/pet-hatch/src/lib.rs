@@ -84,7 +84,14 @@ struct WorkspaceEntry {
 ///
 /// `parsed` is keyed by workspace path; entries are wrapped in `Arc` so
 /// snapshots can be handed out cheaply.
+///
+/// `generation` is bumped on every `configure()` so that
+/// `workspace_entry()` can detect a reconfigure that landed while it was
+/// parsing TOMLs outside the lock. Without this guard, a stale parse
+/// could be inserted after the cache was invalidated and silently undo
+/// the invalidation.
 struct HatchState {
+    generation: u64,
     workspaces: Vec<PathBuf>,
     parsed: HashMap<PathBuf, Arc<WorkspaceEntry>>,
 }
@@ -92,6 +99,7 @@ struct HatchState {
 impl HatchState {
     fn new() -> Self {
         Self {
+            generation: 0,
             workspaces: Vec::new(),
             parsed: HashMap::new(),
         }
@@ -132,32 +140,52 @@ impl Hatch {
     /// `pyproject.toml` / `hatch.toml` on first access. The TOML read is
     /// performed outside the state mutex so concurrent `try_from()` calls
     /// for *other* workspaces are not blocked by a slow filesystem.
+    ///
+    /// Race handling: `configure()` may run between our cache-miss check
+    /// and our re-acquire to insert, invalidating the cache while we were
+    /// parsing. We snapshot the generation before the parse and only
+    /// insert if the generation has not changed; otherwise we discard the
+    /// stale parse and retry. The loop is bounded in practice because
+    /// `configure()` is a client-driven, infrequent operation.
     fn workspace_entry(&self, workspace: &Path) -> Arc<WorkspaceEntry> {
-        if let Some(entry) = self
-            .state
-            .lock()
-            .expect("hatch state mutex poisoned")
-            .parsed
-            .get(workspace)
-        {
-            return entry.clone();
+        loop {
+            // Fast path: cache hit. Also snapshot the generation so we can
+            // detect a reconfigure that lands while we're parsing below.
+            let generation = {
+                let state = self.state.lock().expect("hatch state mutex poisoned");
+                if let Some(entry) = state.parsed.get(workspace) {
+                    return entry.clone();
+                }
+                state.generation
+            };
+
+            // Slow path: parse outside the lock so other workspaces are
+            // not blocked on this workspace's filesystem.
+            let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
+            let parsed = Arc::new(WorkspaceEntry {
+                virtual_dirs,
+                matcher: EnvNameMatcher::from_names(env_names),
+            });
+
+            let mut state = self.state.lock().expect("hatch state mutex poisoned");
+            if state.generation != generation {
+                // configure() ran while we were parsing. Our result may
+                // reflect a now-stale view of the workspace's TOMLs (or
+                // belong to a workspace that has since been removed).
+                // Drop it and retry against the current generation.
+                continue;
+            }
+            // A concurrent caller for the same workspace may have already
+            // inserted while we were parsing; prefer the existing entry
+            // so every caller observes the same `Arc`. `or_insert_with`
+            // runs the closure only on miss, avoiding a redundant clone
+            // on hit.
+            return state
+                .parsed
+                .entry(workspace.to_path_buf())
+                .or_insert_with(|| parsed.clone())
+                .clone();
         }
-        let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
-        let parsed = Arc::new(WorkspaceEntry {
-            virtual_dirs,
-            matcher: EnvNameMatcher::from_names(env_names),
-        });
-        // Re-acquire the lock and install. A concurrent caller may have
-        // already inserted while we were parsing; prefer the existing entry
-        // so every caller observes the same `Arc`. `or_insert_with` runs
-        // the closure only on miss, avoiding a redundant clone on hit.
-        self.state
-            .lock()
-            .expect("hatch state mutex poisoned")
-            .parsed
-            .entry(workspace.to_path_buf())
-            .or_insert_with(|| parsed.clone())
-            .clone()
     }
 }
 
@@ -195,6 +223,10 @@ impl Locator for Hatch {
             .cloned()
             .unwrap_or_default();
         let mut state = self.state.lock().expect("hatch state mutex poisoned");
+        // Bump the generation so any in-flight `workspace_entry()` parse
+        // detects the invalidation on re-acquire and discards its stale
+        // result instead of writing it back into the cleared cache.
+        state.generation = state.generation.wrapping_add(1);
         state.workspaces = new_workspaces;
         state.parsed.clear();
     }
@@ -1310,6 +1342,109 @@ mod tests {
         assert!(
             locator.state.lock().unwrap().parsed.contains_key(&project),
             "try_from() must have populated the parsed cache"
+        );
+    }
+
+    #[test]
+    fn configure_bumps_generation_so_workspace_entry_can_detect_invalidation() {
+        // The lazy workspace_entry() path snapshots the generation before
+        // parsing TOMLs outside the lock and refuses to write its result
+        // back if the generation has moved. That guard is what prevents a
+        // mid-parse worker from silently undoing configure()'s
+        // invalidation. This test pins the generation-bump invariant so a
+        // future refactor cannot remove it without breaking a test.
+        let locator = make_locator(None);
+        let g0 = locator.state.lock().unwrap().generation;
+
+        let config = Configuration {
+            workspace_directories: Some(vec![PathBuf::from("/tmp/example")]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+        let g1 = locator.state.lock().unwrap().generation;
+        assert_ne!(g0, g1, "configure() must bump generation");
+
+        locator.configure(&config);
+        let g2 = locator.state.lock().unwrap().generation;
+        assert_ne!(g1, g2, "repeat configure() must also bump generation");
+    }
+
+    #[test]
+    fn workspace_entry_concurrent_configure_does_not_leak_stale_parse() {
+        // Race scenario the generation guard is designed to prevent:
+        //   T1: workspace_entry(W) misses cache, snapshots generation, drops lock
+        //   T2: configure() bumps generation and clears `parsed`
+        //   T1: finishes parse, re-acquires lock, MUST NOT insert stale data
+        //
+        // This test drives the race with many threads to make a stale
+        // insert observable. Without the generation guard the loop body
+        // would occasionally see virtual_dirs reflecting an older TOML
+        // version that had been overwritten on disk before a configure().
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let pyproject = project.join("pyproject.toml");
+        fs::write(
+            &pyproject,
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch-v1\"\n",
+        )
+        .unwrap();
+
+        let locator = Arc::new(make_locator(None));
+        let config = Configuration {
+            workspace_directories: Some(vec![project.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut readers = Vec::new();
+        for _ in 0..4 {
+            let locator = locator.clone();
+            let project = project.clone();
+            let stop = stop.clone();
+            readers.push(thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = locator.workspace_entry(&project);
+                }
+            }));
+        }
+
+        // Flip the TOML between two known states, calling configure()
+        // after each write so the lazy readers race the invalidation.
+        for i in 0..50 {
+            let payload = if i % 2 == 0 {
+                b"[tool.hatch.dirs.env]\nvirtual = \".hatch-v1\"\n" as &[u8]
+            } else {
+                b"[tool.hatch.dirs.env]\nvirtual = \".hatch-v2\"\n"
+            };
+            fs::write(&pyproject, payload).unwrap();
+            locator.configure(&config);
+        }
+        stop.store(true, Ordering::Relaxed);
+        for r in readers {
+            r.join().unwrap();
+        }
+
+        // After the loop, ensure one final configure has cleared the
+        // cache, write a distinct final state, and verify the next
+        // workspace_entry observes it. If the generation guard were
+        // missing, an in-flight stale parse from an earlier iteration
+        // could still be cached here.
+        fs::write(
+            &pyproject,
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch-final\"\n",
+        )
+        .unwrap();
+        locator.configure(&config);
+        let entry = locator.workspace_entry(&project);
+        assert_eq!(
+            entry.virtual_dirs,
+            vec![norm_case(&project.join(".hatch-final"))],
+            "post-configure workspace_entry must reflect on-disk state, not a leaked stale parse"
         );
     }
 
