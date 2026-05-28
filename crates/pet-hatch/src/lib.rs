@@ -141,12 +141,19 @@ impl Hatch {
     /// performed outside the state mutex so concurrent `try_from()` calls
     /// for *other* workspaces are not blocked by a slow filesystem.
     ///
-    /// Race handling: `configure()` may run between our cache-miss check
-    /// and our re-acquire to insert, invalidating the cache while we were
-    /// parsing. We snapshot the generation before the parse and only
-    /// insert if the generation has not changed; otherwise we discard the
-    /// stale parse and retry. The loop is bounded in practice because
-    /// `configure()` is a client-driven, infrequent operation.
+    /// Race handling:
+    /// * `configure()` may run between our cache-miss check and our
+    ///   re-acquire to insert, invalidating the cache while we were
+    ///   parsing. We snapshot the generation before the parse and discard
+    ///   the result if the generation moved, then retry against the
+    ///   current state.
+    /// * `configure()` may also have removed `workspace` from the
+    ///   configured set before we were called (the caller iterates a
+    ///   snapshot of `state.workspaces` taken before `workspace_entry`).
+    ///   In that case we still return the parsed value so the in-flight
+    ///   caller can complete, but we do not cache it — otherwise the
+    ///   cache would hold an orphan entry for a workspace that is no
+    ///   longer configured until the next `configure()` clears it.
     fn workspace_entry(&self, workspace: &Path) -> Arc<WorkspaceEntry> {
         loop {
             // Fast path: cache hit. Also snapshot the generation so we can
@@ -174,6 +181,15 @@ impl Hatch {
                 // belong to a workspace that has since been removed).
                 // Drop it and retry against the current generation.
                 continue;
+            }
+            if !state.workspaces.iter().any(|w| w == workspace) {
+                // `workspace` is not in the current configured set (the
+                // caller's snapshot was taken before a configure() that
+                // removed it). Return the parsed result so the in-flight
+                // caller can finish without re-reading disk, but don't
+                // pollute `parsed` with an orphan entry that would
+                // outlive the workspace until the next configure().
+                return parsed;
             }
             // A concurrent caller for the same workspace may have already
             // inserted while we were parsing; prefer the existing entry
@@ -1445,6 +1461,54 @@ mod tests {
             entry.virtual_dirs,
             vec![norm_case(&project.join(".hatch-final"))],
             "post-configure workspace_entry must reflect on-disk state, not a leaked stale parse"
+        );
+    }
+
+    #[test]
+    fn workspace_entry_does_not_cache_for_unconfigured_workspace() {
+        // Race scenario: try_from() / find() snapshots state.workspaces,
+        // then configure() removes a workspace before workspace_entry()
+        // re-acquires the lock to insert. Without a workspaces-membership
+        // check, the parsed cache would hold an orphan entry for a
+        // workspace that is no longer configured, persisting until the
+        // next configure(). The generation guard alone is not enough
+        // here because configure() can land *before* workspace_entry()
+        // snapshots the generation.
+        //
+        // Verify the contract directly: calling workspace_entry() for a
+        // workspace not in state.workspaces returns a usable parsed
+        // value but does NOT populate the cache.
+        let temp = TempDir::new().unwrap();
+        let configured = temp.path().join("configured");
+        let removed = temp.path().join("removed");
+        fs::create_dir_all(&configured).unwrap();
+        fs::create_dir_all(&removed).unwrap();
+        fs::write(
+            removed.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+        )
+        .unwrap();
+
+        let locator = make_locator(None);
+        let config = Configuration {
+            workspace_directories: Some(vec![configured.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+
+        // `removed` is not in state.workspaces. Calling workspace_entry
+        // for it must still return a parsed entry (the in-flight caller
+        // needs a usable value) but must not pollute the cache.
+        let entry = locator.workspace_entry(&removed);
+        assert_eq!(entry.virtual_dirs, vec![norm_case(&removed.join(".hatch"))]);
+        let state = locator.state.lock().unwrap();
+        assert!(
+            !state.parsed.contains_key(&removed),
+            "parsed cache must not contain entries for unconfigured workspaces"
+        );
+        assert!(
+            !state.parsed.contains_key(&configured),
+            "configured workspace was never accessed; cache should be empty"
         );
     }
 
