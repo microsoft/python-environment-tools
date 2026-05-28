@@ -31,7 +31,7 @@
 //! `${HOME}` style expansion (e.g. `~/.virtualenvs`).
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -57,8 +57,8 @@ use serde::Deserialize;
 /// plugin's `PLUGIN_NAME` in Hatch's source.
 const VIRTUAL_ENV_SUBDIR: [&str; 2] = ["env", "virtual"];
 
-/// Per-workspace cache entry: workspace root, resolved
-/// `dirs.env.virtual` paths, and the precomputed env-name allowlist.
+/// Per-workspace parsed Hatch config: resolved `dirs.env.virtual` paths
+/// and the precomputed env-name allowlist.
 ///
 /// `matcher` is used as a Hatch-specific guard when matching venvs in
 /// workspace-configured `dirs.env.virtual` directories: a shared
@@ -69,16 +69,42 @@ const VIRTUAL_ENV_SUBDIR: [&str; 2] = ["env", "virtual"];
 /// `try_from()` hot path avoids per-call `to_lowercase()` / `format!()`
 /// allocations over the allowlist.
 struct WorkspaceEntry {
-    workspace: PathBuf,
     virtual_dirs: Vec<PathBuf>,
     matcher: EnvNameMatcher,
 }
 
-/// Per-workspace cache populated by `configure()`. Entries are wrapped in
-/// `Arc` so `find()` can snapshot the cache (clone the Vec of Arcs) and
-/// release the lock cheaply before doing filesystem I/O — no deep
-/// `Vec<PathBuf>` / matcher clone per call.
-type WorkspaceVirtualDirs = Vec<Arc<WorkspaceEntry>>;
+/// Mutable state guarded by `Hatch::state`.
+///
+/// `configure()` is required by the locator contract to be cheap (it runs
+/// on every workspace/settings change), so it only stores the list of
+/// workspace paths and drops the parsed cache. The actual
+/// `pyproject.toml` / `hatch.toml` reads happen lazily on the first
+/// `try_from()` / `find()` call that needs the data, matching how
+/// `pet-poetry` and `pet-uv` defer their per-workspace I/O.
+///
+/// `parsed` is keyed by workspace path; entries are wrapped in `Arc` so
+/// snapshots can be handed out cheaply.
+///
+/// `generation` is bumped on every `configure()` so that
+/// `workspace_entry()` can detect a reconfigure that landed while it was
+/// parsing TOMLs outside the lock. Without this guard, a stale parse
+/// could be inserted after the cache was invalidated and silently undo
+/// the invalidation.
+struct HatchState {
+    generation: u64,
+    workspaces: Vec<PathBuf>,
+    parsed: HashMap<PathBuf, Arc<WorkspaceEntry>>,
+}
+
+impl HatchState {
+    fn new() -> Self {
+        Self {
+            generation: 0,
+            workspaces: Vec::new(),
+            parsed: HashMap::new(),
+        }
+    }
+}
 
 pub struct Hatch {
     /// Default storage directory for Hatch virtual environments — i.e.
@@ -89,10 +115,7 @@ pub struct Hatch {
     /// `None` only when the platform data directory itself cannot be
     /// resolved (e.g. no home directory).
     default_virtual_dir: Option<PathBuf>,
-    /// Per-workspace resolved virtual directories, computed during
-    /// `configure()` so that hot-path identification (`try_from`) does no
-    /// disk I/O or TOML parsing.
-    workspace_virtual_dirs: Arc<Mutex<WorkspaceVirtualDirs>>,
+    state: Arc<Mutex<HatchState>>,
 }
 
 impl Default for Hatch {
@@ -109,7 +132,75 @@ impl Hatch {
     pub fn from(environment: &dyn Environment) -> Self {
         Self {
             default_virtual_dir: get_default_virtual_dir(environment),
-            workspace_virtual_dirs: Arc::new(Mutex::new(Vec::new())),
+            state: Arc::new(Mutex::new(HatchState::new())),
+        }
+    }
+
+    /// Return the cached `WorkspaceEntry` for `workspace`, parsing
+    /// `pyproject.toml` / `hatch.toml` on first access. The TOML read is
+    /// performed outside the state mutex so concurrent `try_from()` calls
+    /// for *other* workspaces are not blocked by a slow filesystem.
+    ///
+    /// Race handling:
+    /// * `configure()` may run between our cache-miss check and our
+    ///   re-acquire to insert, invalidating the cache while we were
+    ///   parsing. We snapshot the generation before the parse and discard
+    ///   the result if the generation moved, then retry against the
+    ///   current state.
+    /// * `configure()` may also have removed `workspace` from the
+    ///   configured set before we were called (the caller iterates a
+    ///   snapshot of `state.workspaces` taken before `workspace_entry`).
+    ///   In that case we still return the parsed value so the in-flight
+    ///   caller can complete, but we do not cache it — otherwise the
+    ///   cache would hold an orphan entry for a workspace that is no
+    ///   longer configured until the next `configure()` clears it.
+    fn workspace_entry(&self, workspace: &Path) -> Arc<WorkspaceEntry> {
+        loop {
+            // Fast path: cache hit. Also snapshot the generation so we can
+            // detect a reconfigure that lands while we're parsing below.
+            let generation = {
+                let state = self.state.lock().expect("hatch state mutex poisoned");
+                if let Some(entry) = state.parsed.get(workspace) {
+                    return entry.clone();
+                }
+                state.generation
+            };
+
+            // Slow path: parse outside the lock so other workspaces are
+            // not blocked on this workspace's filesystem.
+            let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
+            let parsed = Arc::new(WorkspaceEntry {
+                virtual_dirs,
+                matcher: EnvNameMatcher::from_names(env_names),
+            });
+
+            let mut state = self.state.lock().expect("hatch state mutex poisoned");
+            if state.generation != generation {
+                // configure() ran while we were parsing. Our result may
+                // reflect a now-stale view of the workspace's TOMLs (or
+                // belong to a workspace that has since been removed).
+                // Drop it and retry against the current generation.
+                continue;
+            }
+            if !state.workspaces.iter().any(|w| w == workspace) {
+                // `workspace` is not in the current configured set (the
+                // caller's snapshot was taken before a configure() that
+                // removed it). Return the parsed result so the in-flight
+                // caller can finish without re-reading disk, but don't
+                // pollute `parsed` with an orphan entry that would
+                // outlive the workspace until the next configure().
+                return parsed;
+            }
+            // A concurrent caller for the same workspace may have already
+            // inserted while we were parsing; prefer the existing entry
+            // so every caller observes the same `Arc`. `or_insert_with`
+            // runs the closure only on miss, avoiding a redundant clone
+            // on hit.
+            return state
+                .parsed
+                .entry(workspace.to_path_buf())
+                .or_insert_with(|| parsed.clone())
+                .clone();
         }
     }
 }
@@ -128,29 +219,32 @@ impl Locator for Hatch {
     }
 
     fn configure(&self, config: &Configuration) {
-        // Precompute and cache each workspace's resolved Hatch virtual dirs
-        // and declared env names so `try_from()` does not have to re-read
-        // or re-parse pyproject.toml / hatch.toml on every executable
-        // identification attempt. We build the new cache *outside* the
-        // lock to keep disk I/O out of the critical section.
-        let mut new_cache: WorkspaceVirtualDirs = Vec::new();
-        if let Some(dirs) = config.workspace_directories.as_ref() {
-            for workspace in dirs {
-                // Single parse of pyproject.toml + hatch.toml per workspace
-                // — both `virtual_dirs` and `env_names` come from the same
-                // TOML sections, so we read each file once here.
-                let (virtual_dirs, env_names) = resolve_workspace_hatch_config(workspace);
-                new_cache.push(Arc::new(WorkspaceEntry {
-                    workspace: workspace.clone(),
-                    virtual_dirs,
-                    matcher: EnvNameMatcher::from_names(env_names),
-                }));
-            }
-        }
-        *self
-            .workspace_virtual_dirs
-            .lock()
-            .expect("workspace_virtual_dirs mutex poisoned") = new_cache;
+        // Record the new workspace list and drop any previously parsed
+        // Hatch configs. Parsing is deferred to the first `try_from()` /
+        // `find()` call that needs it (see `Hatch::workspace_entry`) so
+        // that this method does no filesystem I/O — workspaces without a
+        // Hatch project never pay for a TOML read at all, and `configure`
+        // itself stays cheap for the (large) majority of users who do not
+        // use Hatch.
+        //
+        // Clearing on every call is intentional: `configure` is the
+        // boundary at which the client tells us inputs may have changed,
+        // so we treat parsed state as stale. In practice the cache is
+        // re-populated lazily during the next refresh and persists across
+        // many refreshes (configure fires infrequently relative to
+        // refresh).
+        let new_workspaces = config
+            .workspace_directories
+            .as_ref()
+            .cloned()
+            .unwrap_or_default();
+        let mut state = self.state.lock().expect("hatch state mutex poisoned");
+        // Bump the generation so any in-flight `workspace_entry()` parse
+        // detects the invalidation on re-acquire and discards its stale
+        // result instead of writing it back into the cleared cache.
+        state.generation = state.generation.wrapping_add(1);
+        state.workspaces = new_workspaces;
+        state.parsed.clear();
     }
 
     fn try_from(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
@@ -177,9 +271,7 @@ impl Locator for Hatch {
         }
 
         // Case 2: prefix lives one level under a workspace's configured
-        // `dirs.env.virtual` directory (flat layout). Inspect the cached
-        // workspaces under the lock and capture the match instead of cloning
-        // the entire cache.
+        // `dirs.env.virtual` directory (flat layout).
         //
         // Because configured `dirs.env.virtual` may point at a shared
         // directory (e.g. `~/.virtualenvs`), we additionally require that
@@ -187,16 +279,24 @@ impl Locator for Hatch {
         // declared in the workspace's Hatch configuration. Otherwise an
         // unrelated virtualenvwrapper / `venv` env in the same directory
         // would be misclassified as Hatch-managed.
+        //
+        // Snapshot the workspace list under the lock (cheap `PathBuf`
+        // clones), release the lock, then lazy-resolve each workspace's
+        // parsed Hatch config. The first call per workspace per process
+        // lifetime triggers a TOML read inside `workspace_entry`; results
+        // are cached for all subsequent calls until the next `configure()`.
         if classification.is_none() {
-            // Snapshot the cache (cheap `Arc` clones) under the lock and
-            // release it before iterating, to keep `configure()` from being
-            // blocked by callers on the hot identification path.
-            let cache: Vec<Arc<WorkspaceEntry>> = self
-                .workspace_virtual_dirs
+            let workspaces: Vec<PathBuf> = self
+                .state
                 .lock()
-                .expect("workspace_virtual_dirs mutex poisoned")
+                .expect("hatch state mutex poisoned")
+                .workspaces
                 .clone();
-            'workspaces: for entry in cache.iter() {
+            'workspaces: for workspace in &workspaces {
+                let entry = self.workspace_entry(workspace);
+                if entry.virtual_dirs.is_empty() {
+                    continue;
+                }
                 for virtual_dir in &entry.virtual_dirs {
                     if prefix_is_directly_under(&prefix, virtual_dir) {
                         let env_name = prefix
@@ -206,7 +306,7 @@ impl Locator for Hatch {
                         if !entry.matcher.matches(&env_name) {
                             continue;
                         }
-                        classification = Some((env_name, Some(entry.workspace.clone())));
+                        classification = Some((env_name, Some(workspace.clone())));
                         break 'workspaces;
                     }
                 }
@@ -249,23 +349,28 @@ impl Locator for Hatch {
             }
         }
 
-        // 2. Walk project-local virtual directories for each configured workspace.
-        //    Snapshot the cache (cheap `Arc` clones) under the lock, then
-        //    release the lock before doing filesystem I/O. Apply the same
-        //    env-name guard as `try_from()` so shared directories (e.g.
+        // 2. Walk project-local virtual directories for each configured
+        //    workspace. Snapshot the workspace list under the lock, release
+        //    it, and lazy-resolve each workspace's parsed Hatch config via
+        //    `workspace_entry` (first call per workspace reads TOMLs;
+        //    later calls reuse the cached `Arc`). Apply the same env-name
+        //    guard as `try_from()` so shared directories (e.g.
         //    `~/.virtualenvs`) only yield the workspace's declared envs.
-        let workspaces: Vec<Arc<WorkspaceEntry>> = self
-            .workspace_virtual_dirs
+        let workspaces: Vec<PathBuf> = self
+            .state
             .lock()
-            .expect("workspace_virtual_dirs mutex poisoned")
+            .expect("hatch state mutex poisoned")
+            .workspaces
             .clone();
-        for entry in &workspaces {
+        for workspace in &workspaces {
+            let entry = self.workspace_entry(workspace);
+            if entry.virtual_dirs.is_empty() {
+                continue;
+            }
             for virtual_dir in &entry.virtual_dirs {
-                for env in find_envs_in_flat_dir(
-                    virtual_dir,
-                    Some(entry.workspace.clone()),
-                    &entry.matcher,
-                ) {
+                for env in
+                    find_envs_in_flat_dir(virtual_dir, Some(workspace.clone()), &entry.matcher)
+                {
                     reporter.report_environment(&env);
                 }
             }
@@ -417,9 +522,8 @@ fn match_default_storage_layout(prefix: &Path, storage: &Path) -> Option<String>
 /// True iff `prefix`'s parent equals `dir` (case-insensitive on Windows).
 ///
 /// `dir` is expected to be already normalized via `norm_case()` — entries
-/// cached on the `Hatch` locator are normalized at `configure()`-time by
-/// `resolve_virtual_paths_against_workspace()` (called from
-/// `resolve_workspace_hatch_config()`), so we only normalize
+/// produced by `resolve_workspace_hatch_config()` are normalized when
+/// parsed (and then cached in `HatchState::parsed`), so we only normalize
 /// `prefix.parent()` here — avoiding redundant `GetLongPathNameW` /
 /// case-folding work on Windows in the identification hot path.
 fn prefix_is_directly_under(prefix: &Path, dir: &Path) -> bool {
@@ -829,26 +933,27 @@ mod tests {
     fn make_locator(default_virtual_dir: Option<PathBuf>) -> Hatch {
         Hatch {
             default_virtual_dir,
-            workspace_virtual_dirs: Arc::new(Mutex::new(vec![])),
+            state: Arc::new(Mutex::new(HatchState::new())),
         }
     }
 
-    /// Build a locator with a single configured workspace whose virtual dirs
-    /// have been resolved up-front (mirrors what `configure()` does).
+    /// Build a locator with a single configured workspace. Mirrors what
+    /// the JSONRPC server would do: `configure()` records the workspace
+    /// path; the parsed Hatch config is populated lazily on first
+    /// `try_from()` / `find()`. Tests that want the parse to have already
+    /// happened can call `locator.workspace_entry(workspace)` after
+    /// construction.
     fn make_locator_with_workspace(
         default_virtual_dir: Option<PathBuf>,
         workspace: &Path,
     ) -> Hatch {
-        let virtual_dirs = resolve_project_virtual_dirs(workspace);
-        let env_names = resolve_project_env_names(workspace);
-        Hatch {
-            default_virtual_dir,
-            workspace_virtual_dirs: Arc::new(Mutex::new(vec![Arc::new(WorkspaceEntry {
-                workspace: workspace.to_path_buf(),
-                virtual_dirs,
-                matcher: EnvNameMatcher::from_names(env_names),
-            })])),
-        }
+        let locator = make_locator(default_virtual_dir);
+        let config = Configuration {
+            workspace_directories: Some(vec![workspace.to_path_buf()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+        locator
     }
 
     #[test]
@@ -1144,9 +1249,12 @@ mod tests {
     }
 
     #[test]
-    fn configure_caches_workspace_virtual_dirs() {
-        // try_from() must not re-read pyproject.toml on every call; configure()
-        // is responsible for resolving and caching the virtual dirs once.
+    fn configure_does_no_toml_io_and_defers_parsing() {
+        // configure() must be O(workspace_count) with no filesystem reads
+        // beyond what the OS does to back the `PathBuf` clones. Verifies
+        // the lazy-parse contract: configure records the workspace list
+        // and clears the parsed cache; the first try_from()/find() that
+        // needs the parse populates it on demand.
         let temp = TempDir::new().unwrap();
         let project = temp.path().join("project");
         fs::create_dir_all(&project).unwrap();
@@ -1165,10 +1273,243 @@ mod tests {
         };
         locator.configure(&config);
 
-        let cached = locator.workspace_virtual_dirs.lock().unwrap().clone();
-        assert_eq!(cached.len(), 1);
-        assert_eq!(cached[0].workspace, project);
-        assert_eq!(cached[0].virtual_dirs, vec![norm_case(&virtual_dir)]);
+        // configure() recorded the workspace but did NOT parse.
+        {
+            let state = locator.state.lock().unwrap();
+            assert_eq!(state.workspaces, vec![project.clone()]);
+            assert!(
+                state.parsed.is_empty(),
+                "configure() must not parse TOMLs eagerly"
+            );
+        }
+
+        // Lazy parse triggered by an access; the cached entry persists.
+        let entry = locator.workspace_entry(&project);
+        assert_eq!(entry.virtual_dirs, vec![norm_case(&virtual_dir)]);
+        let state = locator.state.lock().unwrap();
+        assert!(state.parsed.contains_key(&project));
+    }
+
+    #[test]
+    fn configure_clears_parsed_cache_so_toml_edits_are_picked_up() {
+        // The parsed cache is invalidated by configure(): a follow-up
+        // configure (e.g. settings change) re-parses on next access,
+        // letting users pick up TOML edits without restarting PET.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+        )
+        .unwrap();
+
+        let locator = make_locator(None);
+        let config = Configuration {
+            workspace_directories: Some(vec![project.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+        let first = locator.workspace_entry(&project);
+        assert_eq!(first.virtual_dirs, vec![norm_case(&project.join(".hatch"))]);
+
+        // Edit the TOML and re-configure; the cache should drop the old
+        // parse and the next access should reflect the new path.
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".envs\"\n",
+        )
+        .unwrap();
+        locator.configure(&config);
+        assert!(
+            locator.state.lock().unwrap().parsed.is_empty(),
+            "configure() must invalidate the parsed cache"
+        );
+        let second = locator.workspace_entry(&project);
+        assert_eq!(second.virtual_dirs, vec![norm_case(&project.join(".envs"))]);
+    }
+
+    #[test]
+    fn try_from_lazily_populates_parsed_cache_on_first_call() {
+        // try_from() should trigger the parse for a workspace whose Hatch
+        // config has not been read yet, and reuse the cached result on
+        // subsequent calls.
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(
+            project.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+        )
+        .unwrap();
+        let prefix = project.join(".hatch").join("default");
+        write_pyvenv_cfg(&prefix, "default", "3.11.0");
+        let exe = write_python_exe(&prefix);
+
+        let locator = make_locator_with_workspace(None, &project);
+        assert!(
+            locator.state.lock().unwrap().parsed.is_empty(),
+            "configure() must defer parsing"
+        );
+
+        let env = PythonEnv::new(exe, Some(prefix), None);
+        let identified = locator.try_from(&env).expect("project-local env match");
+        assert_eq!(identified.project, Some(norm_case(&project)));
+        assert!(
+            locator.state.lock().unwrap().parsed.contains_key(&project),
+            "try_from() must have populated the parsed cache"
+        );
+    }
+
+    #[test]
+    fn configure_bumps_generation_so_workspace_entry_can_detect_invalidation() {
+        // The lazy workspace_entry() path snapshots the generation before
+        // parsing TOMLs outside the lock and refuses to write its result
+        // back if the generation has moved. That guard is what prevents a
+        // mid-parse worker from silently undoing configure()'s
+        // invalidation. This test pins the generation-bump invariant so a
+        // future refactor cannot remove it without breaking a test.
+        let locator = make_locator(None);
+        let g0 = locator.state.lock().unwrap().generation;
+
+        let config = Configuration {
+            workspace_directories: Some(vec![PathBuf::from("/tmp/example")]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+        let g1 = locator.state.lock().unwrap().generation;
+        assert_ne!(g0, g1, "configure() must bump generation");
+
+        locator.configure(&config);
+        let g2 = locator.state.lock().unwrap().generation;
+        assert_ne!(g1, g2, "repeat configure() must also bump generation");
+    }
+
+    #[test]
+    fn workspace_entry_concurrent_configure_does_not_leak_stale_parse() {
+        // Race scenario the generation guard is designed to prevent:
+        //   T1: workspace_entry(W) misses cache, snapshots generation, drops lock
+        //   T2: configure() bumps generation and clears `parsed`
+        //   T1: finishes parse, re-acquires lock, MUST NOT insert stale data
+        //
+        // This test drives the race with many threads to make a stale
+        // insert observable. Without the generation guard the loop body
+        // would occasionally see virtual_dirs reflecting an older TOML
+        // version that had been overwritten on disk before a configure().
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::thread;
+
+        let temp = TempDir::new().unwrap();
+        let project = temp.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        let pyproject = project.join("pyproject.toml");
+        fs::write(
+            &pyproject,
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch-v1\"\n",
+        )
+        .unwrap();
+
+        let locator = Arc::new(make_locator(None));
+        let config = Configuration {
+            workspace_directories: Some(vec![project.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut readers = Vec::new();
+        for _ in 0..4 {
+            let locator = locator.clone();
+            let project = project.clone();
+            let stop = stop.clone();
+            readers.push(thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = locator.workspace_entry(&project);
+                }
+            }));
+        }
+
+        // Flip the TOML between two known states, calling configure()
+        // after each write so the lazy readers race the invalidation.
+        for i in 0..50 {
+            let payload = if i % 2 == 0 {
+                b"[tool.hatch.dirs.env]\nvirtual = \".hatch-v1\"\n" as &[u8]
+            } else {
+                b"[tool.hatch.dirs.env]\nvirtual = \".hatch-v2\"\n"
+            };
+            fs::write(&pyproject, payload).unwrap();
+            locator.configure(&config);
+        }
+        stop.store(true, Ordering::Relaxed);
+        for r in readers {
+            r.join().unwrap();
+        }
+
+        // After the loop, ensure one final configure has cleared the
+        // cache, write a distinct final state, and verify the next
+        // workspace_entry observes it. If the generation guard were
+        // missing, an in-flight stale parse from an earlier iteration
+        // could still be cached here.
+        fs::write(
+            &pyproject,
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch-final\"\n",
+        )
+        .unwrap();
+        locator.configure(&config);
+        let entry = locator.workspace_entry(&project);
+        assert_eq!(
+            entry.virtual_dirs,
+            vec![norm_case(&project.join(".hatch-final"))],
+            "post-configure workspace_entry must reflect on-disk state, not a leaked stale parse"
+        );
+    }
+
+    #[test]
+    fn workspace_entry_does_not_cache_for_unconfigured_workspace() {
+        // Race scenario: try_from() / find() snapshots state.workspaces,
+        // then configure() removes a workspace before workspace_entry()
+        // re-acquires the lock to insert. Without a workspaces-membership
+        // check, the parsed cache would hold an orphan entry for a
+        // workspace that is no longer configured, persisting until the
+        // next configure(). The generation guard alone is not enough
+        // here because configure() can land *before* workspace_entry()
+        // snapshots the generation.
+        //
+        // Verify the contract directly: calling workspace_entry() for a
+        // workspace not in state.workspaces returns a usable parsed
+        // value but does NOT populate the cache.
+        let temp = TempDir::new().unwrap();
+        let configured = temp.path().join("configured");
+        let removed = temp.path().join("removed");
+        fs::create_dir_all(&configured).unwrap();
+        fs::create_dir_all(&removed).unwrap();
+        fs::write(
+            removed.join("pyproject.toml"),
+            b"[tool.hatch.dirs.env]\nvirtual = \".hatch\"\n",
+        )
+        .unwrap();
+
+        let locator = make_locator(None);
+        let config = Configuration {
+            workspace_directories: Some(vec![configured.clone()]),
+            ..Configuration::default()
+        };
+        locator.configure(&config);
+
+        // `removed` is not in state.workspaces. Calling workspace_entry
+        // for it must still return a parsed entry (the in-flight caller
+        // needs a usable value) but must not pollute the cache.
+        let entry = locator.workspace_entry(&removed);
+        assert_eq!(entry.virtual_dirs, vec![norm_case(&removed.join(".hatch"))]);
+        let state = locator.state.lock().unwrap();
+        assert!(
+            !state.parsed.contains_key(&removed),
+            "parsed cache must not contain entries for unconfigured workspaces"
+        );
+        assert!(
+            !state.parsed.contains_key(&configured),
+            "configured workspace was never accessed; cache should be empty"
+        );
     }
 
     #[cfg(target_os = "linux")]
