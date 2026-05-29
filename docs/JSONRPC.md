@@ -11,6 +11,34 @@ For samples using JSONRPC, please have a look at the [sample.js](./sample.js) fi
 
 Any requests/notifications not documented here are not supported.
 
+# Info Request
+
+Returns metadata about the running PET binary. Clients can cache this response
+and attach it to PET-related telemetry such as `refresh` and `resolve` timings.
+
+_Request_:
+
+- method: `info`
+- params: `{}`
+
+_Response_:
+
+- result: `InfoResponse` defined as below.
+
+```typescript
+interface InfoResponse {
+  /**
+   * PET package version baked into the binary at build time.
+   * Pre-release builds may include a suffix such as `0.1.0-dev.12345`.
+   */
+  petVersion: string;
+  /**
+   * Build identifier baked into the binary when built by CI.
+   */
+  buildId?: string;
+}
+```
+
 # Configuration Request
 
 This should always be the first request sent to the tool.

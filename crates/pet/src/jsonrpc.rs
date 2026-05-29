@@ -507,6 +507,7 @@ pub fn start_jsonrpc_server() {
     };
 
     let mut handlers = HandlersKeyedByMethodName::new(Arc::new(context));
+    handlers.add_request_handler("info", handle_info);
     handlers.add_request_handler("configure", handle_configure);
     handlers.add_request_handler("refresh", handle_refresh);
     handlers.add_request_handler("resolve", handle_resolve);
@@ -514,6 +515,29 @@ pub fn start_jsonrpc_server() {
     handlers.add_request_handler("condaInfo", handle_conda_telemetry);
     handlers.add_request_handler("clear", handle_clear_cache);
     start_server(&handlers)
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InfoResponse {
+    pub pet_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
+}
+
+impl InfoResponse {
+    fn current() -> Self {
+        Self {
+            pet_version: env!("CARGO_PKG_VERSION").to_string(),
+            build_id: option_env!("PET_BUILD_ID")
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+        }
+    }
+}
+
+pub fn handle_info(_context: Arc<Context>, id: u32, _params: Value) {
+    send_reply(id, Some(InfoResponse::current()));
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1510,6 +1534,17 @@ mod tests {
             parse_refresh_options(Value::Array(vec![])).unwrap(),
             RefreshOptions::default()
         );
+    }
+
+    #[test]
+    fn test_info_response_uses_package_version_and_optional_build_id() {
+        let info = InfoResponse::current();
+
+        assert_eq!(info.pet_version, env!("CARGO_PKG_VERSION"));
+        assert!(info
+            .build_id
+            .as_deref()
+            .is_none_or(|build_id| !build_id.is_empty()));
     }
 
     #[test]
