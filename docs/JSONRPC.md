@@ -13,8 +13,9 @@ Any requests/notifications not documented here are not supported.
 
 # Info Request
 
-Returns metadata about the running PET binary. Clients can cache this response
-and attach it to PET-related telemetry such as `refresh` and `resolve` timings.
+Returns metadata about the running PET binary. This request does not require a prior
+`configure` request. Clients can cache this response and attach it to PET-related
+telemetry such as `refresh` and `resolve` timings.
 
 _Request_:
 
