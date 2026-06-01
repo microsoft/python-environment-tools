@@ -1,18 +1,26 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use log::{error, trace};
+use log::{error, trace, warn};
 use pet_core::{arch::Architecture, env::PythonEnv, python_environment::PythonEnvironment};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    time::SystemTime,
+    process::Stdio,
+    thread,
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::{cache::create_cache, executable::new_silent_command};
 
 const PYTHON_INFO_JSON_SEPARATOR: &str = "093385e9-59f7-4a16-a604-14bf206256fe";
 const PYTHON_INFO_CMD:&str = "import json, sys; print('093385e9-59f7-4a16-a604-14bf206256fe');print(json.dumps({'version': '.'.join(str(n) for n in sys.version_info), 'sys_prefix': sys.prefix, 'executable': sys.executable, 'is64_bit': sys.maxsize > 2**32}))";
+
+/// Maximum wall-clock time to wait for a spawned Python interpreter to print
+/// its info JSON before we give up and kill it. Stale cached paths on Windows
+/// (Store stubs, vanished network shares, EDR-stalled `CreateProcess`) can
+/// otherwise block `resolve` for tens to hundreds of seconds (Fixes #463).
+const RESOLVE_SPAWN_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct InterpreterInfo {
@@ -88,13 +96,66 @@ impl ResolvedPythonEnv {
 }
 
 fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
+    get_interpreter_details_with_timeout(executable, RESOLVE_SPAWN_TIMEOUT)
+}
+
+fn get_interpreter_details_with_timeout(
+    executable: &Path,
+    timeout: Duration,
+) -> Option<ResolvedPythonEnv> {
     // Spawn the python exe and get the version, sys.prefix and sys.executable.
     let executable = executable.to_str()?;
     let start = SystemTime::now();
     trace!("Executing Python: {} -c {}", executable, PYTHON_INFO_CMD);
-    let result = new_silent_command(executable)
+    let mut child = match new_silent_command(executable)
         .args(["-c", PYTHON_INFO_CMD])
-        .output();
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(err) => {
+            error!(
+                "Failed to spawn Python to resolve info {:?}: {}",
+                executable, err
+            );
+            return None;
+        }
+    };
+
+    // Poll for completion up to the timeout. A stale cached path on Windows
+    // (Store stub, vanished network share, EDR-stalled `CreateProcess`) can
+    // otherwise block `wait_with_output()` for tens to hundreds of seconds.
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => break,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    warn!(
+                        "Timed out after {:?} resolving Python via spawn for {:?}; killing child.",
+                        timeout, executable
+                    );
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(err) => {
+                error!(
+                    "Failed to wait on Python interpreter spawn for {:?}: {}",
+                    executable, err
+                );
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+
+    let result = child.wait_with_output();
     match result {
         Ok(output) => {
             let output = String::from_utf8(output.stdout).unwrap().trim().to_string();
@@ -141,5 +202,47 @@ fn get_interpreter_details(executable: &Path) -> Option<ResolvedPythonEnv> {
             );
             None
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Regression test for #463: a spawn that never exits must not block the
+    /// resolve path indefinitely. We use a shell script that sleeps far longer
+    /// than the test timeout and assert that the call returns None promptly
+    /// (well under the script's sleep duration).
+    #[test]
+    fn get_interpreter_details_times_out_on_hanging_executable() {
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "pet_resolve_timeout_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let fake_exe = tmp_dir.join("hangs");
+        std::fs::write(&fake_exe, "#!/bin/sh\nsleep 60\n").unwrap();
+        let mut perms = std::fs::metadata(&fake_exe).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_exe, perms).unwrap();
+
+        let start = Instant::now();
+        let result = get_interpreter_details_with_timeout(&fake_exe, Duration::from_millis(200));
+        let elapsed = start.elapsed();
+
+        let _ = std::fs::remove_file(&fake_exe);
+        let _ = std::fs::remove_dir(&tmp_dir);
+
+        assert!(result.is_none(), "hanging spawn must return None");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "spawn must be killed near the timeout (took {:?})",
+            elapsed
+        );
     }
 }
