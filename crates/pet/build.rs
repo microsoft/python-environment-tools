@@ -2,6 +2,17 @@
 // Licensed under the MIT License.
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=PET_BUILD_ID");
+    println!("cargo:rerun-if-env-changed=BUILD_BUILDID");
+
+    if let Some(build_id) = std::env::var("PET_BUILD_ID")
+        .ok()
+        .or_else(|| std::env::var("BUILD_BUILDID").ok())
+        .filter(|value| !value.is_empty())
+    {
+        println!("cargo:rustc-env=PET_BUILD_ID={build_id}");
+    }
+
     #[cfg(target_os = "windows")]
     {
         if std::env::var("CARGO_BIN_NAME").is_err() {

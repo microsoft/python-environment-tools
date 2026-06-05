@@ -111,6 +111,19 @@ fn assert_single_environment(
 }
 
 #[test]
+fn info_reports_pet_version_and_optional_build_id() {
+    let client = PetJsonRpcClient::spawn().expect("failed to spawn PET server");
+
+    let info = client.info().expect("info request failed");
+
+    assert_eq!(info.pet_version, env!("CARGO_PKG_VERSION"));
+    assert!(info
+        .build_id
+        .as_deref()
+        .is_none_or(|build_id| !build_id.is_empty()));
+}
+
+#[test]
 fn configure_and_workspace_refresh_report_fake_venv() {
     let client = PetJsonRpcClient::spawn().expect("failed to spawn PET server");
     let (temp_dir, workspace, venv) = create_fake_workspace("workspace-env");

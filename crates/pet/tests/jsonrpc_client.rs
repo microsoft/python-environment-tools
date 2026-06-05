@@ -23,6 +23,13 @@ pub struct RefreshResult {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct PetInfoResponse {
+    pub pet_version: String,
+    pub build_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct EnvironmentNotification {
     pub executable: Option<String>,
     pub kind: Option<String>,
@@ -154,6 +161,10 @@ impl PetJsonRpcClient {
             params.unwrap_or_else(|| json!({})),
             DEFAULT_REQUEST_TIMEOUT,
         )
+    }
+
+    pub fn info(&self) -> Result<PetInfoResponse, String> {
+        self.send_request("info", json!({}), DEFAULT_REQUEST_TIMEOUT)
     }
 
     #[allow(dead_code)]
