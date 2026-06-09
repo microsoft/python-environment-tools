@@ -26,6 +26,7 @@ pub struct RefreshResult {
 pub struct PetInfoResponse {
     pub pet_version: String,
     pub build_id: Option<String>,
+    pub commit_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

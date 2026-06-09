@@ -111,16 +111,22 @@ fn assert_single_environment(
 }
 
 #[test]
-fn info_reports_pet_version_and_optional_build_id() {
+fn info_reports_pet_version_and_optional_build_metadata() {
     let client = PetJsonRpcClient::spawn().expect("failed to spawn PET server");
 
     let info = client.info().expect("info request failed");
 
     assert_eq!(info.pet_version, env!("CARGO_PKG_VERSION"));
+    // build_id / commit_sha are populated from env vars set at compile time by CI.
+    // For local dev builds they will be None; assert non-empty only when present.
     assert!(info
         .build_id
         .as_deref()
         .is_none_or(|build_id| !build_id.is_empty()));
+    assert!(info
+        .commit_sha
+        .as_deref()
+        .is_none_or(|commit_sha| !commit_sha.is_empty()));
 }
 
 #[test]

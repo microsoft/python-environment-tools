@@ -523,6 +523,8 @@ pub struct InfoResponse {
     pub pet_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
 }
 
 impl InfoResponse {
@@ -530,6 +532,9 @@ impl InfoResponse {
         Self {
             pet_version: env!("CARGO_PKG_VERSION").to_string(),
             build_id: option_env!("PET_BUILD_ID")
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            commit_sha: option_env!("PET_COMMIT_SHA")
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string),
         }
@@ -1537,14 +1542,45 @@ mod tests {
     }
 
     #[test]
-    fn test_info_response_uses_package_version_and_optional_build_id() {
+    fn test_info_response_uses_package_version_and_optional_build_metadata() {
         let info = InfoResponse::current();
 
         assert_eq!(info.pet_version, env!("CARGO_PKG_VERSION"));
+        // build_id / commit_sha are populated from env vars set at compile time by CI.
+        // For local dev builds they will be None; assert non-empty only when present.
         assert!(info
             .build_id
             .as_deref()
             .is_none_or(|build_id| !build_id.is_empty()));
+        assert!(info
+            .commit_sha
+            .as_deref()
+            .is_none_or(|commit_sha| !commit_sha.is_empty()));
+    }
+
+    #[test]
+    fn test_info_response_serializes_camel_case_and_omits_none() {
+        // Guards the JSON wire format (camelCase rename + skip_serializing_if)
+        // independently of whether CI env vars were set at compile time.
+        let json = serde_json::to_value(InfoResponse {
+            pet_version: "1.2.3".to_string(),
+            build_id: Some("42".to_string()),
+            commit_sha: Some("abc123".to_string()),
+        })
+        .unwrap();
+        assert_eq!(json["petVersion"], "1.2.3");
+        assert_eq!(json["buildId"], "42");
+        assert_eq!(json["commitSha"], "abc123");
+
+        let json = serde_json::to_value(InfoResponse {
+            pet_version: "1.2.3".to_string(),
+            build_id: None,
+            commit_sha: None,
+        })
+        .unwrap();
+        assert_eq!(json["petVersion"], "1.2.3");
+        assert!(json.get("buildId").is_none());
+        assert!(json.get("commitSha").is_none());
     }
 
     #[test]

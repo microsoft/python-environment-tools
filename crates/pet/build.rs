@@ -4,13 +4,40 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=PET_BUILD_ID");
     println!("cargo:rerun-if-env-changed=BUILD_BUILDID");
+    println!("cargo:rerun-if-env-changed=PET_COMMIT_SHA");
+    println!("cargo:rerun-if-env-changed=BUILD_SOURCEVERSION");
+    println!("cargo:rerun-if-env-changed=GITHUB_SHA");
 
+    // Filter empties per-candidate so an explicitly-set-but-empty primary var
+    // doesn't short-circuit the fallback chain (e.g., `PET_BUILD_ID=""`).
     if let Some(build_id) = std::env::var("PET_BUILD_ID")
         .ok()
-        .or_else(|| std::env::var("BUILD_BUILDID").ok())
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("BUILD_BUILDID")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
     {
         println!("cargo:rustc-env=PET_BUILD_ID={build_id}");
+    }
+
+    // BUILD_SOURCEVERSION is set by Azure Pipelines; GITHUB_SHA by GitHub Actions.
+    if let Some(commit_sha) = std::env::var("PET_COMMIT_SHA")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("BUILD_SOURCEVERSION")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
+        .or_else(|| {
+            std::env::var("GITHUB_SHA")
+                .ok()
+                .filter(|value| !value.is_empty())
+        })
+    {
+        println!("cargo:rustc-env=PET_COMMIT_SHA={commit_sha}");
     }
 
     #[cfg(target_os = "windows")]

@@ -35,8 +35,15 @@ interface InfoResponse {
   petVersion: string;
   /**
    * Build identifier baked into the binary when built by CI.
+   * Sourced from `PET_BUILD_ID` or Azure Pipelines `BUILD_BUILDID`.
    */
   buildId?: string;
+  /**
+   * Source git commit SHA baked into the binary when built by CI.
+   * Sourced from `PET_COMMIT_SHA`, Azure Pipelines `BUILD_SOURCEVERSION`,
+   * or GitHub Actions `GITHUB_SHA`. Absent for local dev builds.
+   */
+  commitSha?: string;
 }
 ```
 
