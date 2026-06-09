@@ -523,6 +523,8 @@ pub struct InfoResponse {
     pub pet_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
 }
 
 impl InfoResponse {
@@ -530,6 +532,9 @@ impl InfoResponse {
         Self {
             pet_version: env!("CARGO_PKG_VERSION").to_string(),
             build_id: option_env!("PET_BUILD_ID")
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            commit_sha: option_env!("PET_COMMIT_SHA")
                 .filter(|value| !value.is_empty())
                 .map(ToString::to_string),
         }
@@ -1541,10 +1546,16 @@ mod tests {
         let info = InfoResponse::current();
 
         assert_eq!(info.pet_version, env!("CARGO_PKG_VERSION"));
+        // build_id / commit_sha are populated from env vars set at compile time by CI.
+        // For local dev builds they will be None; assert non-empty only when present.
         assert!(info
             .build_id
             .as_deref()
             .is_none_or(|build_id| !build_id.is_empty()));
+        assert!(info
+            .commit_sha
+            .as_deref()
+            .is_none_or(|commit_sha| !commit_sha.is_empty()));
     }
 
     #[test]
