@@ -1542,7 +1542,7 @@ mod tests {
     }
 
     #[test]
-    fn test_info_response_uses_package_version_and_optional_build_id() {
+    fn test_info_response_uses_package_version_and_optional_build_metadata() {
         let info = InfoResponse::current();
 
         assert_eq!(info.pet_version, env!("CARGO_PKG_VERSION"));
@@ -1556,6 +1556,31 @@ mod tests {
             .commit_sha
             .as_deref()
             .is_none_or(|commit_sha| !commit_sha.is_empty()));
+    }
+
+    #[test]
+    fn test_info_response_serializes_camel_case_and_omits_none() {
+        // Guards the JSON wire format (camelCase rename + skip_serializing_if)
+        // independently of whether CI env vars were set at compile time.
+        let json = serde_json::to_value(InfoResponse {
+            pet_version: "1.2.3".to_string(),
+            build_id: Some("42".to_string()),
+            commit_sha: Some("abc123".to_string()),
+        })
+        .unwrap();
+        assert_eq!(json["petVersion"], "1.2.3");
+        assert_eq!(json["buildId"], "42");
+        assert_eq!(json["commitSha"], "abc123");
+
+        let json = serde_json::to_value(InfoResponse {
+            pet_version: "1.2.3".to_string(),
+            build_id: None,
+            commit_sha: None,
+        })
+        .unwrap();
+        assert_eq!(json["petVersion"], "1.2.3");
+        assert!(json.get("buildId").is_none());
+        assert!(json.get("commitSha").is_none());
     }
 
     #[test]

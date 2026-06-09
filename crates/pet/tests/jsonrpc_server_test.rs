@@ -111,7 +111,7 @@ fn assert_single_environment(
 }
 
 #[test]
-fn info_reports_pet_version_and_optional_build_id() {
+fn info_reports_pet_version_and_optional_build_metadata() {
     let client = PetJsonRpcClient::spawn().expect("failed to spawn PET server");
 
     let info = client.info().expect("info request failed");
