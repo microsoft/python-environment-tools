@@ -20,6 +20,10 @@ resources:
       ref: main
       endpoint: Monaco
 
+variables:
+  # Required to enable Windows resource block in crates/pet/build.rs
+  CARGO_BIN_NAME: pet
+
 extends:
   template: azure-pipelines/rust-package/pipeline.yml@templates
   parameters:
