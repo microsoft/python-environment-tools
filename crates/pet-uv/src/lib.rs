@@ -29,7 +29,7 @@ pub struct Uv {
 struct UvVenv {
     uv_version: String,
     python_version: String,
-    prompt: String,
+    prompt: Option<String>,
 }
 
 impl UvVenv {
@@ -43,7 +43,7 @@ impl UvVenv {
                 uv_version = Some(uv_version_value.trim_end().to_string())
             }
             if let Some(version_info) = line.trim_start().strip_prefix("version_info = ") {
-                python_version = Some(version_info.to_string());
+                python_version = Some(version_info.trim_end().to_string());
             }
             if let Some(prompt_value) = line.trim_start().strip_prefix("prompt = ") {
                 prompt = Some(prompt_value.trim_end().to_string());
@@ -53,10 +53,14 @@ impl UvVenv {
                 break;
             }
         }
+        // The `uv` marker identifies the venv as uv-managed; `version_info` gives
+        // the Python version. `prompt` is optional metadata: `uv venv` only writes
+        // it when `--prompt` is passed, so requiring it would misidentify ordinary
+        // uv venvs as generic virtual environments.
         Some(Self {
             uv_version: uv_version?,
             python_version: python_version?,
-            prompt: prompt?,
+            prompt,
         })
     }
 }
@@ -151,7 +155,7 @@ impl Locator for Uv {
 
         Some(
             PythonEnvironmentBuilder::new(Some(kind))
-                .name(Some(uv_venv.prompt))
+                .name(uv_venv.prompt)
                 .executable(Some(env.executable.clone()))
                 .version(Some(uv_venv.python_version))
                 .symlinks(prefix.as_ref().map(find_executables))
@@ -443,7 +447,7 @@ fn build_workspace_env(workspace_root: &Path) -> Option<PythonEnvironment> {
     if let Some(uv_venv) = UvVenv::maybe_from_file(&pyvenv_cfg) {
         Some(
             PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::UvWorkspace))
-                .name(Some(uv_venv.prompt))
+                .name(uv_venv.prompt)
                 .executable(executable)
                 .version(Some(uv_venv.python_version))
                 .symlinks(Some(find_executables(&prefix)))
@@ -486,7 +490,7 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
         if let Some(uv_venv) = UvVenv::maybe_from_file(&pyvenv_cfg) {
             trace!("uv-managed venv found for workspace in {}", path.display());
             let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::UvWorkspace))
-                .name(Some(uv_venv.prompt))
+                .name(uv_venv.prompt)
                 .symlinks(Some(find_executables(&prefix)))
                 .prefix(Some(prefix))
                 .executable(executable)
@@ -504,7 +508,7 @@ fn list_envs_in_directory(path: &Path) -> Vec<PythonEnvironment> {
         if let Some(uv_venv) = UvVenv::maybe_from_file(&pyvenv_cfg) {
             trace!("uv-managed venv found for project in {}", path.display());
             let env = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Uv))
-                .name(Some(uv_venv.prompt))
+                .name(uv_venv.prompt)
                 .symlinks(Some(find_executables(&prefix)))
                 .prefix(Some(prefix))
                 .version(Some(uv_venv.python_version))
@@ -657,7 +661,7 @@ prompt = test-env"#;
         let uv_venv = uv_venv.unwrap();
         assert_eq!(uv_venv.uv_version, "0.1.0");
         assert_eq!(uv_venv.python_version, "3.11.0");
-        assert_eq!(uv_venv.prompt, "test-env");
+        assert_eq!(uv_venv.prompt, Some("test-env".to_string()));
     }
 
     #[test]
@@ -709,9 +713,35 @@ version_info = 3.11.0"#;
 
         let uv_venv = UvVenv::maybe_from_file(&cfg_path);
         assert!(
-            uv_venv.is_none(),
-            "Should return None when 'prompt' field is missing"
+            uv_venv.is_some(),
+            "Should identify a uv venv even when the optional 'prompt' field is missing"
         );
+
+        let uv_venv = uv_venv.unwrap();
+        assert_eq!(uv_venv.uv_version, "0.1.0");
+        assert_eq!(uv_venv.python_version, "3.11.0");
+        assert_eq!(uv_venv.prompt, None);
+    }
+
+    #[test]
+    fn test_uv_venv_parse_real_uv_venv_cfg_without_prompt() {
+        // `uv venv` (without `--prompt`) produces a pyvenv.cfg with no `prompt`
+        // line. Such an environment must still be identified as uv-managed.
+        let temp_dir = TempDir::new().unwrap();
+        let cfg_path = temp_dir.path().join("pyvenv.cfg");
+
+        let contents = r#"home = /home/user/.local/share/uv/python/cpython-3.13.0-linux-x86_64-gnu
+implementation = CPython
+uv = 0.5.4
+version_info = 3.13.0
+include-system-site-packages = false"#;
+
+        std::fs::write(&cfg_path, contents).unwrap();
+
+        let uv_venv = UvVenv::maybe_from_file(&cfg_path).expect("uv venv should be identified");
+        assert_eq!(uv_venv.uv_version, "0.5.4");
+        assert_eq!(uv_venv.python_version, "3.13.0");
+        assert_eq!(uv_venv.prompt, None);
     }
 
     #[test]
@@ -731,7 +761,7 @@ version_info = 3.11.0"#;
         let uv_venv = uv_venv.unwrap();
         assert_eq!(uv_venv.uv_version, "0.2.5");
         assert_eq!(uv_venv.python_version, "3.12.1");
-        assert_eq!(uv_venv.prompt, "my-project");
+        assert_eq!(uv_venv.prompt, Some("my-project".to_string()));
     }
 
     #[test]
