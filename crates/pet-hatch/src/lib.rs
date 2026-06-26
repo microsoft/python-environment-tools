@@ -1311,7 +1311,7 @@ mod tests {
         };
         locator.configure(&config);
         let first = locator.workspace_entry(&project);
-        assert_eq!(first.virtual_dirs, vec![norm_case(&project.join(".hatch"))]);
+        assert_eq!(first.virtual_dirs, vec![norm_case(project.join(".hatch"))]);
 
         // Edit the TOML and re-configure; the cache should drop the old
         // parse and the next access should reflect the new path.
@@ -1326,7 +1326,7 @@ mod tests {
             "configure() must invalidate the parsed cache"
         );
         let second = locator.workspace_entry(&project);
-        assert_eq!(second.virtual_dirs, vec![norm_case(&project.join(".envs"))]);
+        assert_eq!(second.virtual_dirs, vec![norm_case(project.join(".envs"))]);
     }
 
     #[test]
@@ -1459,7 +1459,7 @@ mod tests {
         let entry = locator.workspace_entry(&project);
         assert_eq!(
             entry.virtual_dirs,
-            vec![norm_case(&project.join(".hatch-final"))],
+            vec![norm_case(project.join(".hatch-final"))],
             "post-configure workspace_entry must reflect on-disk state, not a leaked stale parse"
         );
     }
@@ -1500,7 +1500,7 @@ mod tests {
         // for it must still return a parsed entry (the in-flight caller
         // needs a usable value) but must not pollute the cache.
         let entry = locator.workspace_entry(&removed);
-        assert_eq!(entry.virtual_dirs, vec![norm_case(&removed.join(".hatch"))]);
+        assert_eq!(entry.virtual_dirs, vec![norm_case(removed.join(".hatch"))]);
         let state = locator.state.lock().unwrap();
         assert!(
             !state.parsed.contains_key(&removed),

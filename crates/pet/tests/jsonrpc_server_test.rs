@@ -67,7 +67,7 @@ fn create_fake_workspace_with_projects(
 fn python_executable_path(bin_dir: &Path) -> PathBuf {
     #[cfg(windows)]
     {
-        return bin_dir.join("python.exe");
+        bin_dir.join("python.exe")
     }
 
     #[cfg(unix)]

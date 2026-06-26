@@ -310,7 +310,7 @@ mod tests {
         let symlinks = get_known_symlinks_impl(&resolved_exe, &"3.12.3".to_string());
 
         assert!(symlinks.contains(&resolved_exe));
-        assert!(symlinks.len() >= 1);
+        assert!(!symlinks.is_empty());
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         let symlinks = get_known_symlinks_impl(&resolved_exe, &"3.8.20".to_string());
 
         assert!(symlinks.contains(&resolved_exe));
-        assert!(symlinks.len() >= 1);
+        assert!(!symlinks.is_empty());
     }
 
     #[test]

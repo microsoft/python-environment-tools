@@ -761,7 +761,7 @@ fn test_kind_specific_refresh_performance() {
 
             let (result, _) = client
                 .refresh(Some(json!({ "searchKind": kind })))
-                .expect(&format!("Failed to refresh for kind {}", kind));
+                .unwrap_or_else(|_| panic!("Failed to refresh for kind {}", kind));
 
             let environments = client.get_environments();
             server_duration_stats.add(result.duration);

@@ -382,7 +382,7 @@ fn discover_environments(locator: &WinPython) -> Vec<PythonEnvironment> {
 
 /// Testable variant of [`discover_environments`] that takes the list of
 /// search paths as input rather than reading environment variables.
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn discover_environments_in(
     locator: &WinPython,
     search_paths: Vec<PathBuf>,
@@ -430,7 +430,7 @@ fn discover_environments_in(
     found
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn collect_install(
     winpython_root: &Path,
     locator: &WinPython,
