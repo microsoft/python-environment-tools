@@ -236,7 +236,7 @@ If `github/request_copilot_review` is unavailable, use the requested-reviewers A
 ```powershell
 $body = @{ reviewers = @("copilot-pull-request-reviewer[bot]") } | ConvertTo-Json -Compress
 $body | gh api --method POST repos/OWNER/REPO/pulls/N/requested_reviewers --input -
-gh api repos/OWNER/REPO/pulls/N/requested_reviewers --jq '.users[].login'
+gh api repos/OWNER/REPO/pulls/N/requested_reviewers --jq '.users[] | select(.login == "Copilot") | .login'
 ```
 
 The verification output must include `Copilot` before entering the review polling loop.
@@ -332,7 +332,7 @@ Once review is complete and all checks pass:
 
    Skip `git push origin --delete <branch>` if GitHub already auto-deleted the remote branch.
 
-3. **Verify the merge postcondition:** Query the PR after requesting merge or auto-merge. Do not treat a zero exit code as sufficient; require `state: MERGED`, or a populated auto-merge request when required checks are still pending.
+3. **Verify the merge postcondition:** Run `gh pr view N --json state,mergedAt,autoMergeRequest` after requesting merge or auto-merge. Do not treat a zero exit code as sufficient; require `state` to be `MERGED` with `mergedAt` populated, or `autoMergeRequest` to be populated when required checks are still pending.
 
 4. **CI triggers:** Push to main runs the full CI pipeline (builds, tests, artifact uploads).
 
