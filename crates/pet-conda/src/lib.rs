@@ -172,13 +172,14 @@ impl Conda {
     where
         F: FnOnce() -> Option<CondaEnvironmentDetails>,
     {
+        let cache_key = norm_case(path);
         let fingerprint_before = CondaEnvironmentFingerprint::from_prefix(path);
         if let Some(fingerprint) = &fingerprint_before {
             if let Some(cached) = self
                 .environment_info_cache
                 .read()
                 .expect("conda environment info cache lock poisoned")
-                .get(path)
+                .get(&cache_key)
                 .filter(|cached| &cached.fingerprint == fingerprint)
             {
                 return Some(cached.details.clone());
@@ -189,7 +190,7 @@ impl Conda {
             self.environment_info_cache
                 .write()
                 .expect("conda environment info cache lock poisoned")
-                .remove(path);
+                .remove(&cache_key);
             return None;
         };
         let fingerprint_after = CondaEnvironmentFingerprint::from_prefix(path);
@@ -199,14 +200,14 @@ impl Conda {
             .expect("conda environment info cache lock poisoned");
         if fingerprint_before.is_some() && fingerprint_before == fingerprint_after {
             cache.insert(
-                path.to_path_buf(),
+                cache_key,
                 CachedCondaEnvironment {
                     fingerprint: fingerprint_after.expect("fingerprint checked as present"),
                     details: details.clone(),
                 },
             );
         } else {
-            cache.remove(path);
+            cache.remove(&cache_key);
         }
 
         Some(details)
@@ -458,7 +459,8 @@ impl Locator for Conda {
             }
 
             let possible_conda_envs = get_conda_environment_paths(&env_vars, &executable);
-            let active_prefixes: HashSet<PathBuf> = possible_conda_envs.iter().cloned().collect();
+            let active_prefixes: HashSet<PathBuf> =
+                possible_conda_envs.iter().map(norm_case).collect();
             for path in possible_conda_envs {
                 s.spawn(move || {
                     let details = self.get_environment_details(&path)?;
