@@ -22,9 +22,12 @@ use pet_fs::path::norm_case;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{HashMap, HashSet},
+    fs,
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     thread,
+    time::SystemTime,
 };
 use telemetry::{get_conda_rcs_and_env_dirs, report_missing_envs};
 use utils::{is_conda_env, is_conda_install};
@@ -61,28 +64,152 @@ pub struct CondaTelemetryInfo {
     pub environments_from_txt: Vec<PathBuf>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FileFingerprint {
+    modified: SystemTime,
+    len: u64,
+}
+
+impl FileFingerprint {
+    fn from_metadata(metadata: fs::Metadata) -> Option<Self> {
+        Some(Self {
+            modified: metadata.modified().ok()?,
+            len: metadata.len(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CondaEnvironmentFingerprint {
+    conda_meta: FileFingerprint,
+    history: Option<FileFingerprint>,
+}
+
+impl CondaEnvironmentFingerprint {
+    fn from_prefix(prefix: &Path) -> Option<Self> {
+        let conda_meta = prefix.join("conda-meta");
+        let history = match fs::metadata(conda_meta.join("history")) {
+            Ok(metadata) => Some(FileFingerprint::from_metadata(metadata)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => return None,
+        };
+
+        Some(Self {
+            conda_meta: FileFingerprint::from_metadata(fs::metadata(conda_meta).ok()?)?,
+            history,
+        })
+    }
+}
+
+#[derive(Clone)]
+struct CondaEnvironmentDetails {
+    environment: PythonEnvironment,
+    conda_dir: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+struct CachedCondaEnvironment {
+    fingerprint: CondaEnvironmentFingerprint,
+    details: CondaEnvironmentDetails,
+}
+
+type CondaEnvironmentInfoCache = Arc<RwLock<HashMap<PathBuf, CachedCondaEnvironment>>>;
+
 pub struct Conda {
     pub environments: Arc<LocatorCache<PathBuf, PythonEnvironment>>,
     pub managers: Arc<LocatorCache<PathBuf, CondaManager>>,
     pub mamba_managers: Arc<LocatorCache<PathBuf, CondaManager>>,
     pub env_vars: EnvVariables,
     conda_executable: Arc<RwLock<Option<PathBuf>>>,
+    environment_info_cache: CondaEnvironmentInfoCache,
 }
 
 impl Conda {
     pub fn from(env: &dyn Environment) -> Conda {
+        Self::with_environment_info_cache(env, Arc::new(RwLock::new(HashMap::new())))
+    }
+
+    pub fn from_shared_environment_cache(env: &dyn Environment, source: &Conda) -> Conda {
+        Self::with_environment_info_cache(env, source.environment_info_cache.clone())
+    }
+
+    fn with_environment_info_cache(
+        env: &dyn Environment,
+        environment_info_cache: CondaEnvironmentInfoCache,
+    ) -> Conda {
         Conda {
             environments: Arc::new(LocatorCache::new()),
             managers: Arc::new(LocatorCache::new()),
             mamba_managers: Arc::new(LocatorCache::new()),
             env_vars: EnvVariables::from(env),
             conda_executable: Arc::new(RwLock::new(None)),
+            environment_info_cache,
         }
     }
+
     fn clear(&self) {
         self.environments.clear();
         self.managers.clear();
         self.mamba_managers.clear();
+    }
+
+    fn get_environment_details(&self, path: &Path) -> Option<CondaEnvironmentDetails> {
+        self.get_or_load_environment_details(path, || {
+            let environment = get_conda_environment_info(path, &None)?;
+            let conda_dir = environment.conda_dir.clone();
+            Some(CondaEnvironmentDetails {
+                environment: environment.to_python_environment(None),
+                conda_dir,
+            })
+        })
+    }
+
+    fn get_or_load_environment_details<F>(
+        &self,
+        path: &Path,
+        load: F,
+    ) -> Option<CondaEnvironmentDetails>
+    where
+        F: FnOnce() -> Option<CondaEnvironmentDetails>,
+    {
+        let fingerprint_before = CondaEnvironmentFingerprint::from_prefix(path);
+        if let Some(fingerprint) = &fingerprint_before {
+            if let Some(cached) = self
+                .environment_info_cache
+                .read()
+                .expect("conda environment info cache lock poisoned")
+                .get(path)
+                .filter(|cached| &cached.fingerprint == fingerprint)
+            {
+                return Some(cached.details.clone());
+            }
+        }
+
+        let Some(details) = load() else {
+            self.environment_info_cache
+                .write()
+                .expect("conda environment info cache lock poisoned")
+                .remove(path);
+            return None;
+        };
+        let fingerprint_after = CondaEnvironmentFingerprint::from_prefix(path);
+        let mut cache = self
+            .environment_info_cache
+            .write()
+            .expect("conda environment info cache lock poisoned");
+        if fingerprint_before.is_some() && fingerprint_before == fingerprint_after {
+            cache.insert(
+                path.to_path_buf(),
+                CachedCondaEnvironment {
+                    fingerprint: fingerprint_after.expect("fingerprint checked as present"),
+                    details: details.clone(),
+                },
+            );
+        } else {
+            cache.remove(path);
+        }
+
+        Some(details)
     }
 }
 
@@ -284,55 +411,41 @@ impl Locator for Conda {
             }
         }
 
-        if let Some(ref path) = prefix {
-            if !is_conda_env(path) {
-                return None;
-            }
-
-            // Check cache first
-            if let Some(cached_env) = self.environments.get(path) {
-                return Some(cached_env);
-            }
-
-            // Not in cache, build the environment and insert
-            if let Some(env) = get_conda_environment_info(path, &None) {
-                if let Some(conda_dir) = &env.conda_dir {
-                    if let Some(manager) = self.get_manager(conda_dir) {
-                        let env = env.to_python_environment(Some(manager.to_manager()));
-                        self.environments.insert(path.clone(), env.clone());
-                        return Some(env);
-                    } else {
-                        // We will still return the conda env even though we do not have the manager.
-                        // This might seem incorrect, however the tool is about discovering environments.
-                        // The client can activate this env either using another conda manager or using the activation scripts
-                        error!("Unable to find Conda Manager for env (even though we have a conda_dir): {:?}", env);
-                        let env = env.to_python_environment(None);
-                        self.environments.insert(path.clone(), env.clone());
-                        return Some(env);
-                    }
-                } else {
-                    // We will still return the conda env even though we do not have the manager.
-                    // This might seem incorrect, however the tool is about discovering environments.
-                    // The client can activate this env either using another conda manager or using the activation scripts
-                    error!("Unable to find Conda Manager for env: {:?}", env);
-                    let env = env.to_python_environment(None);
-                    self.environments.insert(path.clone(), env.clone());
-                    return Some(env);
-                }
-            }
+        let path = prefix.as_ref()?;
+        if !is_conda_env(path) {
+            return None;
         }
-        None
-    }
 
+        if let Some(cached_env) = self.environments.get(path) {
+            return Some(cached_env);
+        }
+
+        let details = self.get_environment_details(path)?;
+        let mut environment = details.environment;
+        if let Some(conda_dir) = details.conda_dir {
+            if let Some(manager) = self.get_manager(&conda_dir) {
+                environment.manager = Some(manager.to_manager());
+            } else {
+                error!(
+                    "Unable to find Conda Manager for env (even though we have a conda_dir): {:?}",
+                    environment
+                );
+            }
+        } else {
+            error!("Unable to find Conda Manager for env: {:?}", environment);
+        }
+
+        self.environments.insert(path.clone(), environment.clone());
+        Some(environment)
+    }
     fn find(&self, reporter: &dyn Reporter) {
-        // if we're calling this again, then clear what ever cache we have.
+        // Discovery outputs are rebuilt on every refresh. The separate environment info cache
+        // survives and is invalidated by conda metadata fingerprints.
         self.clear();
 
         let env_vars = self.env_vars.clone();
         let executable = self.conda_executable.read().unwrap().clone();
         thread::scope(|s| {
-            // If the user-provided conda_executable is actually a mamba/micromamba binary
-            // (backwards compatibility), report it as a mamba manager and discover its envs.
             if let Some(ref exe) = executable {
                 if is_mamba_executable(exe) {
                     if let Some(mamba_dir) = get_conda_dir_from_exe(&executable) {
@@ -343,80 +456,70 @@ impl Locator for Conda {
                     }
                 }
             }
-            // 1. Get a list of all know conda environments file paths
+
             let possible_conda_envs = get_conda_environment_paths(&env_vars, &executable);
+            let active_prefixes: HashSet<PathBuf> = possible_conda_envs.iter().cloned().collect();
             for path in possible_conda_envs {
                 s.spawn(move || {
-                    // 2. Get the details of the conda environment
-                    // This we do not get any details, then its not a conda environment
-                    let env = get_conda_environment_info(&path, &None)?;
+                    let details = self.get_environment_details(&path)?;
+                    let prefix = path.clone();
 
-                    // 3. If we have a conda environment without a conda_dir
-                    // Then we will not be able to get the manager.
-                    // Either way report this environment
-                    if env.conda_dir.is_none(){
-                        // We will still return the conda env even though we do not have the manager.
-                        // This might seem incorrect, however the tool is about discovering environments.
-                        // The client can activate this env either using another conda manager or using the activation scripts
-                        error!("Unable to find Conda Manager for the Conda env: {:?}", env);
-                        let prefix = env.prefix.clone();
-                        let env = env.to_python_environment(None);
-                        self.environments.insert(prefix, env.clone());
-                        reporter.report_environment(&env);
-                        return None;
-                    }
-
-                    // 3. We have a conda environment with a conda_dir (above we handled the case when its not found)
-                    // We will try to get the manager for this conda_dir
-                    let prefix = env.clone().prefix.clone();
-
-                    // 3.1 Check if we have already reported this environment.
-                    if self.environments.contains_key(&env.prefix) {
-                        return None;
-                    }
-
-                    // 4 Get the manager for this env.
-                    let conda_dir = &env.conda_dir.clone()?;
-                    let manager = self.managers.get_or_insert_with(conda_dir.clone(), || {
-                        CondaManager::from(conda_dir)
-                    });
-
-                    // 5. Report this env.
-                    if let Some(manager) = manager {
-                        let env = env.to_python_environment(
-                            Some(manager.to_manager()),
+                    let Some(conda_dir) = details.conda_dir else {
+                        error!(
+                            "Unable to find Conda Manager for the Conda env: {:?}",
+                            details.environment
                         );
-                        self.environments.insert(prefix.clone(), env.clone());
-                        reporter.report_manager(&manager.to_manager());
-                        reporter.report_environment(&env);
+                        self.environments
+                            .insert(prefix, details.environment.clone());
+                        reporter.report_environment(&details.environment);
+                        return None;
+                    };
 
-                        // Also check for a mamba/micromamba manager in the same directory and report it.
-                        // LocatorCache coalesces concurrent lookups for this conda_dir, so mamba
-                        // discovery and its reporting side effect run at most once per in-flight
-                        // key.
-                        let _ = self.mamba_managers.get_or_insert_with(conda_dir.clone(), || {
-                            let mgr = get_mamba_manager(conda_dir);
-                            if let Some(ref m) = mgr {
-                                reporter.report_manager(&m.to_manager());
-                            }
-                            mgr
-                        });
-                    } else {
-                        // We will still return the conda env even though we do not have the manager.
-                        // This might seem incorrect, however the tool is about discovering environments.
-                        // The client can activate this env either using another conda manager or using the activation scripts
-                        error!("Unable to find Conda Manager for Conda env (even though we have a conda_dir {:?}): Env Details = {:?}", conda_dir, env);
-                        let env = env.to_python_environment(None);
-                        self.environments.insert(prefix.clone(), env.clone());
-                        reporter.report_environment(&env);
+                    if self.environments.contains_key(&prefix) {
+                        return None;
                     }
-                    Option::<()>::Some(())
+
+                    let manager = self
+                        .managers
+                        .get_or_insert_with(conda_dir.clone(), || CondaManager::from(&conda_dir));
+
+                    let mut environment = details.environment;
+                    if let Some(manager) = manager {
+                        environment.manager = Some(manager.to_manager());
+                        self.environments
+                            .insert(prefix.clone(), environment.clone());
+                        reporter.report_manager(&manager.to_manager());
+                        reporter.report_environment(&environment);
+
+                        let _ = self
+                            .mamba_managers
+                            .get_or_insert_with(conda_dir.clone(), || {
+                                let mgr = get_mamba_manager(&conda_dir);
+                                if let Some(ref m) = mgr {
+                                    reporter.report_manager(&m.to_manager());
+                                }
+                                mgr
+                            });
+                    } else {
+                        error!(
+                            "Unable to find Conda Manager for Conda env (even though we have a conda_dir {:?}): Env Details = {:?}",
+                            conda_dir, environment
+                        );
+                        self.environments
+                            .insert(prefix.clone(), environment.clone());
+                        reporter.report_environment(&environment);
+                    }
+                    Some(())
                 });
             }
+
+            self.environment_info_cache
+                .write()
+                .expect("conda environment info cache lock poisoned")
+                .retain(|prefix, _| active_prefixes.contains(prefix));
         });
     }
 }
-
 fn get_conda_environments(
     paths: &Vec<PathBuf>,
     manager: &Option<CondaManager>,
@@ -425,4 +528,70 @@ fn get_conda_environments(
         .par_iter()
         .filter_map(|path| get_conda_environment_info(path, manager))
         .collect()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pet_core::os_environment::EnvironmentApi;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn test_details(prefix: &Path, load: usize) -> CondaEnvironmentDetails {
+        CondaEnvironmentDetails {
+            environment: PythonEnvironment::new(
+                None,
+                Some(PythonEnvironmentKind::Conda),
+                Some(prefix.to_path_buf()),
+                None,
+                Some(load.to_string()),
+            ),
+            conda_dir: None,
+        }
+    }
+
+    #[test]
+    fn environment_info_cache_is_shared_and_invalidated_by_history_changes() {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+        let prefix = std::env::temp_dir().join(format!(
+            "pet-conda-environment-cache-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let conda_meta = prefix.join("conda-meta");
+        let history = conda_meta.join("history");
+        fs::create_dir_all(&conda_meta).unwrap();
+        fs::write(&history, "initial history").unwrap();
+
+        let environment = EnvironmentApi::new();
+        let shared = Conda::from(&environment);
+        let loads = AtomicUsize::new(0);
+        let first = shared
+            .get_or_load_environment_details(&prefix, || {
+                let load = loads.fetch_add(1, Ordering::Relaxed) + 1;
+                Some(test_details(&prefix, load))
+            })
+            .unwrap();
+        assert_eq!(first.environment.version.as_deref(), Some("1"));
+
+        let refresh = Conda::from_shared_environment_cache(&environment, &shared);
+        let cached = refresh
+            .get_or_load_environment_details(&prefix, || {
+                panic!("unchanged metadata should reuse the shared cache")
+            })
+            .unwrap();
+        assert_eq!(cached.environment.version.as_deref(), Some("1"));
+        assert_eq!(loads.load(Ordering::Relaxed), 1);
+
+        fs::write(&history, "updated history with a different length").unwrap();
+        let refreshed = refresh
+            .get_or_load_environment_details(&prefix, || {
+                let load = loads.fetch_add(1, Ordering::Relaxed) + 1;
+                Some(test_details(&prefix, load))
+            })
+            .unwrap();
+        assert_eq!(refreshed.environment.version.as_deref(), Some("2"));
+        assert_eq!(loads.load(Ordering::Relaxed), 2);
+
+        fs::remove_dir_all(prefix).unwrap();
+    }
 }
