@@ -12,7 +12,7 @@ use std::{
 
 lazy_static! {
     static ref WINDOWS_EXE: Regex =
-        Regex::new(r"python(\d+\.?)*.exe").expect("error parsing Windows executable regex");
+        Regex::new(r"python(\d+\.?)*\.exe$").expect("error parsing Windows executable regex");
     static ref UNIX_EXE: Regex =
         Regex::new(r"python(\d+\.?)*$").expect("error parsing Unix executable regex");
 }
@@ -341,6 +341,18 @@ mod tests {
         #[cfg(windows)]
         assert!(!is_python_executable_name(
             PathBuf::from("pythonw3.exe").as_path()
+        ));
+        #[cfg(windows)]
+        assert!(!is_python_executable_name(
+            PathBuf::from("python.exe.__target__").as_path()
+        ));
+        #[cfg(windows)]
+        assert!(!is_python_executable_name(
+            PathBuf::from("python3.exe.__target__").as_path()
+        ));
+        #[cfg(windows)]
+        assert!(!is_python_executable_name(
+            PathBuf::from("python3.12.exe.__target__").as_path()
         ));
     }
 
