@@ -840,8 +840,14 @@ fn configure_locators(locators: &Arc<Vec<Arc<dyn Locator>>>, config: &Configurat
     }
 }
 
-fn create_refresh_locators(environment: &dyn Environment) -> RefreshLocators {
-    let conda_locator = Arc::new(Conda::from(environment));
+fn create_refresh_locators(
+    environment: &dyn Environment,
+    shared_conda_locator: &Conda,
+) -> RefreshLocators {
+    let conda_locator = Arc::new(Conda::from_shared_environment_cache(
+        environment,
+        shared_conda_locator,
+    ));
     let poetry_locator = Arc::new(Poetry::from(environment));
     let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), environment);
 
@@ -959,7 +965,10 @@ fn execute_refresh(
     refresh_options: &RefreshOptions,
     configuration_state: &ConfigurationState,
 ) -> RefreshExecution {
-    let refresh_locators = create_refresh_locators(context.os_environment.deref());
+    let refresh_locators = create_refresh_locators(
+        context.os_environment.deref(),
+        context.conda_locator.as_ref(),
+    );
     let reporter = Arc::new(CacheReporter::new(Arc::new(
         GenerationGuardedReporter::new(
             Arc::new(jsonrpc::create_reporter(refresh_options.search_kind)),
