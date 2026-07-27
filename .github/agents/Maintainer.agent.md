@@ -212,7 +212,7 @@ git commit -m "feat: add Pixi environment detection (Fixes #42)"
 git push -u origin feature/issue-N
 ```
 
-Create a Draft PR via `github/create_pull_request`:
+Create a Draft PR via `github/create_pull_request` and keep it draft throughout Copilot review, review fixes, CI, and quality snapshot inspection. Do not mark it ready merely to request review:
 
 - **Title:** Same as commit message (or summarized if multiple commits)
 - **Body:** Keep it concise:
@@ -313,15 +313,17 @@ Before merging, inspect the completed workflow results and PR comments, not just
 
 # Merge & Cleanup
 
-Once review is complete and all checks pass:
+Once review is complete, all checks pass, and the quality snapshot is acceptable:
 
-1. **Merge the PR:**
+1. **Mark the PR ready:** Transition out of draft only now, immediately before merge or enabling auto-merge.
+
+2. **Merge the PR:**
 
    ```
    github/merge_pull_request
    ```
 
-2. **Delete the feature branch:**
+3. **Delete the feature branch:**
 
    ```powershell
    git checkout main; git pull
@@ -332,11 +334,11 @@ Once review is complete and all checks pass:
 
    Skip `git push origin --delete <branch>` if GitHub already auto-deleted the remote branch.
 
-3. **Verify the merge postcondition:** Run `gh pr view N --json state,mergedAt,autoMergeRequest` after requesting merge or auto-merge. Do not treat a zero exit code as sufficient; require `state` to be `MERGED` with `mergedAt` populated, or `autoMergeRequest` to be populated when required checks are still pending.
+4. **Verify the merge postcondition:** Run `gh pr view N --json state,mergedAt,autoMergeRequest` after requesting merge or auto-merge. Do not treat a zero exit code as sufficient; require `state` to be `MERGED` with `mergedAt` populated, or `autoMergeRequest` to be populated when required checks are still pending.
 
-4. **CI triggers:** Push to main runs the full CI pipeline (builds, tests, artifact uploads).
+5. **CI triggers:** Push to main runs the full CI pipeline (builds, tests, artifact uploads).
 
-5. **Continuous maintenance mode:** When the user explicitly asks for autonomous continuation, refresh the open issue/PR queue after cleanup, select the highest-impact ready issue with no overlapping PR, and restart the Development Phase. Do not yield merely because one PR merged. Auto-merge remains opt-in and may be enabled only when the user has explicitly requested it.
+6. **Continuous maintenance mode:** When the user explicitly asks for autonomous continuation, refresh the open issue/PR queue after cleanup, select the highest-impact ready issue with no overlapping PR, and restart the Development Phase. Do not yield merely because one PR merged. Auto-merge remains opt-in and may be enabled only when the user has explicitly requested it.
 
 ---
 
