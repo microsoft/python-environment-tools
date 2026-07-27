@@ -231,6 +231,16 @@ Create a Draft PR via `github/create_pull_request`:
 
 After pushing and creating the PR, request review from Copilot using `github/request_copilot_review`.
 
+If `github/request_copilot_review` is unavailable, use the requested-reviewers API with Copilot's bot identity and verify the assignment rather than trusting only the command exit code:
+
+```powershell
+$body = @{ reviewers = @("copilot-pull-request-reviewer[bot]") } | ConvertTo-Json -Compress
+$body | gh api --method POST repos/OWNER/REPO/pulls/N/requested_reviewers --input -
+gh api repos/OWNER/REPO/pulls/N/requested_reviewers --jq '.users[] | select(.login == "Copilot") | .login'
+```
+
+The verification output must include `Copilot` before entering the review polling loop.
+
 ## 2. Wait for Review
 
 Poll for review completion:
@@ -290,6 +300,17 @@ Review is considered complete when:
 
 ---
 
+## 5. Inspect the Quality Snapshot (REQUIRED)
+
+Before merging, inspect the completed workflow results and PR comments, not just their success status:
+
+- Review performance snapshots for every reported platform and compare PR medians/deltas with the baseline.
+- Review coverage deltas and CodeQL/analysis results.
+- Treat a meaningful negative performance or coverage drift as actionable even when the workflow itself passed.
+- Record the snapshot conclusion before merge, including any known noisy metric that was deliberately accepted.
+
+---
+
 # Merge & Cleanup
 
 Once review is complete and all checks pass:
@@ -311,7 +332,11 @@ Once review is complete and all checks pass:
 
    Skip `git push origin --delete <branch>` if GitHub already auto-deleted the remote branch.
 
-3. **CI triggers:** Push to main runs the full CI pipeline (builds, tests, artifact uploads).
+3. **Verify the merge postcondition:** Run `gh pr view N --json state,mergedAt,autoMergeRequest` after requesting merge or auto-merge. Do not treat a zero exit code as sufficient; require `state` to be `MERGED` with `mergedAt` populated, or `autoMergeRequest` to be populated when required checks are still pending.
+
+4. **CI triggers:** Push to main runs the full CI pipeline (builds, tests, artifact uploads).
+
+5. **Continuous maintenance mode:** When the user explicitly asks for autonomous continuation, refresh the open issue/PR queue after cleanup, select the highest-impact ready issue with no overlapping PR, and restart the Development Phase. Do not yield merely because one PR merged. Auto-merge remains opt-in and may be enabled only when the user has explicitly requested it.
 
 ---
 
