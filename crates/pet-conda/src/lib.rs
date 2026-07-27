@@ -182,7 +182,9 @@ impl Conda {
                 .get(&cache_key)
                 .filter(|cached| &cached.fingerprint == fingerprint)
             {
-                return Some(cached.details.clone());
+                let mut details = cached.details.clone();
+                details.environment.prefix = Some(path.to_path_buf());
+                return Some(details);
             }
         }
 
@@ -593,6 +595,43 @@ mod tests {
             .unwrap();
         assert_eq!(refreshed.environment.version.as_deref(), Some("2"));
         assert_eq!(loads.load(Ordering::Relaxed), 2);
+
+        fs::remove_dir_all(prefix).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn environment_info_cache_normalizes_windows_keys() {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+        let prefix = std::env::temp_dir().join(format!(
+            "pet-conda-environment-cache-case-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let conda_meta = prefix.join("conda-meta");
+        fs::create_dir_all(&conda_meta).unwrap();
+        fs::write(conda_meta.join("history"), "history").unwrap();
+
+        let alternate_separators = PathBuf::from(prefix.to_string_lossy().replace('\\', "/"));
+        let environment = EnvironmentApi::new();
+        let locator = Conda::from(&environment);
+        let loads = AtomicUsize::new(0);
+
+        locator
+            .get_or_load_environment_details(&prefix, || {
+                loads.fetch_add(1, Ordering::Relaxed);
+                Some(test_details(&prefix, 1))
+            })
+            .unwrap();
+        let cached = locator
+            .get_or_load_environment_details(&alternate_separators, || {
+                panic!("equivalent Windows paths should reuse the cache")
+            })
+            .unwrap();
+
+        assert_eq!(loads.load(Ordering::Relaxed), 1);
+        assert_eq!(cached.environment.prefix, Some(alternate_separators));
 
         fs::remove_dir_all(prefix).unwrap();
     }
