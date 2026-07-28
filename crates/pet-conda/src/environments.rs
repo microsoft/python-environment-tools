@@ -373,7 +373,8 @@ mod tests {
         let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
         let history = std::fs::read_to_string(&history_file).unwrap();
-        let name = get_conda_env_name(&env_path, &conda_dir, Some(&history));
+        let creation_line = get_conda_creation_line(&history);
+        let name = get_conda_env_name(&env_path, &conda_dir, creation_line.as_deref());
         assert!(
             name.is_none(),
             "Path-based external env should return None for name, got {:?}",
@@ -407,7 +408,8 @@ mod tests {
         let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
         let history = std::fs::read_to_string(&history_file).unwrap();
-        let name = get_conda_env_name(&env_path, &conda_dir, Some(&history));
+        let creation_line = get_conda_creation_line(&history);
+        let name = get_conda_env_name(&env_path, &conda_dir, creation_line.as_deref());
         assert_eq!(
             name,
             Some("myenv".to_string()),
@@ -487,7 +489,8 @@ mod tests {
         let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
         let history = std::fs::read_to_string(&history_file).unwrap();
-        let name = get_conda_env_name(&env_path, &conda_dir, Some(&history));
+        let creation_line = get_conda_creation_line(&history);
+        let name = get_conda_env_name(&env_path, &conda_dir, creation_line.as_deref());
         assert!(
             name.is_none(),
             "External env with mismatched name should return None, got {:?}",
