@@ -174,6 +174,43 @@ mod tests {
     }
 
     #[test]
+    fn refresh_progress_serializes_privacy_safe_fields() {
+        use pet_core::telemetry::refresh_progress::{
+            RefreshProgress, RefreshProgressPhase, RefreshProgressStatus,
+        };
+
+        let event = TelemetryEvent::RefreshProgress(RefreshProgress {
+            refresh_id: 42,
+            phase: RefreshProgressPhase::Locators,
+            status: RefreshProgressStatus::Completed,
+            elapsed_ms: 15,
+            phase_elapsed_ms: None,
+            locator_name: Some("Conda".to_string()),
+            locator_elapsed_ms: Some(10),
+        });
+        let payload = TelemetryData {
+            event: get_telemetry_event_name(&event).to_string(),
+            data: event,
+        };
+
+        assert_eq!(
+            serde_json::to_value(payload).unwrap(),
+            json!({
+                "event": "RefreshProgress",
+                "data": {
+                    "refreshProgress": {
+                        "refreshId": 42,
+                        "phase": "locators",
+                        "status": "completed",
+                        "elapsedMs": 15,
+                        "locatorName": "Conda",
+                        "locatorElapsedMs": 10
+                    }
+                }
+            })
+        );
+    }
+    #[test]
     fn log_payload_uses_camel_case_fields_and_level_renames() {
         let payload = Log {
             message: "hello".to_string(),
