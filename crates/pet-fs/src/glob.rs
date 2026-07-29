@@ -19,6 +19,10 @@ pub fn is_glob_pattern(path: &str) -> bool {
     path.contains(GLOB_METACHARACTERS) || has_brace_pattern(path)
 }
 
+/// Returns true when a glob can traverse an unbounded number of path components.
+pub fn is_recursive_glob_pattern(path: &str) -> bool {
+    path.contains("**")
+}
 /// Checks if a string contains a valid brace expansion pattern `{a,b}`.
 /// Requires an opening `{`, at least one `,`, and a closing `}`.
 fn has_brace_pattern(path: &str) -> bool {
@@ -202,6 +206,13 @@ mod tests {
         assert!(is_glob_pattern("*.txt"));
     }
 
+    #[test]
+    fn test_is_recursive_glob_pattern() {
+        assert!(is_recursive_glob_pattern("**/.venv"));
+        assert!(is_recursive_glob_pattern("/home/user/**/venv"));
+        assert!(!is_recursive_glob_pattern(".venv"));
+        assert!(!is_recursive_glob_pattern("*/.venv"));
+    }
     #[test]
     fn test_is_glob_pattern_with_question_mark() {
         assert!(is_glob_pattern("/home/user/file?.txt"));
