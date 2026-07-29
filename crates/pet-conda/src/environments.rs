@@ -207,17 +207,28 @@ fn is_conda_env_name_in_cmd(cmd_line: &str, name: &str) -> bool {
     cmd_line.contains(format!("-n {name}").as_str())
         || cmd_line.contains(format!("--name {name}").as_str())
 }
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+fn get_conda_executable_from_cmd(cmd_line: &str) -> Option<PathBuf> {
+    let start_index = find_ascii_case_insensitive(cmd_line, "# cmd:")? + "# cmd:".len();
+    let end_index = find_ascii_case_insensitive(cmd_line, " create -")?;
+    let executable = cmd_line.get(start_index..end_index)?.trim();
+    (!executable.is_empty()).then(|| PathBuf::from(executable))
+}
+
 fn get_conda_dir_from_cmd(cmd_line: &str) -> Option<PathBuf> {
     // Sample lines
-    // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+    // # cmd: <conda install directory>\Scripts\conda-script.py create -n sample
     // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
     // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-    // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
-    let start_index = cmd_line.to_lowercase().find("# cmd:")? + "# cmd:".len();
-    let end_index = cmd_line.to_lowercase().find(" create -")?;
-    let conda_exe = PathBuf::from(cmd_line[start_index..end_index].trim().to_string());
-    // Sometimes the path can be as follows, where `/usr/bin/conda` could be a symlink.
     // cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
+    let conda_exe = get_conda_executable_from_cmd(cmd_line)?; // Sometimes the path can be as follows, where `/usr/bin/conda` could be a symlink.
+                                                              // cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
     let conda_exe = resolve_symlink(&conda_exe).unwrap_or(conda_exe);
     if let Some(cmd_line) = conda_exe.parent() {
         if let Some(conda_dir) = cmd_line.file_name() {
@@ -298,6 +309,15 @@ pub fn get_activation_command(
 mod tests {
     use super::*;
 
+    #[test]
+    fn parses_unicode_conda_executable_without_invalid_byte_indices() {
+        let line = "# CMD: /Users/İpek/miniconda3/bin/conda CREATE -n sample";
+
+        assert_eq!(
+            get_conda_executable_from_cmd(line),
+            Some(PathBuf::from("/Users/İpek/miniconda3/bin/conda"))
+        );
+    }
     #[test]
     #[cfg(windows)]
     fn parse_cmd_line() {
