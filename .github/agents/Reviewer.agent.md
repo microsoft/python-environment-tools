@@ -35,6 +35,10 @@ Automated reviews consistently miss:
 - Thread safety issues with shared state
 - JSONRPC protocol violations (stdout contamination)
 - Performance regressions from spawning Python processes
+- Path-keyed caches that normalize keys inconsistently or return stale caller-facing paths
+- Unicode-unsafe byte indexing and unnecessary hot-path allocations
+- Tests that execute code without proving the claimed I/O or allocation reduction
+- Duplicate warnings, reports, or telemetry emitted from overlapping paths
 
 ---
 
@@ -43,6 +47,9 @@ Automated reviews consistently miss:
 ### 1. Understand Context First
 
 Before reading code:
+
+- If any changed file is Rust, load and apply `rust-coding-skill`.
+- Load `rust-locator-patterns` only when locator ordering, discovery, identification, path/symlink handling, or locator state is in scope.
 
 - What issue does this change claim to fix?
 - Which locator/crate is affected?
@@ -161,6 +168,35 @@ let mut environments = self.environments
 - Lock scopes are minimal (drop early)
 - No deadlock potential from nested locks
 - Consider using `thread::scope` for structured concurrency
+
+### General Rust Correctness and Performance
+
+Apply `rust-coding-skill` to every Rust review, not only locator changes.
+
+**Path-keyed state:**
+
+- Are lookup, insert, remove, prune, and sync keys normalized consistently?
+- Does a cache hit preserve the current caller's user-facing path rather than leaking the first cached spelling?
+- Is there Windows coverage for equivalent casing or separators?
+
+**Parsing:**
+
+- Are byte offsets computed from the same string being sliced?
+- If markers are ASCII, does the code use byte-stable ASCII matching and checked `str::get` slicing?
+- Is there a non-ASCII regression case around paths or names?
+
+**Hot paths:**
+
+- Does the implementation read each metadata file once per logical operation?
+- Did the author trace root/base and manager call paths, not just the common environment path?
+- Are borrowed snapshots passed through instead of reopening files or cloning strings?
+- Can `rfind`, `find_map`, or streaming output replace an intermediate `Vec` or `String`?
+
+**Side effects and tests:**
+
+- Can a warning, notification, manager, or environment be emitted twice by pre-check and worker paths?
+- Does the test assert the claimed invariant (read count, cache hit, event count), not just the final value?
+- Are classification boundaries covered (`**` path segment vs `foo**bar`, valid vs malformed markers)?
 
 ### Platform-Specific Code
 
