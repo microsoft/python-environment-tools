@@ -486,6 +486,7 @@ const MISSING_ENVS_AVAILABLE: u64 = u64::MAX;
 const MISSING_ENVS_COMPLETED: u64 = u64::MAX - 1;
 
 static MISSING_ENVS_REPORTING_STATE: AtomicU64 = AtomicU64::new(MISSING_ENVS_AVAILABLE);
+static NEXT_REFRESH_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn start_jsonrpc_server() {
     // Initialize tracing for performance profiling (controlled by RUST_LOG env var)
@@ -656,18 +657,20 @@ pub struct RefreshOptions {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RefreshResult {
     duration: u128,
+    refresh_id: u64,
 }
 
 impl RefreshResult {
-    pub fn new(duration: Duration) -> RefreshResult {
+    pub fn new(duration: Duration, refresh_id: u64) -> RefreshResult {
         RefreshResult {
             duration: duration.as_millis(),
+            refresh_id,
         }
     }
 }
-
 fn normalize_refresh_params(params: Value) -> Value {
     match params {
         Value::Null => json!({}),
@@ -996,6 +999,7 @@ fn execute_refresh(
     refresh_options: &RefreshOptions,
     configuration_state: &ConfigurationState,
 ) -> RefreshExecution {
+    let refresh_id = NEXT_REFRESH_ID.fetch_add(1, Ordering::Relaxed);
     let refresh_locators = create_refresh_locators(
         context.os_environment.deref(),
         context.conda_locator.as_ref(),
@@ -1035,6 +1039,7 @@ fn execute_refresh(
         &refresh_locators.locators,
         context.os_environment.deref(),
         search_scope.clone(),
+        Some(refresh_id),
     );
     let summary = summary.lock().expect("summary mutex poisoned");
     for locator in summary.locators.iter() {
@@ -1082,7 +1087,7 @@ fn execute_refresh(
     };
 
     RefreshExecution {
-        result: RefreshResult::new(summary.total),
+        result: RefreshResult::new(summary.total, refresh_id),
         perf,
         reporter,
         configuration: context.configuration.clone(),

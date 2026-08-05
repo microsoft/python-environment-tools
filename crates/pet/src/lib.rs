@@ -195,7 +195,8 @@ fn find_envs(
     let stdio_reporter = Arc::new(stdio::create_reporter(options.print_list, kind));
     let reporter = CacheReporter::new(stdio_reporter.clone());
 
-    let summary = find_and_report_envs(&reporter, config, locators, environment, search_scope);
+    let summary =
+        find_and_report_envs(&reporter, config, locators, environment, search_scope, None);
     if options.report_missing {
         // By now all conda envs have been found
         // Spawn conda
@@ -307,7 +308,7 @@ fn find_envs_json(
     let collect_reporter = Arc::new(collect::create_reporter());
     let reporter = CacheReporter::new(collect_reporter.clone());
 
-    find_and_report_envs(&reporter, config, locators, environment, search_scope);
+    find_and_report_envs(&reporter, config, locators, environment, search_scope, None);
     if options.report_missing {
         let _ =
             conda_locator.find_and_report_missing_envs(&reporter, options.conda_executable.clone());
