@@ -142,13 +142,28 @@ fn configure_and_workspace_refresh_report_fake_venv() {
         .expect("configure request failed");
 
     client.clear_notifications();
-    client
+    let refresh = client
         .refresh(Some(json!({ "searchPaths": [workspace.clone()] })))
         .expect("refresh request failed");
 
     client
-        .wait_for_notification_count("telemetry", 1, Duration::from_secs(5))
-        .expect("timed out waiting for refresh telemetry");
+        .wait_for_telemetry_event_count("RefreshPerformance", 1, Duration::from_secs(5))
+        .expect("timed out waiting for refresh performance telemetry");
+    let progress = client.telemetry_events("RefreshProgress");
+    assert_eq!(
+        progress.len(),
+        8,
+        "expected started/completed for four phases"
+    );
+    assert!(progress.iter().all(|event| {
+        event["data"]["refreshProgress"]["refreshId"].as_u64() == Some(refresh.refresh_id)
+    }));
+    assert!(progress.iter().all(|event| {
+        let data = &event["data"]["refreshProgress"];
+        data.get("executable").is_none()
+            && data.get("prefix").is_none()
+            && data.get("path").is_none()
+    }));
     let environments = client.environment_notifications();
     assert_single_environment(
         &environments,
@@ -162,7 +177,7 @@ fn configure_and_workspace_refresh_report_fake_venv() {
         0,
         "fake venv refresh should not report any managers"
     );
-    assert_eq!(client.notification_count("telemetry"), 1);
+    assert_eq!(client.telemetry_event_count("RefreshPerformance"), 1);
 }
 
 #[test]
@@ -198,8 +213,8 @@ fn concurrent_identical_refresh_requests_share_one_notification_stream() {
     assert_eq!(refresh_results.len(), 3);
     for result in refresh_results.windows(2) {
         assert_eq!(
-            result[0].duration, result[1].duration,
-            "joined refreshes should reuse the same refresh result"
+            result[0], result[1],
+            "joined refreshes should reuse the same refresh result and ID"
         );
     }
 
@@ -211,8 +226,14 @@ fn concurrent_identical_refresh_requests_share_one_notification_stream() {
         )
         .expect("timed out waiting for environment notifications");
     client
-        .wait_for_notification_count("telemetry", 1, Duration::from_secs(5))
-        .expect("timed out waiting for refresh telemetry");
+        .wait_for_telemetry_event_count("RefreshPerformance", 1, Duration::from_secs(5))
+        .expect("timed out waiting for refresh performance telemetry");
+    let progress = client.telemetry_events("RefreshProgress");
+    assert_eq!(progress.len(), 8);
+    assert!(progress.iter().all(|event| {
+        event["data"]["refreshProgress"]["refreshId"].as_u64()
+            == Some(refresh_results[0].refresh_id)
+    }));
 
     let environments = client.environment_notifications();
     assert_eq!(
@@ -254,9 +275,9 @@ fn concurrent_identical_refresh_requests_share_one_notification_stream() {
         "identical refresh requests should emit one environment notification stream"
     );
     assert_eq!(
-        client.notification_count("telemetry"),
+        client.telemetry_event_count("RefreshPerformance"),
         1,
-        "identical refresh requests should emit one telemetry notification"
+        "identical refresh requests should emit one performance event"
     );
 }
 
@@ -283,21 +304,22 @@ fn concurrent_distinct_refresh_requests_run_separately() {
     let handle_b =
         thread::spawn(move || client_b.refresh(Some(json!({ "searchPaths": [workspace_b] }))));
 
-    handle_a
+    let result_a = handle_a
         .join()
         .expect("first refresh thread panicked")
         .expect("first refresh failed");
-    handle_b
+    let result_b = handle_b
         .join()
         .expect("second refresh thread panicked")
         .expect("second refresh failed");
+    assert_ne!(result_a.refresh_id, result_b.refresh_id);
 
     client
         .wait_for_notification_count("environment", 2, Duration::from_secs(5))
         .expect("timed out waiting for environment notifications");
     client
-        .wait_for_notification_count("telemetry", 2, Duration::from_secs(5))
-        .expect("timed out waiting for telemetry notifications");
+        .wait_for_telemetry_event_count("RefreshPerformance", 2, Duration::from_secs(5))
+        .expect("timed out waiting for refresh performance telemetry");
     let mut environments = client.environment_notifications();
     environments.sort_by(|left, right| left.name.cmp(&right.name));
 
@@ -335,8 +357,8 @@ fn concurrent_distinct_refresh_requests_run_separately() {
         )
     );
     assert_eq!(
-        client.notification_count("telemetry"),
+        client.telemetry_event_count("RefreshPerformance"),
         2,
-        "distinct refresh requests should emit separate telemetry notifications"
+        "distinct refresh requests should emit separate performance events"
     );
 }

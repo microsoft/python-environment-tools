@@ -62,7 +62,16 @@ pub struct CondaPackageInfo {
 
 impl CondaPackageInfo {
     pub fn from(path: &Path, package: &Package) -> Option<Self> {
-        get_conda_package_info(path, package)
+        let history = fs::read_to_string(path.join("conda-meta").join("history")).ok();
+        Self::from_history(path, package, history.as_deref())
+    }
+
+    pub(crate) fn from_history(
+        path: &Path,
+        package: &Package,
+        history: Option<&str>,
+    ) -> Option<Self> {
+        get_conda_package_info(path, package, history)
     }
 }
 
@@ -73,8 +82,14 @@ struct CondaMetaPackageStructure {
 }
 
 /// Get the details of a conda package from the 'conda-meta' directory.
-fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInfo> {
-    if let Some(info) = get_conda_package_info_from_history(path, name) {
+fn get_conda_package_info(
+    path: &Path,
+    name: &Package,
+    history: Option<&str>,
+) -> Option<CondaPackageInfo> {
+    if let Some(info) =
+        history.and_then(|history| get_conda_package_info_from_history(path, name, history))
+    {
         Some(info)
     } else {
         warn!(
@@ -86,13 +101,14 @@ fn get_conda_package_info(path: &Path, name: &Package) -> Option<CondaPackageInf
     }
 }
 
-fn get_conda_package_info_from_history(path: &Path, name: &Package) -> Option<CondaPackageInfo> {
+fn get_conda_package_info_from_history(
+    path: &Path,
+    name: &Package,
+    history_contents: &str,
+) -> Option<CondaPackageInfo> {
     // conda-meta is in the root of the conda installation folder
     let path = path.join("conda-meta");
-    let history = path.join("history");
     let package_entry = format!(":{}-", name.to_name());
-
-    let history_contents = fs::read_to_string(history).ok()?;
 
     // Filter to only include lines that:
     // 1. Start with '+' (installed packages, not '-' for removed packages)
@@ -107,13 +123,9 @@ fn get_conda_package_info_from_history(path: &Path, name: &Package) -> Option<Co
     //   ...
     //   -defaults::python-3.9.18-h123456_0     <- removed during upgrade
     //   +defaults::python-3.9.21-h789abc_0     <- current version (we want this)
-    let matching_lines: Vec<&str> = history_contents
+    let line = history_contents
         .lines()
-        .filter(|l| l.starts_with('+') && l.contains(&package_entry))
-        .collect();
-
-    // Get the last matching line (most recent installation)
-    let line = matching_lines.last()?;
+        .rfind(|line| line.starts_with('+') && line.contains(&package_entry))?;
 
     // Sample entry in the history file
     // +conda-forge/osx-arm64::psutil-5.9.8-py312he37b823_0

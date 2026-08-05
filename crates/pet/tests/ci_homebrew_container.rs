@@ -44,6 +44,7 @@ fn verify_python_in_homebrew_contaner() {
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
         None,
+        None,
     );
 
     let environments = reporter.environments.lock().unwrap().clone();

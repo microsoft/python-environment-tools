@@ -55,6 +55,7 @@ fn verify_ci_poetry_global() {
         &locators,
         &environment,
         None,
+        None,
     );
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -126,6 +127,7 @@ fn verify_ci_poetry_project() {
         Default::default(),
         &locators,
         &environment,
+        None,
         None,
     );
 
