@@ -91,6 +91,7 @@ fn verify_validity_of_discovered_envs() {
         &locators,
         &environment,
         None,
+        None,
     );
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -154,6 +155,7 @@ fn check_if_virtualenvwrapper_exists() {
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
         None,
+        None,
     );
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -196,6 +198,7 @@ fn check_if_pipenv_exists() {
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
         None,
+        None,
     );
 
     let environments = reporter.environments.lock().unwrap().clone();
@@ -233,6 +236,7 @@ fn check_if_pyenv_virtualenv_exists() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
         None,
     );
 
@@ -711,6 +715,7 @@ fn verify_bin_usr_bin_user_local_are_separate_python_envs() {
         Default::default(),
         &create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
         &environment,
+        None,
         None,
     );
 
