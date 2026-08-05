@@ -59,19 +59,23 @@ mod tests {
     use std::{
         fs,
         path::Path,
+        sync::atomic::{AtomicUsize, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     #[cfg(windows)]
     use std::os::windows::fs::symlink_dir;
 
+    static NEXT_TEST_DIR_ID: AtomicUsize = AtomicUsize::new(0);
+
     fn create_test_dir(name: &str) -> PathBuf {
-        let unique = SystemTime::now()
+        let id = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
+        let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let directory = std::env::temp_dir().join(format!(
-            "pet-virtualenvwrapper-{name}-{}-{unique}",
+            "pet-virtualenvwrapper-{name}-{}-{timestamp}-{id}",
             std::process::id()
         ));
         fs::create_dir_all(&directory).unwrap();
