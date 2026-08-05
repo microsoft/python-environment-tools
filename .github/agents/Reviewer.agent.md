@@ -48,7 +48,8 @@ Automated reviews consistently miss:
 
 Before reading code:
 
-- If any changed file is Rust, load and apply both the `rust-coding-skill` and `rust-locator-patterns` skills.
+- If any changed file is Rust, load and apply `rust-coding-skill`.
+- Load `rust-locator-patterns` only when locator ordering, discovery, identification, path/symlink handling, or locator state is in scope.
 
 - What issue does this change claim to fix?
 - Which locator/crate is affected?
@@ -170,7 +171,7 @@ let mut environments = self.environments
 
 ### General Rust Correctness and Performance
 
-Apply the `rust-coding-skill` skill to every Rust review, not only locator changes.
+Apply `rust-coding-skill` to every Rust review, not only locator changes.
 
 **Path-keyed state:**
 
