@@ -593,14 +593,18 @@ fn expand_configure_directory_patterns(kind: &str, patterns: Vec<PathBuf>) -> Ve
         .collect()
 }
 
+fn recursive_environment_patterns(patterns: &[PathBuf]) -> impl Iterator<Item = &PathBuf> {
+    patterns
+        .iter()
+        .filter(|pattern| is_recursive_glob_pattern(&pattern.to_string_lossy()))
+}
+
 fn warn_for_recursive_environment_patterns(patterns: &[PathBuf]) {
-    for pattern in patterns {
-        if is_recursive_glob_pattern(&pattern.to_string_lossy()) {
-            warn!(
-                "Recursive environmentDirectories pattern '{}' can make configure slow; prefer bounded patterns such as '.venv' or '*/.venv'",
-                pattern.display()
-            );
-        }
+    for pattern in recursive_environment_patterns(patterns) {
+        warn!(
+            "Recursive environmentDirectories pattern '{}' can make configure slow; prefer bounded patterns such as '.venv' or '*/.venv'",
+            pattern.display()
+        );
     }
 }
 pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
@@ -631,7 +635,6 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                         .environment_directories
                         .take()
                         .map(|patterns| {
-                            warn_for_recursive_environment_patterns(&patterns);
                             expand_configure_directory_patterns("environmentDirectories", patterns)
                         });
                 let glob_elapsed = now.elapsed();
@@ -1434,6 +1437,42 @@ mod tests {
     use std::sync::{mpsc, Barrier, Mutex};
     use std::thread;
 
+    #[test]
+    fn recursive_environment_pattern_filter_only_returns_recursive_globs() {
+        let patterns = vec![
+            PathBuf::from(".venv"),
+            PathBuf::from("*/.venv"),
+            PathBuf::from("**/.venv"),
+            PathBuf::from("/workspace/**/venv"),
+        ];
+
+        assert_eq!(
+            recursive_environment_patterns(&patterns)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("**/.venv"),
+                PathBuf::from("/workspace/**/venv")
+            ]
+        );
+    }
+
+    #[test]
+    fn configure_pattern_expansion_filters_non_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("env");
+        let file = temp.path().join("python.exe");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(&file, "").unwrap();
+
+        assert_eq!(
+            expand_configure_directory_patterns(
+                "environmentDirectories",
+                vec![temp.path().join("*")],
+            ),
+            vec![directory]
+        );
+    }
     #[derive(Default)]
     struct RecordingReporter {
         environments: Mutex<Vec<PythonEnvironment>>,
