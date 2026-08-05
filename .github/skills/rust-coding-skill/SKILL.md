@@ -65,6 +65,8 @@ Use contextual `expect` for poisoned locks in production code, matching the surr
 - Avoid `canonicalize` for Windows junction identity; use PET path helpers.
 - Treat both `/` and `\` as separators when parsing user patterns, but only classify `**` as recursive when it is a complete path segment. `foo**bar` is not a recursive segment.
 - Preserve original user-facing paths after normalized comparisons.
+- Prefer raw string literals for regexes and backslash-heavy path examples to avoid malformed escapes.
+- Before documenting or logging a recommended config value, trace how the consumer uses it. For example, `environmentDirectories` contains directories that hold environments, not environment folders themselves.
 
 ## Tests Must Prove the Change
 
