@@ -74,7 +74,7 @@ interface ConfigureParams {
    * If not provided, then environments such as poetry, pipenv, and the like will not be reported.
    * This is because poetry, pipenv, and the like are project-specific environments.
    *
-   * Bounded glob patterns are supported (e.g., `/home/user/projects/*`).
+   * Glob patterns are supported (e.g., `/home/user/projects/*`). Avoid recursive `**` patterns when a single-level pattern is sufficient.
    */
   workspaceDirectories?: string[];
   /**
@@ -83,7 +83,7 @@ interface ConfigureParams {
    *
    * Useful for VS Code so users can configure where they store virtual environments.
    *
-   * Values identify directories that contain environments. Bounded patterns are supported (e.g., `/home/user/envs`, `/home/user/*/envs`).
+   * Values identify directories that contain environments. Glob patterns are supported (e.g., `/home/user/envs`, `/home/user/*/envs`).
    * Avoid recursive patterns such as `/home/user/**/envs`: they can traverse large directory trees,
    * delay configure responses, and trigger client timeouts.
    */
