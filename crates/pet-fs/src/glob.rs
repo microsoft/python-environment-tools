@@ -21,8 +21,9 @@ pub fn is_glob_pattern(path: &str) -> bool {
 
 /// Returns true when a glob can traverse an unbounded number of path components.
 pub fn is_recursive_glob_pattern(path: &str) -> bool {
-    path.split(['/', '\']).any(|segment| segment == "**")
+    path.split(['/', '\\']).any(|segment| segment == "**")
 }
+
 /// Checks if a string contains a valid brace expansion pattern `{a,b}`.
 /// Requires an opening `{`, at least one `,`, and a closing `}`.
 fn has_brace_pattern(path: &str) -> bool {
