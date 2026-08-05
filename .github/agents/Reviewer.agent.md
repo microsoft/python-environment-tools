@@ -48,7 +48,7 @@ Automated reviews consistently miss:
 
 Before reading code:
 
-- If any changed file is Rust, load and apply both `.github/skills/rust-coding-skill/SKILL.md` and `.github/skills/rust-locator-patterns/SKILL.md`.
+- If any changed file is Rust, load and apply both the `rust-coding-skill` and `rust-locator-patterns` skills.
 
 - What issue does this change claim to fix?
 - Which locator/crate is affected?
@@ -170,7 +170,7 @@ let mut environments = self.environments
 
 ### General Rust Correctness and Performance
 
-Apply `.github/skills/rust-coding-skill/SKILL.md` to every Rust review, not only locator changes.
+Apply the `rust-coding-skill` skill to every Rust review, not only locator changes.
 
 **Path-keyed state:**
 
