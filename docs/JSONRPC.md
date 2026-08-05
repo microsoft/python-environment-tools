@@ -83,8 +83,8 @@ interface ConfigureParams {
    *
    * Useful for VS Code so users can configure where they store virtual environments.
    *
-   * Values identify directories that contain environments. Glob patterns are supported (e.g., `/home/user/envs`, `/home/user/*/envs`).
-   * Avoid recursive patterns such as `/home/user/**/envs`: they can traverse large directory trees,
+   * Values identify directories that contain environments. Glob patterns are supported (e.g., `envs`, `*/envs`).
+   * Avoid recursive patterns such as `**/envs`: they can traverse large directory trees,
    * delay configure responses, and trigger client timeouts.
    */
   environmentDirectories?: string[];
