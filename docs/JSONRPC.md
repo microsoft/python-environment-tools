@@ -168,8 +168,42 @@ interface RefreshResult {
    * Duration is in milliseconds.
    */
   duration: number;
+  /**
+   * Identifier shared by this result and all RefreshProgress telemetry emitted
+   * for the refresh operation. Concurrent identical requests that join the same
+   * operation receive the same identifier.
+   */
+  refreshId: number;
 }
 ```
+
+## Refresh Progress Telemetry
+
+During a refresh, the server emits `telemetry` notifications when each major phase
+and locator starts and completes. These notifications contain timing and enum values
+only; they never contain paths, environment names, executable paths, usernames, or
+command lines.
+
+```typescript
+interface RefreshProgressTelemetry {
+  event: "RefreshProgress";
+  data: {
+    refreshProgress: {
+      refreshId: number;
+      phase: "locators" | "path" | "globalVirtualEnvs" | "workspaces";
+      status: "started" | "completed";
+      elapsedMs: number;
+      phaseElapsedMs?: number;
+      locatorName?: string;
+      locatorElapsedMs?: number;
+    };
+  };
+}
+```
+
+`phaseElapsedMs` is present for completed phases. Locator events use the `locators`
+phase and include `locatorName`; completed locator events also include
+`locatorElapsedMs`.
 
 # Resolve Request
 

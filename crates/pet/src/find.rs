@@ -7,6 +7,10 @@ use pet_core::env::PythonEnv;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::reporter::Reporter;
+use pet_core::telemetry::refresh_progress::{
+    RefreshProgress, RefreshProgressPhase, RefreshProgressStatus,
+};
+use pet_core::telemetry::TelemetryEvent;
 use pet_core::{Configuration, Locator, LocatorKind};
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
@@ -21,7 +25,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{sync::Arc, thread};
 use tracing::{info_span, instrument};
 
@@ -42,6 +46,32 @@ pub enum SearchScope {
     Workspace,
 }
 
+fn report_refresh_progress(
+    reporter: &dyn Reporter,
+    refresh_id: Option<u64>,
+    refresh_start: Instant,
+    phase: RefreshProgressPhase,
+    status: RefreshProgressStatus,
+    phase_elapsed: Option<Duration>,
+    locator: Option<(String, Option<Duration>)>,
+) {
+    let Some(refresh_id) = refresh_id else {
+        return;
+    };
+
+    let (locator_name, locator_elapsed_ms) = locator.map_or((None, None), |(name, elapsed)| {
+        (Some(name), elapsed.map(|duration| duration.as_millis()))
+    });
+    reporter.report_telemetry(&TelemetryEvent::RefreshProgress(RefreshProgress {
+        refresh_id,
+        phase,
+        status,
+        elapsed_ms: refresh_start.elapsed().as_millis(),
+        phase_elapsed_ms: phase_elapsed.map(|duration| duration.as_millis()),
+        locator_name,
+        locator_elapsed_ms,
+    }));
+}
 #[instrument(skip(reporter, configuration, locators, environment), fields(search_scope = ?search_scope))]
 pub fn find_and_report_envs(
     reporter: &dyn Reporter,
@@ -49,13 +79,14 @@ pub fn find_and_report_envs(
     locators: &Arc<Vec<Arc<dyn Locator>>>,
     environment: &dyn Environment,
     search_scope: Option<SearchScope>,
+    refresh_id: Option<u64>,
 ) -> Arc<Mutex<Summary>> {
     let summary = Arc::new(Mutex::new(Summary {
         total: Duration::from_secs(0),
         locators: BTreeMap::new(),
         breakdown: BTreeMap::new(),
     }));
-    let start = std::time::Instant::now();
+    let refresh_start = Instant::now();
 
     // From settings
     let environment_directories = configuration.environment_directories.unwrap_or_default();
@@ -76,7 +107,16 @@ pub fn find_and_report_envs(
         s.spawn(|| {
             // Find in all the finders
             let _span = info_span!("locators_phase").entered();
-            let start = std::time::Instant::now();
+            let start = Instant::now();
+            report_refresh_progress(
+                reporter,
+                refresh_id,
+                refresh_start,
+                RefreshProgressPhase::Locators,
+                RefreshProgressStatus::Started,
+                None,
+                None,
+            );
             if search_global {
                 thread::scope(|s| {
                     for locator in locators.iter() {
@@ -96,33 +136,71 @@ pub fn find_and_report_envs(
                         s.spawn(move || {
                             let locator_name = format!("{:?}", locator.get_kind());
                             let _span = info_span!("locator_find", locator = %locator_name).entered();
-                            let start = std::time::Instant::now();
+                            let start = Instant::now();
+                            report_refresh_progress(
+                                reporter,
+                                refresh_id,
+                                refresh_start,
+                                RefreshProgressPhase::Locators,
+                                RefreshProgressStatus::Started,
+                                None,
+                                Some((locator_name.clone(), None)),
+                            );
                             trace!("Searching using locator: {:?}", locator.get_kind());
                             locator.find(reporter);
+                            let elapsed = start.elapsed();
                             trace!(
                                 "Completed searching using locator: {:?} in {:?}",
                                 locator.get_kind(),
-                                start.elapsed()
+                                elapsed
                             );
                             summary
                                 .lock()
                                 .unwrap()
                                 .locators
-                                .insert(locator.get_kind(), start.elapsed());
+                                .insert(locator.get_kind(), elapsed);
+                            report_refresh_progress(
+                                reporter,
+                                refresh_id,
+                                refresh_start,
+                                RefreshProgressPhase::Locators,
+                                RefreshProgressStatus::Completed,
+                                None,
+                                Some((locator_name, Some(elapsed))),
+                            );
                         });
                     }
                 });
             }
+            let elapsed = start.elapsed();
             summary
                 .lock()
                 .unwrap()
                 .breakdown
-                .insert("Locators", start.elapsed());
+                .insert("Locators", elapsed);
+            report_refresh_progress(
+                reporter,
+                refresh_id,
+                refresh_start,
+                RefreshProgressPhase::Locators,
+                RefreshProgressStatus::Completed,
+                Some(elapsed),
+                None,
+            );
         });
         // Step 2: Search in PATH variable
         s.spawn(|| {
             let _span = info_span!("path_search_phase").entered();
-            let start = std::time::Instant::now();
+            let start = Instant::now();
+            report_refresh_progress(
+                reporter,
+                refresh_id,
+                refresh_start,
+                RefreshProgressPhase::Path,
+                RefreshProgressStatus::Started,
+                None,
+                None,
+            );
             if search_global {
                 let global_env_search_paths: Vec<PathBuf> =
                     get_search_paths_from_env_variables(environment);
@@ -139,11 +217,17 @@ pub fn find_and_report_envs(
                     &global_env_search_paths,
                 );
             }
-            summary
-                .lock()
-                .unwrap()
-                .breakdown
-                .insert("Path", start.elapsed());
+            let elapsed = start.elapsed();
+            summary.lock().unwrap().breakdown.insert("Path", elapsed);
+            report_refresh_progress(
+                reporter,
+                refresh_id,
+                refresh_start,
+                RefreshProgressPhase::Path,
+                RefreshProgressStatus::Completed,
+                Some(elapsed),
+                None,
+            );
         });
         // Step 3: Search in some global locations for virtual envs.
         // Convert to Arc<[PathBuf]> for O(1) cloning in thread spawns
@@ -152,7 +236,16 @@ pub fn find_and_report_envs(
         let summary_for_step3 = summary.clone();
         s.spawn(move || {
             let _span = info_span!("global_virtualenvs_phase").entered();
-            let start = std::time::Instant::now();
+            let start = Instant::now();
+            report_refresh_progress(
+                reporter,
+                refresh_id,
+                refresh_start,
+                RefreshProgressPhase::GlobalVirtualEnvs,
+                RefreshProgressStatus::Started,
+                None,
+                None,
+            );
             if search_global {
                 let mut possible_environments = vec![];
 
@@ -197,11 +290,21 @@ pub fn find_and_report_envs(
                     &global_env_search_paths,
                 );
             }
+            let elapsed = start.elapsed();
             summary_for_step3
                 .lock()
                 .unwrap()
                 .breakdown
-                .insert("GlobalVirtualEnvs", start.elapsed());
+                .insert("GlobalVirtualEnvs", elapsed);
+            report_refresh_progress(
+                reporter,
+                refresh_id,
+                refresh_start,
+                RefreshProgressPhase::GlobalVirtualEnvs,
+                RefreshProgressStatus::Completed,
+                Some(elapsed),
+                None,
+            );
         });
         // Step 4: Find in workspace folders too.
         // This can be merged with step 2 as well, as we're only look for environments
@@ -213,7 +316,16 @@ pub fn find_and_report_envs(
         let summary_for_step4 = summary.clone();
         s.spawn(move || {
             let _span = info_span!("workspace_search_phase").entered();
-            let start = std::time::Instant::now();
+            let start = Instant::now();
+            report_refresh_progress(
+                reporter,
+                refresh_id,
+                refresh_start,
+                RefreshProgressPhase::Workspaces,
+                RefreshProgressStatus::Started,
+                None,
+                None,
+            );
             thread::scope(|s| {
                 // Find environments in the workspace folders.
                 if !workspace_directories.is_empty() {
@@ -252,14 +364,24 @@ pub fn find_and_report_envs(
                 }
             });
 
+            let elapsed = start.elapsed();
             summary_for_step4
                 .lock()
                 .unwrap()
                 .breakdown
-                .insert("Workspaces", start.elapsed());
+                .insert("Workspaces", elapsed);
+            report_refresh_progress(
+                reporter,
+                refresh_id,
+                refresh_start,
+                RefreshProgressPhase::Workspaces,
+                RefreshProgressStatus::Completed,
+                Some(elapsed),
+                None,
+            );
         });
     });
-    summary.lock().expect("summary mutex poisoned").total = start.elapsed();
+    summary.lock().expect("summary mutex poisoned").total = refresh_start.elapsed();
 
     summary
 }
@@ -438,9 +560,11 @@ pub fn identify_python_executables_using_locators(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use pet_core::{manager::EnvManager, python_environment::PythonEnvironment};
     use std::fs;
-    #[cfg(unix)]
     use std::path::PathBuf;
+    use std::sync::Mutex as StdMutex;
     use tempfile::TempDir;
 
     /// Test that `path().is_dir()` properly follows symlinks to directories.
@@ -652,5 +776,120 @@ mod tests {
             resolved, canonical_target,
             "canonicalize() would resolve to target, but path() does not"
         );
+    }
+    struct EmptyEnvironment;
+
+    impl Environment for EmptyEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+        fn get_env_var(&self, _key: String) -> Option<String> {
+            None
+        }
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
+
+    struct NoopCondaLocator;
+
+    impl Locator for NoopCondaLocator {
+        fn get_kind(&self) -> LocatorKind {
+            LocatorKind::Conda
+        }
+        fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+            vec![PythonEnvironmentKind::Conda]
+        }
+        fn try_from(&self, _env: &PythonEnv) -> Option<PythonEnvironment> {
+            None
+        }
+        fn find(&self, _reporter: &dyn Reporter) {}
+    }
+
+    #[derive(Default)]
+    struct ProgressReporter {
+        events: StdMutex<Vec<TelemetryEvent>>,
+    }
+
+    impl Reporter for ProgressReporter {
+        fn report_manager(&self, _manager: &EnvManager) {}
+        fn report_environment(&self, _env: &PythonEnvironment) {}
+        fn report_telemetry(&self, event: &TelemetryEvent) {
+            self.events.lock().unwrap().push(event.clone());
+        }
+    }
+
+    #[test]
+    fn refresh_progress_reports_phases_and_locator_timing() {
+        let reporter = ProgressReporter::default();
+        let locators: Arc<Vec<Arc<dyn Locator>>> = Arc::new(vec![Arc::new(NoopCondaLocator)]);
+
+        find_and_report_envs(
+            &reporter,
+            Configuration::default(),
+            &locators,
+            &EmptyEnvironment,
+            Some(SearchScope::Global(PythonEnvironmentKind::Conda)),
+            Some(42),
+        );
+
+        let events = reporter.events.lock().unwrap();
+        let progress = events
+            .iter()
+            .filter_map(|event| match event {
+                TelemetryEvent::RefreshProgress(progress) => Some(progress),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(progress.len(), 10);
+        assert!(progress.iter().all(|progress| progress.refresh_id == 42));
+        for phase in [
+            RefreshProgressPhase::Locators,
+            RefreshProgressPhase::Path,
+            RefreshProgressPhase::GlobalVirtualEnvs,
+            RefreshProgressPhase::Workspaces,
+        ] {
+            assert_eq!(
+                progress
+                    .iter()
+                    .filter(|progress| {
+                        progress.phase == phase
+                            && progress.status == RefreshProgressStatus::Started
+                            && progress.locator_name.is_none()
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(
+                progress
+                    .iter()
+                    .filter(|progress| {
+                        progress.phase == phase
+                            && progress.status == RefreshProgressStatus::Completed
+                            && progress.locator_name.is_none()
+                            && progress.phase_elapsed_ms.is_some()
+                    })
+                    .count(),
+                1
+            );
+        }
+
+        let locator_progress = progress
+            .iter()
+            .filter(|progress| progress.locator_name.as_deref() == Some("Conda"))
+            .collect::<Vec<_>>();
+        assert_eq!(locator_progress.len(), 2);
+        assert!(locator_progress.iter().any(|progress| {
+            progress.status == RefreshProgressStatus::Started
+                && progress.locator_elapsed_ms.is_none()
+        }));
+        assert!(locator_progress.iter().any(|progress| {
+            progress.status == RefreshProgressStatus::Completed
+                && progress.locator_elapsed_ms.is_some()
+        }));
     }
 }

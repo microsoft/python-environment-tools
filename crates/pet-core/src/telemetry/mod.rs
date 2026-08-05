@@ -5,12 +5,14 @@ use inaccurate_python_info::InaccuratePythonEnvironmentInfo;
 use missing_conda_info::MissingCondaEnvironments;
 use missing_poetry_info::MissingPoetryEnvironments;
 use refresh_performance::RefreshPerformance;
+use refresh_progress::RefreshProgress;
 use serde::{Deserialize, Serialize};
 
 pub mod inaccurate_python_info;
 pub mod missing_conda_info;
 pub mod missing_poetry_info;
 pub mod refresh_performance;
+pub mod refresh_progress;
 
 pub type NumberOfCustomSearchPaths = u32;
 
@@ -38,6 +40,8 @@ pub enum TelemetryEvent {
     MissingPoetryEnvironments(MissingPoetryEnvironments),
     /// Telemetry with metrics for finding all environments as a result of refresh.
     RefreshPerformance(RefreshPerformance),
+    /// Progress through a refresh operation, including per-locator timing.
+    RefreshProgress(RefreshProgress),
 }
 
 pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
@@ -57,5 +61,6 @@ pub fn get_telemetry_event_name(event: &TelemetryEvent) -> &'static str {
         TelemetryEvent::MissingCondaEnvironments(_) => "MissingCondaEnvironments",
         TelemetryEvent::MissingPoetryEnvironments(_) => "MissingPoetryEnvironments",
         TelemetryEvent::RefreshPerformance(_) => "RefreshPerformance",
+        TelemetryEvent::RefreshProgress(_) => "RefreshProgress",
     }
 }
