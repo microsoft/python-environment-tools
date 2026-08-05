@@ -1,7 +1,6 @@
 ---
 name: "rust-coding-skill"
 description: "Use whenever editing Rust in PET to write allocation-aware, cross-platform, byte-safe code with behavior-proving tests."
-user-invocable: true
 ---
 
 # PET Rust Coding Skill
@@ -33,9 +32,13 @@ Never calculate byte offsets from a transformed Unicode string and apply them to
 For ASCII wire/file markers, use byte-stable ASCII-insensitive matching and checked slicing:
 
 ```rust
-let start = find_ascii_case_insensitive(line, "# cmd:")? + "# cmd:".len();
-let end = find_ascii_case_insensitive(line, " create -")?;
-let value = line.get(start..end)?.trim();
+let marker = b"# cmd:";
+let start = line
+    .as_bytes()
+    .windows(marker.len())
+    .position(|window| window.eq_ignore_ascii_case(marker))?
+    + marker.len();
+let value = line.get(start..)?.trim();
 ```
 
 Use `to_ascii_lowercase` rather than `to_lowercase` when the format is defined as ASCII. Add a non-ASCII path regression test whenever offsets are derived from textual markers.
@@ -70,14 +73,14 @@ Tests should demonstrate the behavior or performance invariant, not merely execu
 For optimizations, instrument the dependency boundary and assert the operation count:
 
 ```rust
-let reads = Cell::new(0);
+let reads = AtomicUsize::new(0);
 parse_with_reader(path, |_| {
-    reads.set(reads.get() + 1);
+    reads.fetch_add(1, Ordering::Relaxed);
     Some(history.clone())
 });
-assert_eq!(reads.get(), 1);
+assert_eq!(reads.load(Ordering::Relaxed), 1);
 ```
 
 For parser helpers, include malformed input, non-ASCII surrounding data, and case variations. For diagnostics, test pattern classification and expansion filtering separately. Keep temp paths unique with `tempfile` or process/counter-based names.
 
-Before every Rust commit, run the targeted tests plus `scripts/rust-precommit.ps1` (or `.sh`). Do not suppress Clippy warnings to land a change.
+Before every Rust commit, run targeted tests and invoke the `rust-precommit` skill. Keep that skill as the single source of truth for required format and Clippy commands.
