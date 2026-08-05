@@ -909,8 +909,20 @@ fn try_begin_missing_env_reporting(
     configuration: &RwLock<ConfigurationState>,
     refresh_generation: u64,
 ) -> bool {
+    try_begin_missing_env_reporting_with_state(
+        &MISSING_ENVS_REPORTING_STATE,
+        configuration,
+        refresh_generation,
+    )
+}
+
+fn try_begin_missing_env_reporting_with_state(
+    reporting_state: &AtomicU64,
+    configuration: &RwLock<ConfigurationState>,
+    refresh_generation: u64,
+) -> bool {
     loop {
-        let current_state = MISSING_ENVS_REPORTING_STATE.load(Ordering::Acquire);
+        let current_state = reporting_state.load(Ordering::Acquire);
         if current_state == MISSING_ENVS_COMPLETED {
             return false;
         }
@@ -918,7 +930,7 @@ fn try_begin_missing_env_reporting(
             return false;
         }
 
-        if MISSING_ENVS_REPORTING_STATE
+        if reporting_state
             .compare_exchange(
                 current_state,
                 refresh_generation,
@@ -931,7 +943,11 @@ fn try_begin_missing_env_reporting(
                 return true;
             }
 
-            release_missing_env_reporting_if_stale(configuration, refresh_generation);
+            release_missing_env_reporting_if_stale_with_state(
+                reporting_state,
+                configuration,
+                refresh_generation,
+            );
             return false;
         }
     }
@@ -941,8 +957,20 @@ fn release_missing_env_reporting_if_stale(
     configuration: &RwLock<ConfigurationState>,
     refresh_generation: u64,
 ) {
+    release_missing_env_reporting_if_stale_with_state(
+        &MISSING_ENVS_REPORTING_STATE,
+        configuration,
+        refresh_generation,
+    );
+}
+
+fn release_missing_env_reporting_if_stale_with_state(
+    reporting_state: &AtomicU64,
+    configuration: &RwLock<ConfigurationState>,
+    refresh_generation: u64,
+) {
     if !is_current_generation(configuration, refresh_generation) {
-        let _ = MISSING_ENVS_REPORTING_STATE.compare_exchange(
+        let _ = reporting_state.compare_exchange(
             refresh_generation,
             MISSING_ENVS_AVAILABLE,
             Ordering::AcqRel,
@@ -952,14 +980,17 @@ fn release_missing_env_reporting_if_stale(
 }
 
 fn complete_missing_env_reporting(refresh_generation: u64) {
-    let _ = MISSING_ENVS_REPORTING_STATE.compare_exchange(
+    complete_missing_env_reporting_with_state(&MISSING_ENVS_REPORTING_STATE, refresh_generation);
+}
+
+fn complete_missing_env_reporting_with_state(reporting_state: &AtomicU64, refresh_generation: u64) {
+    let _ = reporting_state.compare_exchange(
         refresh_generation,
         MISSING_ENVS_COMPLETED,
         Ordering::AcqRel,
         Ordering::Acquire,
     );
 }
-
 fn execute_refresh(
     context: &Context,
     refresh_options: &RefreshOptions,
@@ -1414,8 +1445,6 @@ mod tests {
         telemetry: Mutex<Vec<TelemetryEvent>>,
     }
 
-    static MISSING_ENVS_TEST_LOCK: Mutex<()> = Mutex::new(());
-
     struct LockCheckingReporter {
         configuration: Arc<RwLock<ConfigurationState>>,
         reported: Mutex<bool>,
@@ -1857,50 +1886,54 @@ mod tests {
 
     #[test]
     fn test_stale_generation_does_not_begin_missing_env_reporting() {
-        let _guard = MISSING_ENVS_TEST_LOCK.lock().unwrap();
-        MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
+        let reporting_state = AtomicU64::new(MISSING_ENVS_AVAILABLE);
         let configuration = RwLock::new(ConfigurationState {
             generation: 2,
             config: Configuration::default(),
         });
 
-        assert!(!try_begin_missing_env_reporting(&configuration, 1));
+        assert!(!try_begin_missing_env_reporting_with_state(
+            &reporting_state,
+            &configuration,
+            1,
+        ));
         assert_eq!(
-            MISSING_ENVS_REPORTING_STATE.load(Ordering::Acquire),
+            reporting_state.load(Ordering::Acquire),
             MISSING_ENVS_AVAILABLE
         );
     }
 
     #[test]
     fn test_stale_generation_releases_missing_env_reporting_slot() {
-        let _guard = MISSING_ENVS_TEST_LOCK.lock().unwrap();
-        MISSING_ENVS_REPORTING_STATE.store(2, Ordering::Release);
+        let reporting_state = AtomicU64::new(2);
         let configuration = RwLock::new(ConfigurationState {
             generation: 3,
             config: Configuration::default(),
         });
 
-        release_missing_env_reporting_if_stale(&configuration, 2);
+        release_missing_env_reporting_if_stale_with_state(&reporting_state, &configuration, 2);
 
         assert_eq!(
-            MISSING_ENVS_REPORTING_STATE.load(Ordering::Acquire),
+            reporting_state.load(Ordering::Acquire),
             MISSING_ENVS_AVAILABLE
         );
     }
 
     #[test]
     fn test_newer_generation_can_claim_missing_env_reporting_after_older_reservation() {
-        let _guard = MISSING_ENVS_TEST_LOCK.lock().unwrap();
-        MISSING_ENVS_REPORTING_STATE.store(1, Ordering::Release);
+        let reporting_state = AtomicU64::new(1);
         let configuration = RwLock::new(ConfigurationState {
             generation: 2,
             config: Configuration::default(),
         });
 
-        assert!(try_begin_missing_env_reporting(&configuration, 2));
-        assert_eq!(MISSING_ENVS_REPORTING_STATE.load(Ordering::Acquire), 2);
+        assert!(try_begin_missing_env_reporting_with_state(
+            &reporting_state,
+            &configuration,
+            2,
+        ));
+        assert_eq!(reporting_state.load(Ordering::Acquire), 2);
     }
-
     #[test]
     fn test_refresh_coordinator_joins_identical_requests() {
         let coordinator = RefreshCoordinator::default();
@@ -2603,39 +2636,40 @@ mod tests {
         ));
     }
 
-    /// Test for #395: configure resets MISSING_ENVS_REPORTING_STATE so that
-    /// subsequent refreshes can trigger missing-env reporting again.
+    /// Test for #395: configure resets missing-env state so that subsequent
+    /// refreshes can trigger reporting again.
     #[test]
     fn test_configure_resets_completed_missing_env_reporting() {
-        let _guard = MISSING_ENVS_TEST_LOCK.lock().unwrap();
-
+        let reporting_state = AtomicU64::new(MISSING_ENVS_AVAILABLE);
         let configuration = Arc::new(RwLock::new(ConfigurationState {
             generation: 1,
             config: Configuration::default(),
         }));
 
-        // Simulate a completed first refresh.
-        MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
-        assert!(try_begin_missing_env_reporting(configuration.as_ref(), 1));
-        complete_missing_env_reporting(1);
+        assert!(try_begin_missing_env_reporting_with_state(
+            &reporting_state,
+            configuration.as_ref(),
+            1,
+        ));
+        complete_missing_env_reporting_with_state(&reporting_state, 1);
+        assert!(!try_begin_missing_env_reporting_with_state(
+            &reporting_state,
+            configuration.as_ref(),
+            1,
+        ));
 
-        // Missing-env reporting is now exhausted.
-        assert!(!try_begin_missing_env_reporting(configuration.as_ref(), 1));
-
-        // Simulate what handle_configure does: bump generation and reset.
         {
             let mut state = configuration.write().unwrap();
             state.generation = 2;
-            MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
+            reporting_state.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
         }
 
-        // Missing-env reporting should work again for the new generation.
-        assert!(try_begin_missing_env_reporting(configuration.as_ref(), 2));
-
-        // Cleanup.
-        MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
+        assert!(try_begin_missing_env_reporting_with_state(
+            &reporting_state,
+            configuration.as_ref(),
+            2,
+        ));
     }
-
     /// Test for #461: refresh-side `configuration.read()` callers must not
     /// block on the configure thread while it iterates `locator.configure()`.
     #[test]
