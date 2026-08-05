@@ -23,6 +23,7 @@ pub struct CondaEnvironment {
     pub version: Option<String>,
     pub conda_dir: Option<PathBuf>,
     pub arch: Option<Architecture>,
+    pub name: Option<String>,
 }
 
 impl CondaEnvironment {
@@ -31,9 +32,6 @@ impl CondaEnvironment {
     }
 
     pub fn to_python_environment(&self, conda_manager: Option<EnvManager>) -> PythonEnvironment {
-        #[allow(unused_assignments)]
-        let name = get_conda_env_name(&self.prefix, &self.prefix, &self.conda_dir);
-
         // This is a root env.
         let builder = PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Conda))
             .executable(self.executable.clone())
@@ -41,7 +39,7 @@ impl CondaEnvironment {
             .prefix(Some(self.prefix.clone()))
             .arch(self.arch.clone())
             .symlinks(Some(find_executables(&self.prefix)))
-            .name(name.clone())
+            .name(self.name.clone())
             .manager(conda_manager);
 
         builder.build()
@@ -52,13 +50,31 @@ pub fn get_conda_environment_info(
     env_path: &Path,
     manager: &Option<CondaManager>,
 ) -> Option<CondaEnvironment> {
+    get_conda_environment_info_with_history_reader(env_path, manager, |env_path| {
+        std::fs::read_to_string(env_path.join("conda-meta").join("history")).ok()
+    })
+}
+
+fn get_conda_environment_info_with_history_reader<F>(
+    env_path: &Path,
+    manager: &Option<CondaManager>,
+    read_history: F,
+) -> Option<CondaEnvironment>
+where
+    F: FnOnce(&Path) -> Option<String>,
+{
     if !is_conda_env(env_path) {
-        // Not a conda environment (neither root nor a separate env).
         return None;
     }
-    // If we know the conda install folder, then we can use it.
-    let mut conda_install_folder = get_conda_installation_used_to_create_conda_env(env_path)
-        .or_else(|| manager.clone().and_then(|m| m.conda_dir));
+
+    let history = read_history(env_path);
+    let creation_line = history.as_deref().and_then(get_conda_creation_line);
+    let mut conda_install_folder =
+        get_conda_installation_used_to_create_conda_env_from_creation_line(
+            env_path,
+            creation_line.as_deref(),
+        )
+        .or_else(|| manager.clone().and_then(|manager| manager.conda_dir));
 
     if let Some(conda_dir) = &conda_install_folder {
         if conda_dir.exists() {
@@ -79,77 +95,58 @@ pub fn get_conda_environment_info(
         trace!("Conda install folder not found for {}", env_path.display());
     }
 
-    if let Some(python_binary) = find_executable(env_path) {
-        if let Some(package_info) = CondaPackageInfo::from(env_path, &Package::Python) {
-            Some(CondaEnvironment {
-                prefix: env_path.into(),
-                executable: Some(python_binary),
-                version: Some(package_info.version),
-                conda_dir: conda_install_folder,
-                arch: package_info.arch,
-            })
-        } else {
-            // No python in this environment.
-            Some(CondaEnvironment {
-                prefix: env_path.into(),
-                executable: Some(python_binary),
-                version: None,
-                conda_dir: conda_install_folder,
-                arch: None,
-            })
-        }
-    } else {
-        // No python in this environment.
-        Some(CondaEnvironment {
-            prefix: env_path.into(),
-            executable: None,
-            version: None,
-            conda_dir: conda_install_folder,
-            arch: None,
-        })
-    }
+    let executable = find_executable(env_path);
+    let package_info = executable.as_ref().and_then(|_| {
+        CondaPackageInfo::from_history(env_path, &Package::Python, history.as_deref())
+    });
+    let name = get_conda_env_name(env_path, &conda_install_folder, creation_line.as_deref());
+
+    Some(CondaEnvironment {
+        prefix: env_path.into(),
+        executable,
+        version: package_info.as_ref().map(|info| info.version.clone()),
+        conda_dir: conda_install_folder,
+        arch: package_info.and_then(|info| info.arch),
+        name,
+    })
 }
 
 /**
- * The conda-meta/history file in conda environments contain the command used to create the conda environment.
- * And example is `# cmd: <conda install directory>\Scripts\conda-script.py create -n sample``
- * And example is `# cmd: conda create -n sample``
- *
- * Sometimes the cmd line contains the fully qualified path to the conda install folder.
- * This function returns the path to the conda installation that was used to create the environment.
+ * The conda-meta/history file in conda environments contains the command used to create the environment.
+ * This function returns the path to the conda installation that created the environment.
  */
 pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Option<PathBuf> {
-    // If this environment is in a folder named `envs`, then the parent directory of `envs` is the root conda install folder.
+    let history = std::fs::read_to_string(env_path.join("conda-meta").join("history")).ok();
+    let creation_line = history.as_deref().and_then(get_conda_creation_line);
+    get_conda_installation_used_to_create_conda_env_from_creation_line(
+        env_path,
+        creation_line.as_deref(),
+    )
+}
+
+fn get_conda_installation_used_to_create_conda_env_from_creation_line(
+    env_path: &Path,
+    creation_line: Option<&str>,
+) -> Option<PathBuf> {
     if let Some(parent) = env_path.ancestors().nth(2) {
         if is_conda_install(parent) {
             return Some(parent.to_path_buf());
         }
     }
 
-    // First look for the conda-meta/history file in the environment folder.
-    // This could be a conda envirment (not root) but has `conda` installed in it.
-    if let Some(line) = get_conda_creation_line_from_history(env_path) {
-        // Sample lines
-        // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
-        // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
-        // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
+    if let Some(line) = creation_line {
         if let Some(conda_dir) = get_conda_dir_from_cmd(line) {
             if is_conda_install(&conda_dir) {
                 return Some(conda_dir);
-            } else {
-                // Possible this is a directory such as `C:\Users\donja\miniconda3\Scripts`
-                // We try to remove `Scripts` or `bin` from the path in the `get_conda_dir_from_cmd`.
-                // However if there are other directories such as `condabin` or others we are not aware of, lets try.
-                if let Some(conda_dir) = conda_dir.parent() {
-                    if is_conda_install(conda_dir) {
-                        return Some(conda_dir.into());
-                    }
+            }
+            if let Some(conda_dir) = conda_dir.parent() {
+                if is_conda_install(conda_dir) {
+                    return Some(conda_dir.into());
                 }
             }
         }
     }
 
-    // Possible the env_path is the root conda install folder.
     if is_conda_install(env_path) {
         Some(env_path.to_path_buf())
     } else {
@@ -158,97 +155,80 @@ pub fn get_conda_installation_used_to_create_conda_env(env_path: &Path) -> Optio
 }
 
 pub fn get_conda_creation_line_from_history(env_path: &Path) -> Option<String> {
-    let conda_meta_history = env_path.join("conda-meta").join("history");
-    if let Ok(reader) = std::fs::read_to_string(conda_meta_history.clone()) {
-        if let Some(line) = reader.lines().map(|l| l.trim()).find(|l| {
-            l.to_lowercase().starts_with("# cmd:") && l.to_lowercase().contains(" create -")
-        }) {
-            trace!(
-                "Conda creation line for {:?} is from history file is {:?}",
-                env_path,
-                line
-            );
-            return Some(line.into());
-        }
-    }
+    let history = std::fs::read_to_string(env_path.join("conda-meta").join("history")).ok()?;
+    get_conda_creation_line(&history)
+}
 
-    None
+fn get_conda_creation_line(history: &str) -> Option<String> {
+    let line = history.lines().map(str::trim).find(|line| {
+        let line = line.to_lowercase();
+        line.starts_with("# cmd:") && line.contains(" create -")
+    })?;
+    trace!("Conda creation line from history is {:?}", line);
+    Some(line.into())
 }
 
 fn get_conda_env_name(
-    env_path: &Path,
     prefix: &Path,
     conda_dir: &Option<PathBuf>,
+    creation_line: Option<&str>,
 ) -> Option<String> {
-    let mut name: Option<String>;
-    if is_conda_install(prefix) {
-        name = Some("base".to_string());
+    let mut name = if is_conda_install(prefix) {
+        Some("base".to_string())
     } else {
-        name = prefix
+        prefix
             .file_name()
-            .map(|name| name.to_str().unwrap_or_default().to_string());
-    }
-    // if the conda install folder is parent of the env folder, then we can use named activation.
-    // E.g. conda env is = <conda install>/envs/<env name>
-    // Then we can use `<conda install>/bin/conda activate -n <env name>`
-    //
+            .map(|name| name.to_str().unwrap_or_default().to_string())
+    };
+
     if let Some(conda_dir) = conda_dir {
         if !prefix.starts_with(conda_dir) {
-            name = get_conda_env_name_from_history_file(env_path, prefix);
+            name = get_conda_env_name_from_creation_line(prefix, creation_line);
         }
     }
 
     name
 }
 
-/**
- * The conda-meta/history file in conda environments contain the command used to create the conda environment.
- * And example is `# cmd: <conda install directory>\Scripts\conda-script.py create -n sample``
- * And example is `# cmd: conda create -n sample``
- *
- * This function returns the name of the conda environment.
- */
-fn get_conda_env_name_from_history_file(env_path: &Path, prefix: &Path) -> Option<String> {
-    let name = prefix
-        .file_name()
-        .map(|name| name.to_str().unwrap_or_default().to_string());
-
-    if let Some(name) = name {
-        if let Some(line) = get_conda_creation_line_from_history(env_path) {
-            // Sample lines
-            // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
-            // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
-            // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-            if is_conda_env_name_in_cmd(line, &name) {
-                return Some(name);
-            }
-        }
+fn get_conda_env_name_from_creation_line(
+    prefix: &Path,
+    creation_line: Option<&str>,
+) -> Option<String> {
+    let name = prefix.file_name()?.to_str()?.to_string();
+    let line = creation_line?;
+    if is_conda_env_name_in_cmd(line, &name) {
+        Some(name)
+    } else {
+        None
     }
-    None
 }
 
-fn is_conda_env_name_in_cmd(cmd_line: String, name: &str) -> bool {
-    // Sample lines
-    // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
-    // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
-    // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-    // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
-    // Look for "-n <name>" in the command line
+fn is_conda_env_name_in_cmd(cmd_line: &str, name: &str) -> bool {
     cmd_line.contains(format!("-n {name}").as_str())
         || cmd_line.contains(format!("--name {name}").as_str())
 }
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
 
-fn get_conda_dir_from_cmd(cmd_line: String) -> Option<PathBuf> {
+fn get_conda_executable_from_cmd(cmd_line: &str) -> Option<PathBuf> {
+    let start_index = find_ascii_case_insensitive(cmd_line, "# cmd:")? + "# cmd:".len();
+    let end_index = find_ascii_case_insensitive(cmd_line, " create -")?;
+    let executable = cmd_line.get(start_index..end_index)?.trim();
+    (!executable.is_empty()).then(|| PathBuf::from(executable))
+}
+
+fn get_conda_dir_from_cmd(cmd_line: &str) -> Option<PathBuf> {
     // Sample lines
-    // # cmd: <conda install directory>\Scripts\conda-script.py create -n samlpe1
+    // # cmd: <conda install directory>\Scripts\conda-script.py create -n sample
     // # cmd: <conda install directory>\Scripts\conda-script.py create -p <full path>
     // # cmd: /Users/donjayamanne/miniconda3/bin/conda create -n conda1
-    // # cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
-    let start_index = cmd_line.to_lowercase().find("# cmd:")? + "# cmd:".len();
-    let end_index = cmd_line.to_lowercase().find(" create -")?;
-    let conda_exe = PathBuf::from(cmd_line[start_index..end_index].trim().to_string());
-    // Sometimes the path can be as follows, where `/usr/bin/conda` could be a symlink.
     // cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
+    let conda_exe = get_conda_executable_from_cmd(cmd_line)?; // Sometimes the path can be as follows, where `/usr/bin/conda` could be a symlink.
+                                                              // cmd_line: "# cmd: /usr/bin/conda create -p ./prefix-envs/.conda1 python=3.12 -y"
     let conda_exe = resolve_symlink(&conda_exe).unwrap_or(conda_exe);
     if let Some(cmd_line) = conda_exe.parent() {
         if let Some(conda_dir) = cmd_line.file_name() {
@@ -330,22 +310,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_unicode_conda_executable_without_invalid_byte_indices() {
+        let line = "# CMD: /Users/İpek/miniconda3/bin/conda CREATE -n sample";
+
+        assert_eq!(
+            get_conda_executable_from_cmd(line),
+            Some(PathBuf::from("/Users/İpek/miniconda3/bin/conda"))
+        );
+    }
+    #[test]
     #[cfg(windows)]
     fn parse_cmd_line() {
         let line = "# cmd: C:\\Users\\donja\\miniconda3\\lib\\site-packages\\conda\\__main__.py create --yes --prefix .conda python=3.9";
-        let conda_dir = get_conda_dir_from_cmd(line.to_string()).unwrap();
+        let conda_dir = get_conda_dir_from_cmd(line).unwrap();
 
         assert_eq!(conda_dir, PathBuf::from("C:\\Users\\donja\\miniconda3"));
 
         let line =
             "# cmd: C:\\Users\\donja\\miniconda3\\Scripts\\conda-script.py create -n samlpe1";
-        let conda_dir = get_conda_dir_from_cmd(line.to_string()).unwrap();
+        let conda_dir = get_conda_dir_from_cmd(line).unwrap();
 
         assert_eq!(conda_dir, PathBuf::from("C:\\Users\\donja\\miniconda3"));
 
         // From root install folder
         let line = "# cmd: build.py --product miniconda --python 3.9 --installer-type exe --output-dir C:\\ci\\containers\\000029l07m4\\tmp\\build\\dd3144c1\\output-installer/220421/ --standalone C:\\ci\\containers\\000029l07m4\\tmp\\build\\dd3144c1\\mc/standalone_conda/conda.exe";
-        let conda_dir = get_conda_dir_from_cmd(line.to_string());
+        let conda_dir = get_conda_dir_from_cmd(line);
 
         assert!(conda_dir.is_none());
     }
@@ -354,7 +343,7 @@ mod tests {
     #[cfg(unix)]
     fn parse_cmd_line() {
         let line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --prefix .conda python=3.12";
-        let conda_dir = get_conda_dir_from_cmd(line.to_string()).unwrap();
+        let conda_dir = get_conda_dir_from_cmd(line).unwrap();
 
         assert_eq!(
             conda_dir,
@@ -366,19 +355,19 @@ mod tests {
     #[cfg(unix)]
     fn verify_conda_env_name() {
         let line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --name .conda python=3.12";
-        assert!(is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+        assert!(is_conda_env_name_in_cmd(line, ".conda"));
 
         let mut line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -n .conda python=3.12";
-        assert!(is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+        assert!(is_conda_env_name_in_cmd(line, ".conda"));
 
         line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes --name .conda python=3.12";
-        assert!(!is_conda_env_name_in_cmd(line.to_string(), "base"));
+        assert!(!is_conda_env_name_in_cmd(line, "base"));
 
         line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
-        assert!(!is_conda_env_name_in_cmd(line.to_string(), "base"));
+        assert!(!is_conda_env_name_in_cmd(line, "base"));
 
         line = "# cmd: /Users/donjayamanne/.pyenv/versions/mambaforge-22.11.1-3/lib/python3.10/site-packages/conda/__main__.py create --yes -p .conda python=3.12";
-        assert!(!is_conda_env_name_in_cmd(line.to_string(), ".conda"));
+        assert!(!is_conda_env_name_in_cmd(line, ".conda"));
     }
 
     /// Test that external environments (not under conda_dir) created with --prefix
@@ -403,7 +392,9 @@ mod tests {
         // conda_dir is known but env is NOT under it (external environment)
         let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
-        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        let history = std::fs::read_to_string(&history_file).unwrap();
+        let creation_line = get_conda_creation_line(&history);
+        let name = get_conda_env_name(&env_path, &conda_dir, creation_line.as_deref());
         assert!(
             name.is_none(),
             "Path-based external env should return None for name, got {:?}",
@@ -436,7 +427,9 @@ mod tests {
         // conda_dir is known but env is NOT under it (external environment)
         let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
-        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        let history = std::fs::read_to_string(&history_file).unwrap();
+        let creation_line = get_conda_creation_line(&history);
+        let name = get_conda_env_name(&env_path, &conda_dir, creation_line.as_deref());
         assert_eq!(
             name,
             Some("myenv".to_string()),
@@ -459,7 +452,7 @@ mod tests {
         std::fs::create_dir_all(&conda_meta_dir).unwrap();
 
         // When env is under conda_dir/envs/, name should be the folder name
-        let name = get_conda_env_name(&env_path, &env_path, &Some(conda_dir));
+        let name = get_conda_env_name(&env_path, &Some(conda_dir), None);
         assert_eq!(
             name,
             Some("myenv".to_string()),
@@ -484,7 +477,7 @@ mod tests {
         // conda_dir is known but env is NOT under it (external environment)
         let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
-        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        let name = get_conda_env_name(&env_path, &conda_dir, None);
         assert!(
             name.is_none(),
             "External env without history should return None for safe path-based activation, got {:?}",
@@ -515,7 +508,9 @@ mod tests {
         let env_path = temp_dir.join("renamed_env");
         let conda_dir = Some(std::path::PathBuf::from("/some/other/conda"));
 
-        let name = get_conda_env_name(&env_path, &env_path, &conda_dir);
+        let history = std::fs::read_to_string(&history_file).unwrap();
+        let creation_line = get_conda_creation_line(&history);
+        let name = get_conda_env_name(&env_path, &conda_dir, creation_line.as_deref());
         assert!(
             name.is_none(),
             "External env with mismatched name should return None, got {:?}",
@@ -524,5 +519,24 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+    #[test]
+    fn environment_info_reads_history_once() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("pet-conda-history-read-{}", std::process::id()));
+        let env_path = temp_dir.join("env");
+        std::fs::create_dir_all(env_path.join("conda-meta")).unwrap();
+
+        let reads = std::cell::Cell::new(0);
+        let environment = get_conda_environment_info_with_history_reader(&env_path, &None, |_| {
+            reads.set(reads.get() + 1);
+            Some("# cmd: conda create -p env\n+defaults::python-3.12.0-build".into())
+        })
+        .unwrap();
+
+        assert_eq!(reads.get(), 1);
+        assert_eq!(environment.prefix, env_path);
+
+        std::fs::remove_dir_all(temp_dir).unwrap();
     }
 }

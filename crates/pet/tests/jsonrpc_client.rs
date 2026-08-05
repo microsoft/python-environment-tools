@@ -17,8 +17,10 @@ static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RefreshResult {
     pub duration: u128,
+    pub refresh_id: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -192,6 +194,40 @@ impl PetJsonRpcClient {
             .count()
     }
 
+    pub fn telemetry_events(&self, event: &str) -> Vec<Value> {
+        self.notifications()
+            .into_iter()
+            .filter(|notification| {
+                notification.method == "telemetry"
+                    && notification.params["event"].as_str() == Some(event)
+            })
+            .map(|notification| notification.params)
+            .collect()
+    }
+
+    pub fn telemetry_event_count(&self, event: &str) -> usize {
+        self.telemetry_events(event).len()
+    }
+
+    pub fn wait_for_telemetry_event_count(
+        &self,
+        event: &str,
+        expected_count: usize,
+        timeout: Duration,
+    ) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() <= deadline {
+            if self.telemetry_event_count(event) >= expected_count {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Err(format!(
+            "Timed out waiting for {expected_count} '{event}' telemetry events; saw {}. stderr: {}",
+            self.telemetry_event_count(event),
+            self.stderr_output()
+        ))
+    }
     pub fn wait_for_notification_count(
         &self,
         method: &str,
