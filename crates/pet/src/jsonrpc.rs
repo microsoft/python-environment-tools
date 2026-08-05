@@ -602,7 +602,7 @@ fn recursive_environment_patterns(patterns: &[PathBuf]) -> impl Iterator<Item = 
 fn warn_for_recursive_environment_patterns(patterns: &[PathBuf]) {
     for pattern in recursive_environment_patterns(patterns) {
         warn!(
-            "Recursive environmentDirectories pattern '{}' can make configure slow; prefer non-recursive container-directory patterns such as 'envs' or '*/envs'",
+            "Recursive environmentDirectories pattern '{}' can make configure slow; prefer non-recursive container-directory patterns such as '<root>/envs' or '<root>/*/envs'",
             pattern.display()
         );
     }
