@@ -21,7 +21,9 @@ pub fn is_glob_pattern(path: &str) -> bool {
 
 /// Returns true when a glob can traverse an unbounded number of path components.
 pub fn is_recursive_glob_pattern(path: &str) -> bool {
-    path.split(['/', '\\']).any(|segment| segment == "**")
+    expand_braces(path)
+        .iter()
+        .any(|pattern| pattern.split(['/', '\\']).any(|segment| segment == "**"))
 }
 
 /// Checks if a string contains a valid brace expansion pattern `{a,b}`.
@@ -215,6 +217,7 @@ mod tests {
         assert!(!is_recursive_glob_pattern("*/.venv"));
         assert!(!is_recursive_glob_pattern("foo**bar/.venv"));
         assert!(is_recursive_glob_pattern("C:\\workspace\\**\\.venv"));
+        assert!(is_recursive_glob_pattern("{foo,**}/.venv"));
     }
     #[test]
     fn test_is_glob_pattern_with_question_mark() {
