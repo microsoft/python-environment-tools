@@ -84,7 +84,7 @@ impl ResolvedPythonEnv {
     ) -> Option<Self> {
         let cache = create_cache(executable.to_path_buf());
         let entry = cache.lock().expect("cache mutex poisoned");
-        if let Some(env) = entry.get() {
+        if let Some(env) = entry.get_for_executable(executable) {
             Some(env)
         } else if let Some(env) = get_interpreter_details(executable) {
             entry.store(env.clone());
