@@ -13,7 +13,10 @@ use std::{
 
 use crate::{
     env::ResolvedPythonEnv,
-    fs_cache::{delete_cache_file, get_cache_from_file, store_cache_in_file},
+    fs_cache::{
+        delete_cache_file, executable_cache_key, executable_cache_key_from, get_cache_from_file,
+        store_cache_in_file,
+    },
 };
 
 lazy_static! {
@@ -22,6 +25,10 @@ lazy_static! {
 
 pub trait CacheEntry: Send + Sync {
     fn get(&self) -> Option<ResolvedPythonEnv>;
+    fn get_for_executable(&self, executable: &std::path::Path) -> Option<ResolvedPythonEnv> {
+        self.get()
+            .map(|environment| environment.for_executable_alias(executable))
+    }
     fn store(&self, environment: ResolvedPythonEnv);
     fn track_symlinks(&self, symlinks: Vec<PathBuf>);
 }
@@ -102,6 +109,7 @@ impl CacheImpl {
         }
     }
     fn create_cache(&self, executable: PathBuf) -> LockableCacheEntry {
+        let cache_key = executable_cache_key(&executable);
         let cache_directory = self
             .cache_dir
             .lock()
@@ -111,11 +119,11 @@ impl CacheImpl {
             .locks
             .lock()
             .expect("locks mutex poisoned")
-            .entry(executable.clone())
+            .entry(cache_key.clone())
         {
             Entry::Occupied(lock) => lock.get().clone(),
             Entry::Vacant(lock) => {
-                let cache = Box::new(CacheEntryImpl::create(cache_directory.clone(), executable))
+                let cache = Box::new(CacheEntryImpl::create(cache_directory.clone(), cache_key))
                     as Box<dyn CacheEntry + 'static>;
                 lock.insert(Arc::new(Mutex::new(cache))).clone()
             }
@@ -128,6 +136,16 @@ impl CacheImpl {
 /// don't support file creation time, causing metadata.created() to return Err.
 /// See: https://github.com/microsoft/python-environment-tools/issues/223
 type FilePathWithMTimeCTime = (PathBuf, SystemTime, Option<SystemTime>);
+
+fn current_dir_for_aliases(aliases: &[PathBuf]) -> Option<PathBuf> {
+    aliases
+        .iter()
+        .any(|alias| alias.is_relative())
+        .then(std::env::current_dir)
+        .transpose()
+        .ok()
+        .flatten()
+}
 
 struct CacheEntryImpl {
     cache_directory: Option<PathBuf>,
@@ -146,37 +164,35 @@ impl CacheEntryImpl {
         }
     }
     pub fn verify_in_memory_cache(&self) {
-        // Check if any of the exes have changed since we last cached this.
-        for symlink_info in self
+        let cache_is_valid = self
             .symlinks
             .lock()
             .expect("symlinks mutex poisoned")
             .iter()
-        {
-            if let Ok(metadata) = symlink_info.0.metadata() {
-                let mtime_changed = metadata.modified().ok() != Some(symlink_info.1);
-                // Only check ctime if we have it stored (may be None on Linux)
-                let ctime_changed = match symlink_info.2 {
-                    Some(stored_ctime) => metadata.created().ok() != Some(stored_ctime),
-                    None => false, // Can't check ctime if we don't have it
-                };
-                if mtime_changed || ctime_changed {
-                    trace!(
-                        "Symlink {:?} has changed since we last cached it. original mtime & ctime {:?}, {:?}, current mtime & ctime {:?}, {:?}",
-                        symlink_info.0,
-                        symlink_info.1,
-                        symlink_info.2,
-                        metadata.modified().ok(),
-                        metadata.created().ok()
-                    );
-                    self.envoronment
-                        .lock()
-                        .expect("envoronment mutex poisoned")
-                        .take();
-                    if let Some(cache_directory) = &self.cache_directory {
-                        delete_cache_file(cache_directory, &self.executable);
-                    }
+            .all(|symlink_info| {
+                if let Ok(metadata) = symlink_info.0.metadata() {
+                    let mtime_changed = metadata.modified().ok() != Some(symlink_info.1);
+                    let ctime_changed = match symlink_info.2 {
+                        Some(stored_ctime) => metadata.created().ok() != Some(stored_ctime),
+                        None => false,
+                    };
+                    !mtime_changed && !ctime_changed
+                } else {
+                    false
                 }
+            });
+
+        if !cache_is_valid {
+            trace!(
+                "Tracked executable changed or disappeared for {:?}",
+                self.executable
+            );
+            self.envoronment
+                .lock()
+                .expect("envoronment mutex poisoned")
+                .take();
+            if let Some(cache_directory) = &self.cache_directory {
+                delete_cache_file(cache_directory, &self.executable);
             }
         }
     }
@@ -215,14 +231,17 @@ impl CacheEntry for CacheEntryImpl {
 
     fn store(&self, environment: ResolvedPythonEnv) {
         // Get hold of the mtimes and ctimes of the symlinks.
+        let aliases = environment.symlinks.clone().unwrap_or_default();
+        let current_dir = current_dir_for_aliases(&aliases);
         let mut symlinks = vec![];
-        for symlink in environment.symlinks.clone().unwrap_or_default().iter() {
+        for alias in &aliases {
+            let symlink = executable_cache_key_from(alias, current_dir.as_deref());
             if let Ok(metadata) = symlink.metadata() {
                 // We require mtime, but ctime is optional (not available on all Linux filesystems)
                 // See: https://github.com/microsoft/python-environment-tools/issues/223
                 if let Ok(modified) = metadata.modified() {
                     let created = metadata.created().ok(); // May be None on Linux
-                    symlinks.push((symlink.clone(), modified, created));
+                    symlinks.push((symlink, modified, created));
                 }
             }
         }
@@ -259,8 +278,12 @@ impl CacheEntry for CacheEntryImpl {
             .iter()
             .map(|x| x.0.clone())
             .collect();
-
-        if symlinks.iter().all(|x| known_symlinks.contains(x)) {
+        let current_dir = current_dir_for_aliases(&symlinks);
+        if symlinks
+            .iter()
+            .map(|alias| executable_cache_key_from(alias, current_dir.as_deref()))
+            .all(|key| known_symlinks.contains(&key))
+        {
             return;
         }
 
@@ -281,5 +304,99 @@ impl CacheEntry for CacheEntryImpl {
                 // Unlikely scenario.
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir_in;
+
+    fn environment(executable: PathBuf, aliases: Vec<PathBuf>) -> ResolvedPythonEnv {
+        ResolvedPythonEnv {
+            executable,
+            prefix: PathBuf::from("prefix"),
+            version: "3.12.0".to_string(),
+            is64_bit: true,
+            symlinks: Some(aliases),
+        }
+    }
+
+    fn aliases() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let current_dir = std::env::current_dir().unwrap();
+        let temp_dir = tempdir_in(&current_dir).unwrap();
+        let absolute = temp_dir.path().join("python");
+        std::fs::write(&absolute, "python").unwrap();
+        let relative = absolute.strip_prefix(&current_dir).unwrap().to_path_buf();
+        (temp_dir, relative, absolute)
+    }
+
+    #[test]
+    fn relative_and_absolute_aliases_share_in_memory_entry() {
+        let (_temp_dir, relative, absolute) = aliases();
+        let cache = CacheImpl::new(None);
+
+        let relative_entry = cache.create_cache(relative);
+        let absolute_entry = cache.create_cache(absolute);
+
+        assert!(Arc::ptr_eq(&relative_entry, &absolute_entry));
+    }
+
+    #[test]
+    fn cache_hit_uses_current_alias_and_preserves_shorter_aliases() {
+        let (_temp_dir, relative, absolute) = aliases();
+        let cache = CacheImpl::new(None);
+        let entry = cache.create_cache(relative.clone());
+        let entry = entry.lock().unwrap();
+        entry.store(environment(
+            relative.clone(),
+            vec![relative.clone(), absolute.clone()],
+        ));
+
+        let relative_hit = entry.get_for_executable(&relative).unwrap();
+        assert_eq!(relative_hit.executable, relative);
+
+        let absolute_hit = entry.get_for_executable(&absolute).unwrap();
+        assert_eq!(absolute_hit.executable, absolute);
+        let hit_aliases = absolute_hit.symlinks.unwrap();
+        assert!(hit_aliases.contains(&relative));
+        assert!(hit_aliases.contains(&absolute));
+    }
+
+    #[test]
+    fn disk_cache_reuses_relative_entry_for_absolute_alias() {
+        let (temp_dir, relative, absolute) = aliases();
+        let cache_directory = temp_dir.path().join("cache");
+        {
+            let cache = CacheImpl::new(Some(cache_directory.clone()));
+            let entry = cache.create_cache(relative.clone());
+            entry.lock().unwrap().store(environment(
+                relative.clone(),
+                vec![relative.clone(), absolute.clone()],
+            ));
+        }
+
+        let cache = CacheImpl::new(Some(cache_directory));
+        let entry = cache.create_cache(absolute.clone());
+        let hit = entry.lock().unwrap().get_for_executable(&absolute).unwrap();
+
+        assert_eq!(hit.executable, absolute);
+        let hit_aliases = hit.symlinks.unwrap();
+        assert!(hit_aliases.contains(&relative));
+        assert!(hit_aliases.contains(&absolute));
+    }
+
+    #[test]
+    fn missing_tracked_executable_invalidates_in_memory_entry() {
+        let (temp_dir, _relative, absolute) = aliases();
+        let cache = CacheImpl::new(Some(temp_dir.path().join("cache")));
+        let entry = cache.create_cache(absolute.clone());
+        let entry = entry.lock().unwrap();
+        entry.store(environment(absolute.clone(), vec![absolute.clone()]));
+        assert!(entry.get().is_some());
+
+        std::fs::remove_file(&absolute).unwrap();
+
+        assert!(entry.get().is_none());
     }
 }
