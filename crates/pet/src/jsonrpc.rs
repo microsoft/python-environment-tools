@@ -21,7 +21,7 @@ use pet_core::{
     Configuration, Locator, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
-use pet_fs::glob::expand_glob_patterns;
+use pet_fs::glob::{expand_glob_pattern, expand_glob_patterns, is_recursive_glob_pattern};
 use pet_fs::path::norm_case;
 use pet_jsonrpc::{
     send_error, send_reply,
@@ -567,6 +567,47 @@ pub struct ConfigureOptions {
 /// The client has a 30-second timeout for configure requests.
 const GLOB_EXPANSION_WARN_THRESHOLD: Duration = Duration::from_secs(5);
 
+fn expand_configure_directory_patterns(kind: &str, patterns: Vec<PathBuf>) -> Vec<PathBuf> {
+    patterns
+        .into_iter()
+        .flat_map(|pattern| {
+            let start = Instant::now();
+            let expanded = expand_glob_pattern(&pattern.to_string_lossy());
+            let elapsed = start.elapsed();
+            trace!(
+                "Expanded {} pattern '{}' in {:?}",
+                kind,
+                pattern.display(),
+                elapsed
+            );
+            if elapsed >= GLOB_EXPANSION_WARN_THRESHOLD {
+                warn!(
+                    "Expanding {} pattern '{}' took {:?}, this may cause client timeouts",
+                    kind,
+                    pattern.display(),
+                    elapsed
+                );
+            }
+            expanded
+        })
+        .filter(|path| path.is_dir())
+        .collect()
+}
+
+fn recursive_environment_patterns(patterns: &[PathBuf]) -> impl Iterator<Item = &PathBuf> {
+    patterns
+        .iter()
+        .filter(|pattern| is_recursive_glob_pattern(&pattern.to_string_lossy()))
+}
+
+fn warn_for_recursive_environment_patterns(patterns: &[PathBuf]) {
+    for pattern in recursive_environment_patterns(patterns) {
+        warn!(
+            "Recursive environmentDirectories pattern '{}' can make configure slow; prefer non-recursive container-directory patterns such as '<root>/envs' or '<root>/*/envs'",
+            pattern.display()
+        );
+    }
+}
 pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
     match serde_json::from_value::<ConfigureOptions>(params.clone()) {
         Ok(mut configure_options) => {
@@ -575,38 +616,27 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
             thread::spawn(move || {
                 let now = Instant::now();
 
+                // Warn before any expansion so a slow workspace pattern cannot delay
+                // the actionable environmentDirectories diagnostic.
+                if let Some(patterns) = configure_options.environment_directories.as_deref() {
+                    warn_for_recursive_environment_patterns(patterns);
+                }
+
                 // Expand glob patterns before acquiring the write lock so we
                 // don't block readers/writers while traversing the filesystem.
                 let workspace_directories =
-                    configure_options.workspace_directories.take().map(|dirs| {
-                        let start = Instant::now();
-                        let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
-                            .into_iter()
-                            .filter(|p| p.is_dir())
-                            .collect();
-                        trace!(
-                            "Expanded workspace directory patterns ({:?}) in {:?}",
-                            dirs,
-                            start.elapsed()
-                        );
-                        result
-                    });
+                    configure_options
+                        .workspace_directories
+                        .take()
+                        .map(|patterns| {
+                            expand_configure_directory_patterns("workspaceDirectories", patterns)
+                        });
                 let environment_directories =
                     configure_options
                         .environment_directories
                         .take()
-                        .map(|dirs| {
-                            let start = Instant::now();
-                            let result: Vec<PathBuf> = expand_glob_patterns(&dirs)
-                                .into_iter()
-                                .filter(|p| p.is_dir())
-                                .collect();
-                            trace!(
-                                "Expanded environment directory patterns ({:?}) in {:?}",
-                                dirs,
-                                start.elapsed()
-                            );
-                            result
+                        .map(|patterns| {
+                            expand_configure_directory_patterns("environmentDirectories", patterns)
                         });
                 let glob_elapsed = now.elapsed();
                 trace!("Glob expansion completed in {:?}", glob_elapsed);
@@ -1412,6 +1442,42 @@ mod tests {
     use std::sync::{mpsc, Barrier, Mutex};
     use std::thread;
 
+    #[test]
+    fn recursive_environment_pattern_filter_only_returns_recursive_globs() {
+        let patterns = vec![
+            PathBuf::from(".venv"),
+            PathBuf::from("*/.venv"),
+            PathBuf::from("**/.venv"),
+            PathBuf::from("/workspace/**/venv"),
+        ];
+
+        assert_eq!(
+            recursive_environment_patterns(&patterns)
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("**/.venv"),
+                PathBuf::from("/workspace/**/venv")
+            ]
+        );
+    }
+
+    #[test]
+    fn configure_pattern_expansion_filters_non_directories() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("env");
+        let file = temp.path().join("python.exe");
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(&file, "").unwrap();
+
+        assert_eq!(
+            expand_configure_directory_patterns(
+                "environmentDirectories",
+                vec![temp.path().join("*")],
+            ),
+            vec![directory]
+        );
+    }
     #[derive(Default)]
     struct RecordingReporter {
         environments: Mutex<Vec<PythonEnvironment>>,
