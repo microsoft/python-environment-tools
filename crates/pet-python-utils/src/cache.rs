@@ -27,7 +27,7 @@ pub trait CacheEntry: Send + Sync {
     fn get(&self) -> Option<ResolvedPythonEnv>;
     fn get_for_executable(&self, executable: &Path) -> Option<ResolvedPythonEnv> {
         self.get()
-            .map(|environment| bind_environment_to_executable(environment, executable))
+            .map(|environment| add_executable_alias(environment, executable))
     }
     fn store(&self, environment: ResolvedPythonEnv);
     fn track_symlinks(&self, symlinks: Vec<PathBuf>);
@@ -147,7 +147,7 @@ fn current_dir_for_aliases(aliases: &[PathBuf]) -> Option<PathBuf> {
         .flatten()
 }
 
-fn bind_environment_to_executable(
+fn add_executable_alias(
     mut environment: ResolvedPythonEnv,
     executable: &Path,
 ) -> ResolvedPythonEnv {
@@ -156,9 +156,6 @@ fn bind_environment_to_executable(
         aliases.push(executable.to_path_buf());
         aliases.sort();
         aliases.dedup();
-    }
-    if environment.executable != executable {
-        environment.executable = executable.to_path_buf();
     }
     environment
 }
@@ -189,7 +186,7 @@ fn current_dir_for_cached_aliases_with(
         .flatten()
 }
 
-fn bind_validated_environment_to_executable(
+fn bind_validated_executable_alias(
     mut environment: ResolvedPythonEnv,
     executable: &Path,
     tracked_aliases: &[FilePathWithMTimeCTime],
@@ -214,9 +211,6 @@ fn bind_validated_environment_to_executable(
     }
     aliases.sort();
     aliases.dedup();
-    if environment.executable != executable {
-        environment.executable = executable.to_path_buf();
-    }
     environment
 }
 
@@ -306,7 +300,7 @@ impl CacheEntry for CacheEntryImpl {
         let environment = self.get()?;
         let current_dir = current_dir_for_cached_aliases(&environment, executable);
         let tracked_aliases = self.symlinks.lock().expect("symlinks mutex poisoned");
-        Some(bind_validated_environment_to_executable(
+        Some(bind_validated_executable_alias(
             environment,
             executable,
             &tracked_aliases,
@@ -429,36 +423,41 @@ mod tests {
     }
 
     #[test]
-    fn cache_hit_uses_current_alias_and_preserves_shorter_aliases() {
-        let (_temp_dir, relative, absolute) = aliases();
+    fn cache_hit_preserves_canonical_executable_and_current_aliases() {
+        let (temp_dir, relative, absolute) = aliases();
+        let canonical = temp_dir.path().join("canonical-python");
+        std::fs::write(&canonical, "python").unwrap();
         let cache = CacheImpl::new(None);
         let entry = cache.create_cache(relative.clone());
         let entry = entry.lock().unwrap();
         entry.store(environment(
-            relative.clone(),
-            vec![relative.clone(), absolute.clone()],
+            canonical.clone(),
+            vec![relative.clone(), absolute.clone(), canonical.clone()],
         ));
 
         let relative_hit = entry.get_for_executable(&relative).unwrap();
-        assert_eq!(relative_hit.executable, relative);
+        assert_eq!(relative_hit.executable, canonical);
 
         let absolute_hit = entry.get_for_executable(&absolute).unwrap();
-        assert_eq!(absolute_hit.executable, absolute);
+        assert_eq!(absolute_hit.executable, canonical);
         let hit_aliases = absolute_hit.symlinks.unwrap();
         assert!(hit_aliases.contains(&relative));
         assert!(hit_aliases.contains(&absolute));
+        assert!(hit_aliases.contains(&canonical));
     }
 
     #[test]
     fn disk_cache_reuses_relative_entry_for_absolute_alias() {
         let (temp_dir, relative, absolute) = aliases();
+        let canonical = temp_dir.path().join("canonical-python");
+        std::fs::write(&canonical, "python").unwrap();
         let cache_directory = temp_dir.path().join("cache");
         {
             let cache = CacheImpl::new(Some(cache_directory.clone()));
             let entry = cache.create_cache(relative.clone());
             entry.lock().unwrap().store(environment(
-                relative.clone(),
-                vec![relative.clone(), absolute.clone()],
+                canonical.clone(),
+                vec![relative.clone(), absolute.clone(), canonical.clone()],
             ));
         }
 
@@ -466,10 +465,11 @@ mod tests {
         let entry = cache.create_cache(absolute.clone());
         let hit = entry.lock().unwrap().get_for_executable(&absolute).unwrap();
 
-        assert_eq!(hit.executable, absolute);
+        assert_eq!(hit.executable, canonical);
         let hit_aliases = hit.symlinks.unwrap();
         assert!(hit_aliases.contains(&relative));
         assert!(hit_aliases.contains(&absolute));
+        assert!(hit_aliases.contains(&canonical));
     }
 
     #[test]
@@ -483,7 +483,7 @@ mod tests {
         )];
         let stale_working_directory = temp_dir.path().join("another-workspace");
 
-        let hit = bind_validated_environment_to_executable(
+        let hit = bind_validated_executable_alias(
             environment(absolute.clone(), vec![relative.clone(), absolute.clone()]),
             &absolute,
             &tracked_aliases,
