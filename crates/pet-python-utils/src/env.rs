@@ -41,25 +41,6 @@ pub struct ResolvedPythonEnv {
 }
 
 impl ResolvedPythonEnv {
-    pub(crate) fn for_executable_alias(mut self, executable: &Path) -> Self {
-        let alias_is_current = self.executable == executable
-            && self
-                .symlinks
-                .as_ref()
-                .is_some_and(|aliases| aliases.iter().any(|alias| alias == executable));
-        if alias_is_current {
-            return self;
-        }
-
-        let mut symlinks = self.symlinks.take().unwrap_or_default();
-        symlinks.push(executable.to_path_buf());
-        symlinks.sort();
-        symlinks.dedup();
-        self.executable = executable.to_path_buf();
-        self.symlinks = Some(symlinks);
-        self
-    }
-
     pub fn to_python_env(&self) -> PythonEnv {
         let mut env = PythonEnv::new(
             self.executable.clone(),

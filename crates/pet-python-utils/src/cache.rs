@@ -6,7 +6,7 @@ use log::{trace, warn};
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::SystemTime,
 };
@@ -25,9 +25,9 @@ lazy_static! {
 
 pub trait CacheEntry: Send + Sync {
     fn get(&self) -> Option<ResolvedPythonEnv>;
-    fn get_for_executable(&self, executable: &std::path::Path) -> Option<ResolvedPythonEnv> {
+    fn get_for_executable(&self, executable: &Path) -> Option<ResolvedPythonEnv> {
         self.get()
-            .map(|environment| environment.for_executable_alias(executable))
+            .map(|environment| bind_environment_to_executable(environment, executable))
     }
     fn store(&self, environment: ResolvedPythonEnv);
     fn track_symlinks(&self, symlinks: Vec<PathBuf>);
@@ -147,6 +147,79 @@ fn current_dir_for_aliases(aliases: &[PathBuf]) -> Option<PathBuf> {
         .flatten()
 }
 
+fn bind_environment_to_executable(
+    mut environment: ResolvedPythonEnv,
+    executable: &Path,
+) -> ResolvedPythonEnv {
+    let aliases = environment.symlinks.get_or_insert_with(Vec::new);
+    if !aliases.iter().any(|alias| alias == executable) {
+        aliases.push(executable.to_path_buf());
+        aliases.sort();
+        aliases.dedup();
+    }
+    if environment.executable != executable {
+        environment.executable = executable.to_path_buf();
+    }
+    environment
+}
+
+fn current_dir_for_cached_aliases(
+    environment: &ResolvedPythonEnv,
+    executable: &Path,
+) -> Option<PathBuf> {
+    current_dir_for_cached_aliases_with(environment, executable, std::env::current_dir)
+}
+
+fn current_dir_for_cached_aliases_with(
+    environment: &ResolvedPythonEnv,
+    executable: &Path,
+    current_dir: impl FnOnce() -> io::Result<PathBuf>,
+) -> Option<PathBuf> {
+    environment
+        .symlinks
+        .as_ref()
+        .is_some_and(|aliases| {
+            aliases
+                .iter()
+                .any(|alias| alias.is_relative() && alias != executable)
+        })
+        .then(current_dir)
+        .transpose()
+        .ok()
+        .flatten()
+}
+
+fn bind_validated_environment_to_executable(
+    mut environment: ResolvedPythonEnv,
+    executable: &Path,
+    tracked_aliases: &[FilePathWithMTimeCTime],
+    current_dir: Option<&Path>,
+) -> ResolvedPythonEnv {
+    let aliases = environment.symlinks.get_or_insert_with(Vec::new);
+    aliases.retain(|alias| {
+        if alias == executable {
+            return true;
+        }
+        if tracked_aliases.iter().any(|tracked| tracked.0 == *alias) {
+            return true;
+        }
+        if alias.is_relative() && current_dir.is_none() {
+            return false;
+        }
+        let key = executable_cache_key_from(alias, current_dir);
+        tracked_aliases.iter().any(|tracked| tracked.0 == key)
+    });
+    if !aliases.iter().any(|alias| alias == executable) {
+        aliases.push(executable.to_path_buf());
+    }
+    aliases.sort();
+    aliases.dedup();
+    if environment.executable != executable {
+        environment.executable = executable.to_path_buf();
+    }
+    environment
+}
+
 struct CacheEntryImpl {
     cache_directory: Option<PathBuf>,
     executable: PathBuf,
@@ -227,6 +300,18 @@ impl CacheEntry for CacheEntryImpl {
         } else {
             None
         }
+    }
+
+    fn get_for_executable(&self, executable: &Path) -> Option<ResolvedPythonEnv> {
+        let environment = self.get()?;
+        let current_dir = current_dir_for_cached_aliases(&environment, executable);
+        let tracked_aliases = self.symlinks.lock().expect("symlinks mutex poisoned");
+        Some(bind_validated_environment_to_executable(
+            environment,
+            executable,
+            &tracked_aliases,
+            current_dir.as_deref(),
+        ))
     }
 
     fn store(&self, environment: ResolvedPythonEnv) {
@@ -310,6 +395,7 @@ impl CacheEntry for CacheEntryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir_in;
 
     fn environment(executable: PathBuf, aliases: Vec<PathBuf>) -> ResolvedPythonEnv {
@@ -384,6 +470,44 @@ mod tests {
         let hit_aliases = hit.symlinks.unwrap();
         assert!(hit_aliases.contains(&relative));
         assert!(hit_aliases.contains(&absolute));
+    }
+
+    #[test]
+    fn stale_relative_alias_from_another_working_directory_is_dropped() {
+        let (temp_dir, relative, absolute) = aliases();
+        let metadata = absolute.metadata().unwrap();
+        let tracked_aliases = vec![(
+            absolute.clone(),
+            metadata.modified().unwrap(),
+            metadata.created().ok(),
+        )];
+        let stale_working_directory = temp_dir.path().join("another-workspace");
+
+        let hit = bind_validated_environment_to_executable(
+            environment(absolute.clone(), vec![relative.clone(), absolute.clone()]),
+            &absolute,
+            &tracked_aliases,
+            Some(&stale_working_directory),
+        );
+
+        let hit_aliases = hit.symlinks.unwrap();
+        assert!(!hit_aliases.contains(&relative));
+        assert!(hit_aliases.contains(&absolute));
+    }
+
+    #[test]
+    fn absolute_cache_hit_does_not_query_current_directory() {
+        let (_temp_dir, _relative, absolute) = aliases();
+        let current_dir_calls = AtomicUsize::new(0);
+        let environment = environment(absolute.clone(), vec![absolute.clone()]);
+
+        let current_dir = current_dir_for_cached_aliases_with(&environment, &absolute, || {
+            current_dir_calls.fetch_add(1, Ordering::Relaxed);
+            std::env::current_dir()
+        });
+
+        assert!(current_dir.is_none());
+        assert_eq!(current_dir_calls.load(Ordering::Relaxed), 0);
     }
 
     #[test]
