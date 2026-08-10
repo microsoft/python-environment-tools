@@ -401,6 +401,15 @@ impl PetClient {
             .join("\n")
     }
 
+    fn interpreter_probe_timeout_labels(&self) -> Vec<&'static str> {
+        self.stderr_tail
+            .lock()
+            .expect("PET stderr tail mutex poisoned")
+            .iter()
+            .filter_map(|line| interpreter_probe_timeout_label(line))
+            .collect()
+    }
+
     /// Configure the server
     pub fn configure(&mut self, config: Value) -> Result<Duration, String> {
         let start = Instant::now();
@@ -540,6 +549,39 @@ fn get_workspace_dir() -> PathBuf {
                 .unwrap()
                 .to_path_buf()
         })
+}
+
+fn interpreter_probe_timeout_label(line: &str) -> Option<&'static str> {
+    if !line.contains("Timed out after") || !line.contains("resolving Python via spawn") {
+        return None;
+    }
+    if line.contains("/usr/bin/python3") {
+        Some("usrBinPython3")
+    } else if line.contains("CommandLineTools") {
+        Some("commandLineTools")
+    } else if line.contains("hostedtoolcache") {
+        Some("hostedToolcache")
+    } else if line.contains("/Library/Frameworks/Python.framework") {
+        Some("pythonOrgFramework")
+    } else if line.contains("/usr/local/bin") {
+        Some("usrLocalBin")
+    } else {
+        Some("other")
+    }
+}
+
+#[test]
+fn interpreter_probe_timeouts_are_classified_without_exposing_paths() {
+    assert_eq!(
+        interpreter_probe_timeout_label(
+            r#"Timed out after 15s resolving Python via spawn for "/usr/bin/python3"; killing child."#
+        ),
+        Some("usrBinPython3")
+    );
+    assert_eq!(
+        interpreter_probe_timeout_label("ordinary PET warning"),
+        None
+    );
 }
 
 fn read_jsonrpc_message(reader: &mut impl BufRead) -> Result<Value, String> {
@@ -1212,6 +1254,7 @@ fn test_performance_summary() {
     let mut time_to_first_env_stats = StatisticalMetrics::new();
     let mut phase_stats = BTreeMap::new();
     let mut locator_stats = BTreeMap::new();
+    let mut probe_timeout_counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut env_count = 0usize;
     let mut manager_count = 0usize;
 
@@ -1254,6 +1297,15 @@ fn test_performance_summary() {
             &mut phase_stats,
             &mut locator_stats,
         );
+        let timeout_labels = client.interpreter_probe_timeout_labels();
+        for label in &timeout_labels {
+            *probe_timeout_counts
+                .entry((*label).to_string())
+                .or_default() += 1;
+        }
+        if !timeout_labels.is_empty() {
+            println!("    Interpreter probe timeouts: {timeout_labels:?}");
+        }
 
         println!(
             "  Iteration {}: startup={}ms, refresh={}ms, envs={}",
@@ -1315,7 +1367,8 @@ fn test_performance_summary() {
             "time_to_first_env": time_to_first_env_stats.to_json()
         },
         "phases": phase_json,
-        "locators": locator_json
+        "locators": locator_json,
+        "interpreter_probe_timeouts": probe_timeout_counts
     }))
     .unwrap();
 
