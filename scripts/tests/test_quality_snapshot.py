@@ -11,10 +11,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from quality_snapshot import (  # noqa: E402
+    PERFORMANCE_BUDGETS,
     SnapshotError,
     compare_coverage,
     compare_performance,
     load_json,
+    performance_specs,
     run_coverage,
     run_performance,
 )
@@ -81,6 +83,15 @@ class PerformanceSnapshotTests(unittest.TestCase):
         self.assertEqual(windows_failures, [])
         self.assertTrue(any('Full refresh P50' in failure for failure in linux_failures))
 
+    def test_budget_metric_mismatch_is_invalid(self):
+        original = PERFORMANCE_BUDGETS['windows']
+        PERFORMANCE_BUDGETS['windows'] = original[:-1]
+        try:
+            with self.assertRaisesRegex(SnapshotError, 'does not match metric count'):
+                performance_specs('Windows')
+        finally:
+            PERFORMANCE_BUDGETS['windows'] = original
+
     def test_unknown_platform_is_invalid(self):
         with self.assertRaises(SnapshotError):
             compare_performance(performance_snapshot(), performance_snapshot(), 'unknown')
@@ -141,6 +152,15 @@ class CoverageSnapshotTests(unittest.TestCase):
             current.write_text('SF:example.rs\nend_of_record\n', encoding='utf-8')
             write_lcov(baseline, lines_hit=1, lines_found=1, functions_hit=1, functions_found=1)
             with self.assertRaises(SnapshotError):
+                compare_coverage(current, baseline)
+
+    def test_negative_lcov_count_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            current = Path(directory) / 'current.info'
+            baseline = Path(directory) / 'baseline.info'
+            current.write_text('SF:example.rs\nLF:-1\nLH:-1\nFNF:1\nFNH:1\n', encoding='utf-8')
+            write_lcov(baseline, lines_hit=1, lines_found=1, functions_hit=1, functions_found=1)
+            with self.assertRaisesRegex(SnapshotError, 'negative summary counts'):
                 compare_coverage(current, baseline)
 
     def test_malformed_lcov_count_is_rejected(self):

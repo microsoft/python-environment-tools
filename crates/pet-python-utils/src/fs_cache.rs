@@ -6,8 +6,9 @@ use pet_fs::path::norm_case;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    env,
     fs::{self, File},
-    io::BufReader,
+    io::{self, BufReader},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -27,34 +28,28 @@ struct CacheEntry {
     pub symlinks: Vec<FilePathWithMTimeCTime>,
 }
 
-pub fn generate_cache_file(cache_directory: &Path, executable: &PathBuf) -> PathBuf {
-    // Version 4: Changed ctime from required to optional for Linux compatibility
-    // See: https://github.com/microsoft/python-environment-tools/issues/223
-    cache_directory.join(format!("{}.4.json", generate_hash(executable)))
+pub fn generate_cache_file(cache_directory: &Path, executable: &Path) -> PathBuf {
+    // Version 5: Relative and absolute aliases share an absolute cache identity.
+    cache_directory.join(format!("{}.5.json", generate_hash(executable)))
 }
 
-pub fn delete_cache_file(cache_directory: &Path, executable: &PathBuf) {
+pub fn delete_cache_file(cache_directory: &Path, executable: &Path) {
     let cache_file = generate_cache_file(cache_directory, executable);
     let _ = fs::remove_file(cache_file);
 }
 
 pub fn get_cache_from_file(
     cache_directory: &Path,
-    executable: &PathBuf,
+    executable: &Path,
 ) -> Option<(ResolvedPythonEnv, Vec<FilePathWithMTimeCTime>)> {
     let cache_file = generate_cache_file(cache_directory, executable);
     let file = File::open(cache_file.clone()).ok()?;
     let reader = BufReader::new(file);
     let cache: CacheEntry = serde_json::from_reader(reader).ok()?;
-    // Account for conflicts in the cache file
-    // i.e. the hash generated is same for another file, remember we only take the first 16 chars.
-    if !cache
-        .environment
-        .clone()
-        .symlinks
-        .unwrap_or_default()
-        .contains(executable)
-    {
+    let cache_key = executable_cache_key(executable);
+    // Account for conflicts in the cache file. The tracked paths are stored as
+    // absolute identities, so this remains valid when the caller uses a relative alias.
+    if !cache.symlinks.iter().any(|symlink| symlink.0 == cache_key) {
         trace!(
             "Cache file {:?} {:?}, does not match executable {:?} (possible hash collision)",
             cache_file,
@@ -91,7 +86,7 @@ pub fn get_cache_from_file(
 
 pub fn store_cache_in_file(
     cache_directory: &Path,
-    executable: &PathBuf,
+    executable: &Path,
     environment: &ResolvedPythonEnv,
     symlinks_with_times: Vec<FilePathWithMTimeCTime>,
 ) {
@@ -120,18 +115,48 @@ pub fn store_cache_in_file(
     }
 }
 
-fn generate_hash(executable: &PathBuf) -> String {
+fn generate_hash(executable: &Path) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(norm_case(executable).to_string_lossy().as_bytes());
+    hasher.update(
+        executable_cache_key(executable)
+            .to_string_lossy()
+            .as_bytes(),
+    );
     let h_bytes = hasher.finalize();
     // Convert 256 bits => Hext and then take 16 of the hex chars (that should be unique enough)
     // We will handle collisions if they happen.
     format!("{h_bytes:x}")[..16].to_string()
 }
 
+pub(crate) fn executable_cache_key(executable: &Path) -> PathBuf {
+    executable_cache_key_with(executable, env::current_dir)
+}
+
+pub(crate) fn executable_cache_key_from(executable: &Path, current_dir: Option<&Path>) -> PathBuf {
+    if executable.is_absolute() {
+        norm_case(executable)
+    } else if let Some(current_dir) = current_dir {
+        norm_case(current_dir.join(executable))
+    } else {
+        norm_case(executable)
+    }
+}
+
+fn executable_cache_key_with(
+    executable: &Path,
+    current_dir: impl FnOnce() -> io::Result<PathBuf>,
+) -> PathBuf {
+    if executable.is_absolute() {
+        executable_cache_key_from(executable, None)
+    } else {
+        executable_cache_key_from(executable, current_dir().ok().as_deref())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     #[cfg(unix)]
@@ -163,6 +188,36 @@ mod tests {
                 "C:\\temp\\poetry-folders\\demo-project1".to_string(),
             )),
             "c3694bfb39d7065b"
+        );
+    }
+
+    #[test]
+    fn absolute_cache_key_does_not_query_current_directory() {
+        let current_dir_calls = AtomicUsize::new(0);
+        let absolute = std::env::current_dir().unwrap().join("python");
+
+        let key = executable_cache_key_with(&absolute, || {
+            current_dir_calls.fetch_add(1, Ordering::Relaxed);
+            std::env::current_dir()
+        });
+
+        assert_eq!(key, norm_case(&absolute));
+        assert_eq!(current_dir_calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn relative_and_absolute_aliases_share_cache_file() {
+        let current_dir = std::env::current_dir().unwrap();
+        let relative = PathBuf::from("workspace")
+            .join(".venv")
+            .join("bin")
+            .join("python");
+        let absolute = current_dir.join(&relative);
+        let cache_directory = current_dir.join("cache");
+
+        assert_eq!(
+            generate_cache_file(&cache_directory, &relative),
+            generate_cache_file(&cache_directory, &absolute)
         );
     }
 }
