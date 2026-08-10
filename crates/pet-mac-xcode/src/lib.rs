@@ -9,6 +9,9 @@ use pet_core::{
     Locator, LocatorKind,
 };
 use pet_fs::path::resolve_symlink;
+use pet_python_utils::macos::{
+    add_macos_system_python_alias, is_macos_system_python, resolve_macos_system_python_env,
+};
 use pet_python_utils::version;
 use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executables};
 use pet_virtualenv::is_virtualenv;
@@ -38,6 +41,13 @@ impl Locator for MacXCode {
         if std::env::consts::OS != "macos" {
             return None;
         }
+
+        let resolved_system_alias = if is_macos_system_python(&env.executable) {
+            Some(resolve_macos_system_python_env(env)?)
+        } else {
+            None
+        };
+        let env = resolved_system_alias.as_ref().unwrap_or(env);
         // Assume we create a virtual env from a python install,
         // Then the exe in the virtual env bin will be a symlink to the homebrew python install.
         // Hence the first part of the condition will be true, but the second part will be false.
@@ -98,28 +108,6 @@ impl Locator for MacXCode {
 
         let mut resolved_environments = vec![];
 
-        // We know /usr/bin/python3 can end up pointing to this same Python exe as well
-        // Hence look for those symlinks as well.
-        // Unfortunately /usr/bin/python3 is not a real symlink
-        // Hence we must spawn and verify it points to the same Python exe.
-        for possible_exes in [PathBuf::from("/usr/bin/python3")] {
-            if !symlinks.contains(&possible_exes) {
-                if let Some(resolved_env) = ResolvedPythonEnv::from(&possible_exes) {
-                    if symlinks.contains(&resolved_env.executable) {
-                        resolved_environments.push(resolved_env.clone());
-                        symlinks.push(possible_exes);
-                        // Use the latest accurate information we have.
-                        version = Some(resolved_env.version);
-                        prefix = Some(resolved_env.prefix);
-                        arch = if resolved_env.is64_bit {
-                            Some(Architecture::X64)
-                        } else {
-                            Some(Architecture::X86)
-                        };
-                    }
-                }
-            }
-        }
         // Similarly the final exe can be /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9
         // & we might have another file `python3` in that bin directory which would point to the same exe.
         // Lets get those as well.
@@ -137,6 +125,7 @@ impl Locator for MacXCode {
             }
         }
 
+        add_macos_system_python_alias(&mut symlinks);
         symlinks.sort();
         symlinks.dedup();
 

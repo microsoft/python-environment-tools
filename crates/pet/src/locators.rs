@@ -20,11 +20,12 @@ use pet_pixi::Pixi;
 use pet_poetry::Poetry;
 use pet_pyenv::PyEnv;
 use pet_python_utils::env::ResolvedPythonEnv;
+use pet_python_utils::macos::is_macos_system_python;
 use pet_uv::Uv;
 use pet_venv::Venv;
 use pet_virtualenv::VirtualEnv;
 use pet_virtualenvwrapper::VirtualEnvWrapper;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info_span, instrument};
 
@@ -138,7 +139,9 @@ pub fn identify_python_environment_using_locators(
     // We try to get the interpreter info, hoping that the real exe returned might be identifiable.
     let _resolve_span =
         info_span!("resolve_python_env", executable = %executable.display()).entered();
-    if let Some(resolved_env) = ResolvedPythonEnv::from(&executable) {
+    if let Some(resolved_env) =
+        resolve_interpreter_if_allowed(&executable, std::env::consts::OS, ResolvedPythonEnv::from)
+    {
         let env = resolved_env.to_python_env();
         if let Some(env) = locators.iter().find_map(|loc| loc.try_from(&env)) {
             trace!("Env ({:?}) in Path resolved as {:?}", executable, env.kind);
@@ -173,6 +176,22 @@ pub fn identify_python_environment_using_locators(
         }
     }
     None
+}
+
+fn resolve_interpreter_if_allowed(
+    executable: &Path,
+    operating_system: &str,
+    resolve_interpreter: impl Fn(&Path) -> Option<ResolvedPythonEnv>,
+) -> Option<ResolvedPythonEnv> {
+    if operating_system == "macos" && is_macos_system_python(executable) {
+        trace!(
+            "Skipping unresolved macOS system Python shim without spawning: {:?}",
+            executable
+        );
+        None
+    } else {
+        resolve_interpreter(executable)
+    }
 }
 
 fn create_unknown_env(
@@ -242,4 +261,34 @@ fn find_symlinks(_executable: &PathBuf) -> Option<Vec<PathBuf>> {
     // In windows we will need to spawn the Python exe and then get the exes.
     // Lets wait and see if this is necessary.
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn unresolved_macos_system_python_does_not_spawn() {
+        let calls = Cell::new(0);
+        let result = resolve_interpreter_if_allowed(Path::new("/usr/bin/python3"), "macos", |_| {
+            calls.set(calls.get() + 1);
+            None
+        });
+
+        assert!(result.is_none());
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn unresolved_non_macos_python_still_uses_fallback_resolver() {
+        let calls = Cell::new(0);
+        let result = resolve_interpreter_if_allowed(Path::new("/usr/bin/python3"), "linux", |_| {
+            calls.set(calls.get() + 1);
+            None
+        });
+
+        assert!(result.is_none());
+        assert_eq!(calls.get(), 1);
+    }
 }
