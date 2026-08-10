@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -203,15 +203,17 @@ struct SharedState {
     environments: Mutex<Vec<Environment>>,
     managers: Mutex<Vec<Manager>>,
     refresh_progress: Mutex<Vec<RefreshProgress>>,
+    capture_refresh_progress: bool,
     first_env_time: Mutex<Option<Instant>>,
 }
 
 impl SharedState {
-    fn new() -> Self {
+    fn new(capture_refresh_progress: bool) -> Self {
         Self {
             environments: Mutex::new(Vec::new()),
             managers: Mutex::new(Vec::new()),
             refresh_progress: Mutex::new(Vec::new()),
+            capture_refresh_progress,
             first_env_time: Mutex::new(None),
         }
     }
@@ -236,7 +238,7 @@ impl SharedState {
                     self.managers.lock().unwrap().push(mgr);
                 }
             }
-            "telemetry" => {
+            "telemetry" if self.capture_refresh_progress => {
                 if params.get("event").and_then(Value::as_str) == Some("RefreshProgress") {
                     if let Some(progress) = params
                         .get("data")
@@ -284,6 +286,14 @@ pub struct PetClient {
 impl PetClient {
     /// Spawn the pet server and create a client
     pub fn spawn() -> Result<Self, String> {
+        Self::spawn_with_options(false)
+    }
+
+    fn spawn_with_refresh_progress() -> Result<Self, String> {
+        Self::spawn_with_options(true)
+    }
+
+    fn spawn_with_options(capture_refresh_progress: bool) -> Result<Self, String> {
         let pet_exe = get_pet_executable();
 
         if !pet_exe.exists() {
@@ -323,7 +333,7 @@ impl PetClient {
             stdout: BufReader::new(stdout),
             stderr_tail,
             stderr_handle: Some(stderr_handle),
-            state: Arc::new(SharedState::new()),
+            state: Arc::new(SharedState::new(capture_refresh_progress)),
             start_time,
         })
     }
@@ -706,26 +716,80 @@ fn statistics_json(statistics: &BTreeMap<String, StatisticalMetrics>) -> BTreeMa
         .collect()
 }
 
-#[test]
-fn refresh_progress_notifications_are_collected() {
-    let state = SharedState::new();
-    state.handle_notification(
-        "telemetry",
-        json!({
-            "event": "RefreshProgress",
-            "data": {
-                "refreshProgress": {
-                    "refreshId": 7,
-                    "phase": "locators",
-                    "status": "completed",
-                    "elapsedMs": 25,
-                    "locatorName": "Conda",
-                    "locatorElapsedMs": 20
-                }
-            }
-        }),
-    );
+fn record_interpreter_probe_timeouts(
+    client: &PetClient,
+    probe_timeout_counts: &mut BTreeMap<String, usize>,
+) {
+    let timeout_labels = client.interpreter_probe_timeout_labels();
+    for label in &timeout_labels {
+        *probe_timeout_counts
+            .entry((*label).to_string())
+            .or_default() += 1;
+    }
+    if !timeout_labels.is_empty() {
+        println!("    Interpreter probe timeouts: {timeout_labels:?}");
+    }
+}
 
+fn collect_refresh_diagnostics(
+    workspace_dir: &Path,
+    cache_dir: &Path,
+    phase_stats: &mut BTreeMap<String, StatisticalMetrics>,
+    locator_stats: &mut BTreeMap<String, StatisticalMetrics>,
+    probe_timeout_counts: &mut BTreeMap<String, usize>,
+) {
+    let diagnostic_cache_dir = cache_dir.join("refresh-progress");
+    let _ = std::fs::remove_dir_all(&diagnostic_cache_dir);
+    std::fs::create_dir_all(&diagnostic_cache_dir)
+        .expect("Failed to create refresh diagnostic cache dir");
+
+    println!("\nCollecting untimed refresh diagnostics...");
+    for iteration in 0..STAT_ITERATIONS {
+        let mut client =
+            PetClient::spawn_with_refresh_progress().expect("Failed to spawn diagnostic server");
+        client
+            .configure(json!({
+                "workspaceDirectories": [workspace_dir],
+                "cacheDirectory": diagnostic_cache_dir
+            }))
+            .expect("Failed to configure diagnostic server");
+        let (result, _) = client
+            .refresh(None)
+            .expect("Failed to run diagnostic refresh");
+
+        collect_refresh_progress(&client.get_refresh_progress(), phase_stats, locator_stats);
+        record_interpreter_probe_timeouts(&client, probe_timeout_counts);
+        println!(
+            "  Diagnostic iteration {}: refresh={}ms, envs={}",
+            iteration + 1,
+            result.duration,
+            client.get_environments().len()
+        );
+    }
+}
+
+#[test]
+fn refresh_progress_notifications_are_collected_only_when_enabled() {
+    let notification = json!({
+        "event": "RefreshProgress",
+        "data": {
+            "refreshProgress": {
+                "refreshId": 7,
+                "phase": "locators",
+                "status": "completed",
+                "elapsedMs": 25,
+                "locatorName": "Conda",
+                "locatorElapsedMs": 20
+            }
+        }
+    });
+
+    let disabled_state = SharedState::new(false);
+    disabled_state.handle_notification("telemetry", notification.clone());
+    assert!(disabled_state.refresh_progress.lock().unwrap().is_empty());
+
+    let state = SharedState::new(true);
+    state.handle_notification("telemetry", notification);
     let progress = state.refresh_progress.lock().unwrap();
     assert_eq!(progress.len(), 1);
     assert_eq!(progress[0].locator_name.as_deref(), Some("Conda"));
@@ -1255,8 +1319,7 @@ fn test_performance_summary() {
     let mut phase_stats = BTreeMap::new();
     let mut locator_stats = BTreeMap::new();
     let mut probe_timeout_counts: BTreeMap<String, usize> = BTreeMap::new();
-    let mut env_count = 0usize;
-    let mut manager_count = 0usize;
+    let mut expected_inventory = None;
 
     let cache_dir = get_test_cache_dir();
     let _ = std::fs::remove_dir_all(&cache_dir);
@@ -1286,35 +1349,39 @@ fn test_performance_summary() {
         let (result, _) = client.refresh(None).expect("Failed to refresh");
         refresh_stats.add(result.duration);
 
-        env_count = client.get_environments().len();
-        manager_count = client.get_managers().len();
+        let inventory = (client.get_environments().len(), client.get_managers().len());
+        if let Some(expected) = expected_inventory {
+            assert_eq!(
+                inventory, expected,
+                "Environment and manager inventory changed after iteration 1"
+            );
+        } else {
+            expected_inventory = Some(inventory);
+        }
 
         if let Some(ttfe) = client.time_to_first_env() {
             time_to_first_env_stats.add(ttfe.as_millis());
         }
-        collect_refresh_progress(
-            &client.get_refresh_progress(),
-            &mut phase_stats,
-            &mut locator_stats,
-        );
-        let timeout_labels = client.interpreter_probe_timeout_labels();
-        for label in &timeout_labels {
-            *probe_timeout_counts
-                .entry((*label).to_string())
-                .or_default() += 1;
-        }
-        if !timeout_labels.is_empty() {
-            println!("    Interpreter probe timeouts: {timeout_labels:?}");
-        }
+        record_interpreter_probe_timeouts(&client, &mut probe_timeout_counts);
 
         println!(
             "  Iteration {}: startup={}ms, refresh={}ms, envs={}",
             i + 1,
             startup_time,
             result.duration,
-            env_count
+            inventory.0
         );
     }
+
+    let (env_count, manager_count) =
+        expected_inventory.expect("Performance summary must run at least one iteration");
+    collect_refresh_diagnostics(
+        &workspace_dir,
+        &cache_dir,
+        &mut phase_stats,
+        &mut locator_stats,
+        &mut probe_timeout_counts,
+    );
 
     for phase in ["locators", "path", "globalVirtualEnvs", "workspaces"] {
         let count = phase_stats

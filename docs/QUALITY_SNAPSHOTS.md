@@ -46,7 +46,8 @@ cargo test --release --features ci-perf --test e2e_performance test_performance_
 ```
 
 The E2E client keeps one buffered stdout reader for the process lifetime and continuously drains a bounded stderr tail so protocol read-ahead and pipe backpressure cannot distort measurements.
+Phase and locator telemetry is collected in separate, untimed refreshes so diagnostic processing cannot backpressure the timed JSON-RPC refreshes.
 
 ## Known investigations
 
-The persistent macOS cold-refresh tail is tracked by issue #504. Existing tail latency is represented in the baseline, but any further regression is still gated.
+The macOS cold-refresh tail is tracked by issue #504. Phase and locator distributions plus privacy-safe interpreter timeout counts verify that the tail does not recur.
