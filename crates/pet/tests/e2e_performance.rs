@@ -6,9 +6,12 @@
 //! These tests spawn the pet server as a subprocess and communicate via JSONRPC
 //! to measure discovery performance from a client perspective.
 
+use pet_core::telemetry::refresh_progress::{
+    RefreshProgress, RefreshProgressPhase, RefreshProgressStatus,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
@@ -199,6 +202,7 @@ pub struct Manager {
 struct SharedState {
     environments: Mutex<Vec<Environment>>,
     managers: Mutex<Vec<Manager>>,
+    refresh_progress: Mutex<Vec<RefreshProgress>>,
     first_env_time: Mutex<Option<Instant>>,
 }
 
@@ -207,6 +211,7 @@ impl SharedState {
         Self {
             environments: Mutex::new(Vec::new()),
             managers: Mutex::new(Vec::new()),
+            refresh_progress: Mutex::new(Vec::new()),
             first_env_time: Mutex::new(None),
         }
     }
@@ -231,9 +236,23 @@ impl SharedState {
                     self.managers.lock().unwrap().push(mgr);
                 }
             }
-            "log" | "telemetry" => {
-                // Ignore log and telemetry notifications
+            "telemetry" => {
+                if params.get("event").and_then(Value::as_str) == Some("RefreshProgress") {
+                    if let Some(progress) = params
+                        .get("data")
+                        .and_then(|data| data.get("refreshProgress"))
+                        .and_then(|value| {
+                            serde_json::from_value::<RefreshProgress>(value.clone()).ok()
+                        })
+                    {
+                        self.refresh_progress
+                            .lock()
+                            .expect("refresh progress mutex poisoned")
+                            .push(progress);
+                    }
+                }
             }
+            "log" => {}
             _ => {
                 // Unknown notification
             }
@@ -243,6 +262,10 @@ impl SharedState {
     fn clear(&self) {
         self.environments.lock().unwrap().clear();
         self.managers.lock().unwrap().clear();
+        self.refresh_progress
+            .lock()
+            .expect("refresh progress mutex poisoned")
+            .clear();
         *self.first_env_time.lock().unwrap() = None;
     }
 }
@@ -415,6 +438,14 @@ impl PetClient {
     /// Get collected managers
     pub fn get_managers(&self) -> Vec<Manager> {
         self.state.managers.lock().unwrap().clone()
+    }
+
+    fn get_refresh_progress(&self) -> Vec<RefreshProgress> {
+        self.state
+            .refresh_progress
+            .lock()
+            .expect("refresh progress mutex poisoned")
+            .clone()
     }
 
     /// Get time from start to first environment
@@ -592,6 +623,102 @@ fn stderr_reader_drains_input_and_bounds_diagnostic_tail() {
     assert_eq!(tail.len(), STDERR_TAIL_LINES);
     assert_eq!(tail.front().map(String::as_str), Some("line 5"));
     assert_eq!(tail.back().map(String::as_str), Some("line 104"));
+}
+
+fn refresh_phase_name(phase: RefreshProgressPhase) -> &'static str {
+    match phase {
+        RefreshProgressPhase::Locators => "locators",
+        RefreshProgressPhase::Path => "path",
+        RefreshProgressPhase::GlobalVirtualEnvs => "globalVirtualEnvs",
+        RefreshProgressPhase::Workspaces => "workspaces",
+    }
+}
+
+fn collect_refresh_progress(
+    progress: &[RefreshProgress],
+    phase_stats: &mut BTreeMap<String, StatisticalMetrics>,
+    locator_stats: &mut BTreeMap<String, StatisticalMetrics>,
+) {
+    for event in progress
+        .iter()
+        .filter(|event| event.status == RefreshProgressStatus::Completed)
+    {
+        if let (Some(locator), Some(duration)) = (&event.locator_name, event.locator_elapsed_ms) {
+            locator_stats
+                .entry(locator.clone())
+                .or_default()
+                .add(duration);
+        } else if let Some(duration) = event.phase_elapsed_ms {
+            phase_stats
+                .entry(refresh_phase_name(event.phase).to_string())
+                .or_default()
+                .add(duration);
+        }
+    }
+}
+
+fn statistics_json(statistics: &BTreeMap<String, StatisticalMetrics>) -> BTreeMap<String, Value> {
+    statistics
+        .iter()
+        .map(|(name, metrics)| (name.clone(), metrics.to_json()))
+        .collect()
+}
+
+#[test]
+fn refresh_progress_notifications_are_collected() {
+    let state = SharedState::new();
+    state.handle_notification(
+        "telemetry",
+        json!({
+            "event": "RefreshProgress",
+            "data": {
+                "refreshProgress": {
+                    "refreshId": 7,
+                    "phase": "locators",
+                    "status": "completed",
+                    "elapsedMs": 25,
+                    "locatorName": "Conda",
+                    "locatorElapsedMs": 20
+                }
+            }
+        }),
+    );
+
+    let progress = state.refresh_progress.lock().unwrap();
+    assert_eq!(progress.len(), 1);
+    assert_eq!(progress[0].locator_name.as_deref(), Some("Conda"));
+    assert_eq!(progress[0].locator_elapsed_ms, Some(20));
+}
+
+#[test]
+fn refresh_progress_aggregation_separates_phases_and_locators() {
+    let progress = vec![
+        RefreshProgress {
+            refresh_id: 1,
+            phase: RefreshProgressPhase::Locators,
+            status: RefreshProgressStatus::Completed,
+            elapsed_ms: 30,
+            phase_elapsed_ms: Some(30),
+            locator_name: None,
+            locator_elapsed_ms: None,
+        },
+        RefreshProgress {
+            refresh_id: 1,
+            phase: RefreshProgressPhase::Locators,
+            status: RefreshProgressStatus::Completed,
+            elapsed_ms: 25,
+            phase_elapsed_ms: None,
+            locator_name: Some("Conda".to_string()),
+            locator_elapsed_ms: Some(20),
+        },
+    ];
+    let mut phases = BTreeMap::new();
+    let mut locators = BTreeMap::new();
+
+    collect_refresh_progress(&progress, &mut phases, &mut locators);
+
+    assert_eq!(phases["locators"].samples, vec![30]);
+    assert_eq!(locators["Conda"].samples, vec![20]);
 }
 
 // ============================================================================
@@ -1083,6 +1210,8 @@ fn test_performance_summary() {
     let mut startup_stats = StatisticalMetrics::new();
     let mut refresh_stats = StatisticalMetrics::new();
     let mut time_to_first_env_stats = StatisticalMetrics::new();
+    let mut phase_stats = BTreeMap::new();
+    let mut locator_stats = BTreeMap::new();
     let mut env_count = 0usize;
     let mut manager_count = 0usize;
 
@@ -1120,6 +1249,11 @@ fn test_performance_summary() {
         if let Some(ttfe) = client.time_to_first_env() {
             time_to_first_env_stats.add(ttfe.as_millis());
         }
+        collect_refresh_progress(
+            &client.get_refresh_progress(),
+            &mut phase_stats,
+            &mut locator_stats,
+        );
 
         println!(
             "  Iteration {}: startup={}ms, refresh={}ms, envs={}",
@@ -1130,6 +1264,21 @@ fn test_performance_summary() {
         );
     }
 
+    for phase in ["locators", "path", "globalVirtualEnvs", "workspaces"] {
+        let count = phase_stats
+            .get(phase)
+            .map(StatisticalMetrics::count)
+            .unwrap_or_default();
+        assert_eq!(
+            count, STAT_ITERATIONS,
+            "Expected one completed {phase} phase per refresh iteration"
+        );
+    }
+    assert!(
+        !locator_stats.is_empty(),
+        "Expected per-locator timing in RefreshProgress telemetry"
+    );
+
     // Print statistical summary
     println!("\n----------------------------------------");
     println!("             STATISTICS                 ");
@@ -1139,9 +1288,18 @@ fn test_performance_summary() {
     if time_to_first_env_stats.count() > 0 {
         time_to_first_env_stats.print_summary("Time to first env");
     }
+    for (phase, metrics) in &phase_stats {
+        metrics.print_summary(&format!("Phase {phase}"));
+    }
+    for (locator, metrics) in &locator_stats {
+        metrics.print_summary(&format!("Locator {locator}"));
+    }
     println!("Environments found:    {}", env_count);
     println!("Managers found:        {}", manager_count);
     println!("========================================\n");
+
+    let phase_json = statistics_json(&phase_stats);
+    let locator_json = statistics_json(&locator_stats);
 
     // Output as JSON for CI parsing
     // Includes both P50 values at top level (for backwards compatibility) and full stats
@@ -1155,7 +1313,9 @@ fn test_performance_summary() {
             "server_startup": startup_stats.to_json(),
             "full_refresh": refresh_stats.to_json(),
             "time_to_first_env": time_to_first_env_stats.to_json()
-        }
+        },
+        "phases": phase_json,
+        "locators": locator_json
     }))
     .unwrap();
 
