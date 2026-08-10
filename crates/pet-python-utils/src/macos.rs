@@ -141,6 +141,15 @@ mod tests {
     }
 
     #[test]
+    fn public_resolvers_reject_non_system_python() {
+        let executable = Path::new("/usr/local/bin/python3");
+        assert!(resolve_macos_system_python(executable).is_none());
+
+        let env = PythonEnv::new(executable.to_path_buf(), None, None);
+        assert!(resolve_macos_system_python_env(&env).is_none());
+    }
+
+    #[test]
     fn developer_dir_prefers_environment_and_normalizes_app_bundle() {
         let selected = active_developer_dir_with(
             Some(PathBuf::from("/Applications/Xcode_16.app")),
