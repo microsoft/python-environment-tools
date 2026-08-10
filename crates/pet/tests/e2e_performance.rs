@@ -8,13 +8,14 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 mod common;
@@ -24,6 +25,7 @@ static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 
 /// Number of iterations for statistical tests
 const STAT_ITERATIONS: usize = 10;
+const STDERR_TAIL_LINES: usize = 100;
 
 /// Statistical metrics with percentile calculations
 #[derive(Debug, Clone, Default)]
@@ -248,6 +250,10 @@ impl SharedState {
 /// JSONRPC client for communicating with the pet server
 pub struct PetClient {
     process: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    stderr_handle: Option<JoinHandle<()>>,
     state: Arc<SharedState>,
     start_time: Instant,
 }
@@ -266,16 +272,34 @@ impl PetClient {
 
         let start_time = Instant::now();
 
-        let process = Command::new(&pet_exe)
+        let mut process = Command::new(&pet_exe)
             .arg("server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("Failed to spawn pet server: {}", e))?;
+        let stdin = process
+            .stdin
+            .take()
+            .expect("PET stdin must be piped by the command above");
+        let stdout = process
+            .stdout
+            .take()
+            .expect("PET stdout must be piped by the command above");
+        let stderr = process
+            .stderr
+            .take()
+            .expect("PET stderr must be piped by the command above");
+        let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
+        let stderr_handle = spawn_stderr_reader(stderr, stderr_tail.clone());
 
         Ok(Self {
             process,
+            stdin,
+            stdout: BufReader::new(stdout),
+            stderr_tail,
+            stderr_handle: Some(stderr_handle),
             state: Arc::new(SharedState::new()),
             start_time,
         })
@@ -299,11 +323,10 @@ impl PetClient {
 
         // Write request
         {
-            let stdin = self.process.stdin.as_mut().ok_or("Failed to get stdin")?;
-            stdin
+            self.stdin
                 .write_all(message.as_bytes())
                 .map_err(|e| format!("Failed to write request: {}", e))?;
-            stdin
+            self.stdin
                 .flush()
                 .map_err(|e| format!("Failed to flush stdin: {}", e))?;
         }
@@ -311,46 +334,17 @@ impl PetClient {
         // Clone state reference for use in the loop
         let state = self.state.clone();
 
-        // Read response - handle notifications until we get our response
-        let stdout = self.process.stdout.as_mut().ok_or("Failed to get stdout")?;
-        let mut reader = BufReader::new(stdout);
-
+        // Read response - handle notifications until we get our response.
+        // The reader lives for the process lifetime so read-ahead bytes are never discarded.
         loop {
-            // Read headers until empty line
-            let mut content_length: Option<usize> = None;
-            loop {
-                let mut header_line = String::new();
-                reader
-                    .read_line(&mut header_line)
-                    .map_err(|e| format!("Failed to read header: {}", e))?;
-
-                let trimmed = header_line.trim();
-                if trimmed.is_empty() {
-                    // End of headers
-                    break;
+            let value = read_jsonrpc_message(&mut self.stdout).map_err(|error| {
+                let stderr = self.stderr_output();
+                if stderr.is_empty() {
+                    error
+                } else {
+                    format!("{error}; PET stderr tail:\n{stderr}")
                 }
-
-                if let Some(len_str) = trimmed.strip_prefix("Content-Length: ") {
-                    content_length = Some(
-                        len_str
-                            .parse()
-                            .map_err(|e| format!("Failed to parse content length: {}", e))?,
-                    );
-                }
-                // Ignore Content-Type and other headers
-            }
-
-            let content_length = content_length.ok_or("Missing Content-Length header")?;
-
-            // Read body
-            let mut body = vec![0u8; content_length];
-            reader
-                .read_exact(&mut body)
-                .map_err(|e| format!("Failed to read body: {}", e))?;
-
-            let body_str = String::from_utf8_lossy(&body);
-            let value: Value = serde_json::from_str(&body_str)
-                .map_err(|e| format!("Failed to parse response: {}", e))?;
+            })?;
 
             // Check if this is a notification or our response
             if let Some(notif_method) = value.get("method").and_then(|m| m.as_str()) {
@@ -372,6 +366,16 @@ impl PetClient {
                 }
             }
         }
+    }
+
+    fn stderr_output(&self) -> String {
+        self.stderr_tail
+            .lock()
+            .expect("PET stderr tail mutex poisoned")
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Configure the server
@@ -433,6 +437,9 @@ impl Drop for PetClient {
     fn drop(&mut self) {
         let _ = self.process.kill();
         let _ = self.process.wait();
+        if let Some(stderr_handle) = self.stderr_handle.take() {
+            let _ = stderr_handle.join();
+        }
     }
 }
 
@@ -502,6 +509,89 @@ fn get_workspace_dir() -> PathBuf {
                 .unwrap()
                 .to_path_buf()
         })
+}
+
+fn read_jsonrpc_message(reader: &mut impl BufRead) -> Result<Value, String> {
+    let mut content_length = None;
+    loop {
+        let mut header_line = String::new();
+        let bytes_read = reader
+            .read_line(&mut header_line)
+            .map_err(|error| format!("Failed to read header: {error}"))?;
+        if bytes_read == 0 {
+            return Err("PET stdout closed while reading a JSONRPC header".to_string());
+        }
+
+        let trimmed = header_line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(length) = trimmed.strip_prefix("Content-Length: ") {
+            content_length = Some(
+                length
+                    .parse::<usize>()
+                    .map_err(|error| format!("Failed to parse content length: {error}"))?,
+            );
+        }
+    }
+
+    let content_length = content_length.ok_or("Missing Content-Length header")?;
+    let mut body = vec![0u8; content_length];
+    reader
+        .read_exact(&mut body)
+        .map_err(|error| format!("Failed to read body: {error}"))?;
+    serde_json::from_slice(&body).map_err(|error| format!("Failed to parse response: {error}"))
+}
+
+fn spawn_stderr_reader(
+    stderr: impl Read + Send + 'static,
+    stderr_tail: Arc<Mutex<VecDeque<String>>>,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let line = match line {
+                Ok(line) => line,
+                Err(error) => format!("Failed to read PET stderr: {error}"),
+            };
+            let mut tail = stderr_tail.lock().expect("PET stderr tail mutex poisoned");
+            if tail.len() == STDERR_TAIL_LINES {
+                tail.pop_front();
+            }
+            tail.push_back(line);
+        }
+    })
+}
+
+#[test]
+fn jsonrpc_reader_preserves_buffered_follow_up_message() {
+    let first = json!({"jsonrpc": "2.0", "id": 1, "result": {"value": 1}});
+    let second = json!({"jsonrpc": "2.0", "id": 2, "result": {"value": 2}});
+    let framed = [first.clone(), second.clone()]
+        .into_iter()
+        .map(|message| {
+            let body = serde_json::to_string(&message).unwrap();
+            format!("Content-Length: {}\r\n\r\n{}", body.len(), body)
+        })
+        .collect::<String>();
+    let mut reader = BufReader::new(std::io::Cursor::new(framed.into_bytes()));
+
+    assert_eq!(read_jsonrpc_message(&mut reader).unwrap(), first);
+    assert_eq!(read_jsonrpc_message(&mut reader).unwrap(), second);
+}
+
+#[test]
+fn stderr_reader_drains_input_and_bounds_diagnostic_tail() {
+    let input = (0..STDERR_TAIL_LINES + 5)
+        .map(|index| format!("line {index}\n"))
+        .collect::<String>();
+    let tail = Arc::new(Mutex::new(VecDeque::new()));
+    let handle = spawn_stderr_reader(std::io::Cursor::new(input.into_bytes()), tail.clone());
+    handle.join().unwrap();
+
+    let tail = tail.lock().unwrap();
+    assert_eq!(tail.len(), STDERR_TAIL_LINES);
+    assert_eq!(tail.front().map(String::as_str), Some("line 5"));
+    assert_eq!(tail.back().map(String::as_str), Some("line 104"));
 }
 
 // ============================================================================

@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+      - release*
+      - release/*
+      - release-*
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,6 +34,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Validate Snapshot Comparator
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+        shell: bash
 
       - name: Add Conda to PATH (Windows)
         if: startsWith(matrix.os, 'windows')
@@ -73,26 +81,33 @@ jobs:
         shell: bash
 
       - name: Run Performance Tests
-        continue-on-error: true
-        run: cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
+        run: |
+          set -o pipefail
+          cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: warn
         shell: bash
 
       - name: Extract Performance Metrics
-        id: metrics
         run: |
-          # Extract JSON metrics from test output
-          if grep -q "JSON metrics:" perf-output.txt; then
-            # Extract lines after "JSON metrics:" until the closing brace
-            sed -n '/JSON metrics:/,/^}/p' perf-output.txt | tail -n +2 > metrics.json
-            echo "Metrics extracted:"
-            cat metrics.json
-          else
-            echo '{"server_startup_ms": 0, "full_refresh_ms": 0, "environments_count": 0}' > metrics.json
-            echo "No metrics found, created empty metrics"
+          if ! grep -q "JSON metrics:" perf-output.txt; then
+            echo "Performance baseline produced no JSON metrics" >&2
+            exit 1
           fi
+          sed -n '/JSON metrics:/,/^}/p' perf-output.txt | tail -n +2 > metrics.json
+          python -m json.tool metrics.json > /dev/null
+          cat metrics.json
+        shell: bash
+
+      - name: Validate Performance Baseline
+        run: >-
+          python scripts/quality_snapshot.py performance
+          --current metrics.json
+          --baseline metrics.json
+          --platform "${{ matrix.os }} baseline"
+          --report performance-baseline-report.md
+          --summary "$GITHUB_STEP_SUMMARY"
         shell: bash
 
       - name: Upload Performance Baseline Artifact

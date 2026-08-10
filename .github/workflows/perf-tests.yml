@@ -24,48 +24,38 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            platform: Windows
+            comment_header: perf-windows
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            platform: Linux
+            comment_header: perf-linux
           - os: macos-latest
             target: x86_64-apple-darwin
+            platform: macOS
+            comment_header: perf-macos
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Post In-Progress Comment (Linux)
-        if: startsWith(matrix.os, 'ubuntu') && github.event_name == 'pull_request'
+      - name: Post In-Progress Comment
+        if: github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          header: perf-linux
+          header: ${{ matrix.comment_header }}
           message: |
-            ## Performance Report (Linux) :hourglass_flowing_sand:
+            ## Performance Report (${{ matrix.platform }}) :hourglass_flowing_sand:
 
-            Running performance tests... Results will appear here when complete.
-
-      - name: Post In-Progress Comment (Windows)
-        if: startsWith(matrix.os, 'windows') && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: perf-windows
-          message: |
-            ## Performance Report (Windows) :hourglass_flowing_sand:
-
-            Running performance tests... Results will appear here when complete.
-
-      - name: Post In-Progress Comment (macOS)
-        if: startsWith(matrix.os, 'macos') && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: perf-macos
-          message: |
-            ## Performance Report (macOS) :hourglass_flowing_sand:
-
-            Running performance tests... Results will appear here when complete.
+            Running performance tests against baseline `${{ github.event.pull_request.base.sha }}`.
 
       - name: Set Python to PATH
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Validate Snapshot Comparator
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+        shell: bash
 
       - name: Add Conda to PATH (Windows)
         if: startsWith(matrix.os, 'windows')
@@ -109,340 +99,73 @@ jobs:
         shell: bash
 
       - name: Run Performance Tests
-        continue-on-error: true
-        run: cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
+        id: benchmark
+        run: |
+          set -o pipefail
+          cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: warn
         shell: bash
 
       - name: Extract Performance Metrics
-        id: metrics
+        if: steps.benchmark.outcome == 'success'
         run: |
-          # Extract JSON metrics from test output
-          if grep -q "JSON metrics:" perf-output.txt; then
-            # Extract lines after "JSON metrics:" until the closing brace
-            sed -n '/JSON metrics:/,/^}/p' perf-output.txt | tail -n +2 > metrics.json
-            echo "Metrics extracted:"
-            cat metrics.json
-          else
-            echo '{"server_startup_ms": 0, "full_refresh_ms": 0, "environments_count": 0}' > metrics.json
-            echo "No metrics found, created empty metrics"
+          if ! grep -q "JSON metrics:" perf-output.txt; then
+            echo "Performance test produced no JSON metrics" >&2
+            exit 1
           fi
+          sed -n '/JSON metrics:/,/^}/p' perf-output.txt | tail -n +2 > metrics.json
+          python -m json.tool metrics.json > /dev/null
+          cat metrics.json
         shell: bash
 
       - name: Upload PR Performance Results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: perf-pr-${{ matrix.os }}
           path: metrics.json
+          if-no-files-found: ignore
 
-      - name: Download Baseline Performance
+      - name: Download Exact PR Base Performance
+        if: always() && github.event_name == 'pull_request'
         uses: dawidd6/action-download-artifact@v6
-        id: download-baseline
-        continue-on-error: true
+        with:
+          workflow: perf-baseline.yml
+          commit: ${{ github.event.pull_request.base.sha }}
+          workflow_conclusion: success
+          name: perf-baseline-${{ matrix.os }}
+          path: baseline-perf
+          check_artifacts: true
+          search_artifacts: true
+
+      - name: Download Main Performance for Manual Run
+        if: always() && github.event_name == 'workflow_dispatch'
+        uses: dawidd6/action-download-artifact@v6
         with:
           workflow: perf-baseline.yml
           branch: main
+          workflow_conclusion: success
           name: perf-baseline-${{ matrix.os }}
           path: baseline-perf
+          check_artifacts: true
+          search_artifacts: true
 
-      - name: Generate Performance Report (Linux)
-        if: startsWith(matrix.os, 'ubuntu')
-        id: perf-linux
-        run: |
-          # Extract PR metrics (P50 values at top level for backwards compatibility)
-          PR_STARTUP=$(jq -r '.server_startup_ms // 0' metrics.json)
-          PR_REFRESH=$(jq -r '.full_refresh_ms // 0' metrics.json)
-          PR_ENVS=$(jq -r '.environments_count // 0' metrics.json)
-
-          # Extract P95 values from stats object (if available)
-          PR_STARTUP_P95=$(jq -r '.stats.server_startup.p95 // .server_startup_ms // 0' metrics.json)
-          PR_REFRESH_P95=$(jq -r '.stats.full_refresh.p95 // .full_refresh_ms // 0' metrics.json)
-
-          # Extract baseline metrics (default to 0 if not available)
-          if [ -f baseline-perf/metrics.json ]; then
-            BASELINE_STARTUP=$(jq -r '.server_startup_ms // 0' baseline-perf/metrics.json)
-            BASELINE_REFRESH=$(jq -r '.full_refresh_ms // 0' baseline-perf/metrics.json)
-            BASELINE_ENVS=$(jq -r '.environments_count // 0' baseline-perf/metrics.json)
-            BASELINE_STARTUP_P95=$(jq -r '.stats.server_startup.p95 // .server_startup_ms // 0' baseline-perf/metrics.json)
-            BASELINE_REFRESH_P95=$(jq -r '.stats.full_refresh.p95 // .full_refresh_ms // 0' baseline-perf/metrics.json)
-          else
-            BASELINE_STARTUP=0
-            BASELINE_REFRESH=0
-            BASELINE_ENVS=0
-            BASELINE_STARTUP_P95=0
-            BASELINE_REFRESH_P95=0
-          fi
-
-          # Calculate diff (positive means slowdown, negative means speedup)
-          STARTUP_DIFF=$(echo "$PR_STARTUP - $BASELINE_STARTUP" | bc)
-          REFRESH_DIFF=$(echo "$PR_REFRESH - $BASELINE_REFRESH" | bc)
-
-          # Calculate percentage change
-          if [ "$BASELINE_STARTUP" != "0" ]; then
-            STARTUP_PCT=$(echo "scale=1; ($STARTUP_DIFF / $BASELINE_STARTUP) * 100" | bc)
-          else
-            STARTUP_PCT="N/A"
-          fi
-
-          if [ "$BASELINE_REFRESH" != "0" ]; then
-            REFRESH_PCT=$(echo "scale=1; ($REFRESH_DIFF / $BASELINE_REFRESH) * 100" | bc)
-          else
-            REFRESH_PCT="N/A"
-          fi
-
-          # Determine delta indicators (for perf, negative is good = faster)
-          if (( $(echo "$REFRESH_DIFF < -100" | bc -l) )); then
-            DELTA_INDICATOR=":rocket:"
-          elif (( $(echo "$REFRESH_DIFF < 0" | bc -l) )); then
-            DELTA_INDICATOR=":white_check_mark:"
-          elif (( $(echo "$REFRESH_DIFF > 500" | bc -l) )); then
-            DELTA_INDICATOR=":warning:"
-          elif (( $(echo "$REFRESH_DIFF > 100" | bc -l) )); then
-            DELTA_INDICATOR=":small_red_triangle:"
-          else
-            DELTA_INDICATOR=":heavy_minus_sign:"
-          fi
-
-          # Set outputs
-          echo "pr_startup=$PR_STARTUP" >> $GITHUB_OUTPUT
-          echo "pr_refresh=$PR_REFRESH" >> $GITHUB_OUTPUT
-          echo "pr_startup_p95=$PR_STARTUP_P95" >> $GITHUB_OUTPUT
-          echo "pr_refresh_p95=$PR_REFRESH_P95" >> $GITHUB_OUTPUT
-          echo "baseline_startup=$BASELINE_STARTUP" >> $GITHUB_OUTPUT
-          echo "baseline_refresh=$BASELINE_REFRESH" >> $GITHUB_OUTPUT
-          echo "baseline_startup_p95=$BASELINE_STARTUP_P95" >> $GITHUB_OUTPUT
-          echo "baseline_refresh_p95=$BASELINE_REFRESH_P95" >> $GITHUB_OUTPUT
-          echo "startup_diff=$STARTUP_DIFF" >> $GITHUB_OUTPUT
-          echo "refresh_diff=$REFRESH_DIFF" >> $GITHUB_OUTPUT
-          echo "startup_pct=$STARTUP_PCT" >> $GITHUB_OUTPUT
-          echo "refresh_pct=$REFRESH_PCT" >> $GITHUB_OUTPUT
-          echo "delta_indicator=$DELTA_INDICATOR" >> $GITHUB_OUTPUT
-
-          # Write step summary
-          echo "## Performance Report (Linux)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta | Change |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|----------|----------|----------------|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Server Startup | ${PR_STARTUP}ms | ${PR_STARTUP_P95}ms | ${BASELINE_STARTUP}ms | ${STARTUP_DIFF}ms | ${STARTUP_PCT}% |" >> $GITHUB_STEP_SUMMARY
-          echo "| Full Refresh | ${PR_REFRESH}ms | ${PR_REFRESH_P95}ms | ${BASELINE_REFRESH}ms | ${REFRESH_DIFF}ms | ${REFRESH_PCT}% ${DELTA_INDICATOR} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environments | ${PR_ENVS} | - | ${BASELINE_ENVS} | - | - |" >> $GITHUB_STEP_SUMMARY
+      - name: Compare Performance Snapshot
+        if: always()
+        run: >-
+          python scripts/quality_snapshot.py performance
+          --current metrics.json
+          --baseline baseline-perf/metrics.json
+          --platform "${{ matrix.platform }}"
+          --report performance-report.md
+          --summary "$GITHUB_STEP_SUMMARY"
         shell: bash
 
-      - name: Generate Performance Report (Windows)
-        if: startsWith(matrix.os, 'windows')
-        id: perf-windows
-        run: |
-          # Extract PR metrics (P50 values at top level for backwards compatibility)
-          $prMetrics = Get-Content -Path "metrics.json" -Raw | ConvertFrom-Json
-          $prStartup = $prMetrics.server_startup_ms
-          $prRefresh = $prMetrics.full_refresh_ms
-          $prEnvs = $prMetrics.environments_count
-
-          # Extract P95 values from stats object (if available)
-          $prStartupP95 = if ($prMetrics.stats.server_startup.p95) { $prMetrics.stats.server_startup.p95 } else { $prStartup }
-          $prRefreshP95 = if ($prMetrics.stats.full_refresh.p95) { $prMetrics.stats.full_refresh.p95 } else { $prRefresh }
-
-          # Extract baseline metrics (default to 0 if not available)
-          if (Test-Path "baseline-perf/metrics.json") {
-            $baselineMetrics = Get-Content -Path "baseline-perf/metrics.json" -Raw | ConvertFrom-Json
-            $baselineStartup = $baselineMetrics.server_startup_ms
-            $baselineRefresh = $baselineMetrics.full_refresh_ms
-            $baselineEnvs = $baselineMetrics.environments_count
-            $baselineStartupP95 = if ($baselineMetrics.stats.server_startup.p95) { $baselineMetrics.stats.server_startup.p95 } else { $baselineStartup }
-            $baselineRefreshP95 = if ($baselineMetrics.stats.full_refresh.p95) { $baselineMetrics.stats.full_refresh.p95 } else { $baselineRefresh }
-          } else {
-            $baselineStartup = 0
-            $baselineRefresh = 0
-            $baselineEnvs = 0
-            $baselineStartupP95 = 0
-            $baselineRefreshP95 = 0
-          }
-
-          # Calculate diff
-          $startupDiff = $prStartup - $baselineStartup
-          $refreshDiff = $prRefresh - $baselineRefresh
-
-          # Calculate percentage change
-          if ($baselineStartup -gt 0) {
-            $startupPct = [math]::Round(($startupDiff / $baselineStartup) * 100, 1)
-          } else {
-            $startupPct = "N/A"
-          }
-
-          if ($baselineRefresh -gt 0) {
-            $refreshPct = [math]::Round(($refreshDiff / $baselineRefresh) * 100, 1)
-          } else {
-            $refreshPct = "N/A"
-          }
-
-          # Determine delta indicator
-          if ($refreshDiff -lt -100) {
-            $deltaIndicator = ":rocket:"
-          } elseif ($refreshDiff -lt 0) {
-            $deltaIndicator = ":white_check_mark:"
-          } elseif ($refreshDiff -gt 500) {
-            $deltaIndicator = ":warning:"
-          } elseif ($refreshDiff -gt 100) {
-            $deltaIndicator = ":small_red_triangle:"
-          } else {
-            $deltaIndicator = ":heavy_minus_sign:"
-          }
-
-          # Set outputs
-          echo "pr_startup=$prStartup" >> $env:GITHUB_OUTPUT
-          echo "pr_refresh=$prRefresh" >> $env:GITHUB_OUTPUT
-          echo "pr_startup_p95=$prStartupP95" >> $env:GITHUB_OUTPUT
-          echo "pr_refresh_p95=$prRefreshP95" >> $env:GITHUB_OUTPUT
-          echo "baseline_startup=$baselineStartup" >> $env:GITHUB_OUTPUT
-          echo "baseline_refresh=$baselineRefresh" >> $env:GITHUB_OUTPUT
-          echo "baseline_startup_p95=$baselineStartupP95" >> $env:GITHUB_OUTPUT
-          echo "baseline_refresh_p95=$baselineRefreshP95" >> $env:GITHUB_OUTPUT
-          echo "startup_diff=$startupDiff" >> $env:GITHUB_OUTPUT
-          echo "refresh_diff=$refreshDiff" >> $env:GITHUB_OUTPUT
-          echo "startup_pct=$startupPct" >> $env:GITHUB_OUTPUT
-          echo "refresh_pct=$refreshPct" >> $env:GITHUB_OUTPUT
-          echo "delta_indicator=$deltaIndicator" >> $env:GITHUB_OUTPUT
-
-          # Write step summary
-          echo "## Performance Report (Windows)" >> $env:GITHUB_STEP_SUMMARY
-          echo "" >> $env:GITHUB_STEP_SUMMARY
-          echo "| Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta | Change |" >> $env:GITHUB_STEP_SUMMARY
-          echo "|--------|----------|----------|----------------|-------|--------|" >> $env:GITHUB_STEP_SUMMARY
-          echo "| Server Startup | ${prStartup}ms | ${prStartupP95}ms | ${baselineStartup}ms | ${startupDiff}ms | ${startupPct}% |" >> $env:GITHUB_STEP_SUMMARY
-          echo "| Full Refresh | ${prRefresh}ms | ${prRefreshP95}ms | ${baselineRefresh}ms | ${refreshDiff}ms | ${refreshPct}% ${deltaIndicator} |" >> $env:GITHUB_STEP_SUMMARY
-          echo "| Environments | ${prEnvs} | - | ${baselineEnvs} | - | - |" >> $env:GITHUB_STEP_SUMMARY
-        shell: pwsh
-
-      - name: Generate Performance Report (macOS)
-        if: startsWith(matrix.os, 'macos')
-        id: perf-macos
-        run: |
-          # Extract PR metrics (P50 values at top level for backwards compatibility)
-          PR_STARTUP=$(jq -r '.server_startup_ms // 0' metrics.json)
-          PR_REFRESH=$(jq -r '.full_refresh_ms // 0' metrics.json)
-          PR_ENVS=$(jq -r '.environments_count // 0' metrics.json)
-
-          # Extract P95 values from stats object (if available)
-          PR_STARTUP_P95=$(jq -r '.stats.server_startup.p95 // .server_startup_ms // 0' metrics.json)
-          PR_REFRESH_P95=$(jq -r '.stats.full_refresh.p95 // .full_refresh_ms // 0' metrics.json)
-
-          # Extract baseline metrics (default to 0 if not available)
-          if [ -f baseline-perf/metrics.json ]; then
-            BASELINE_STARTUP=$(jq -r '.server_startup_ms // 0' baseline-perf/metrics.json)
-            BASELINE_REFRESH=$(jq -r '.full_refresh_ms // 0' baseline-perf/metrics.json)
-            BASELINE_ENVS=$(jq -r '.environments_count // 0' baseline-perf/metrics.json)
-            BASELINE_STARTUP_P95=$(jq -r '.stats.server_startup.p95 // .server_startup_ms // 0' baseline-perf/metrics.json)
-            BASELINE_REFRESH_P95=$(jq -r '.stats.full_refresh.p95 // .full_refresh_ms // 0' baseline-perf/metrics.json)
-          else
-            BASELINE_STARTUP=0
-            BASELINE_REFRESH=0
-            BASELINE_ENVS=0
-            BASELINE_STARTUP_P95=0
-            BASELINE_REFRESH_P95=0
-          fi
-
-          # Calculate diff
-          STARTUP_DIFF=$((PR_STARTUP - BASELINE_STARTUP))
-          REFRESH_DIFF=$((PR_REFRESH - BASELINE_REFRESH))
-
-          # Set outputs
-          echo "pr_startup=$PR_STARTUP" >> $GITHUB_OUTPUT
-          echo "pr_refresh=$PR_REFRESH" >> $GITHUB_OUTPUT
-          echo "pr_startup_p95=$PR_STARTUP_P95" >> $GITHUB_OUTPUT
-          echo "pr_refresh_p95=$PR_REFRESH_P95" >> $GITHUB_OUTPUT
-          echo "baseline_startup=$BASELINE_STARTUP" >> $GITHUB_OUTPUT
-          echo "baseline_refresh=$BASELINE_REFRESH" >> $GITHUB_OUTPUT
-          echo "baseline_startup_p95=$BASELINE_STARTUP_P95" >> $GITHUB_OUTPUT
-          echo "baseline_refresh_p95=$BASELINE_REFRESH_P95" >> $GITHUB_OUTPUT
-          echo "startup_diff=$STARTUP_DIFF" >> $GITHUB_OUTPUT
-          echo "refresh_diff=$REFRESH_DIFF" >> $GITHUB_OUTPUT
-
-          # Write step summary
-          echo "## Performance Report (macOS)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|----------|----------|----------------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Server Startup | ${PR_STARTUP}ms | ${PR_STARTUP_P95}ms | ${BASELINE_STARTUP}ms | ${STARTUP_DIFF}ms |" >> $GITHUB_STEP_SUMMARY
-          echo "| Full Refresh | ${PR_REFRESH}ms | ${PR_REFRESH_P95}ms | ${BASELINE_REFRESH}ms | ${REFRESH_DIFF}ms |" >> $GITHUB_STEP_SUMMARY
-          echo "| Environments | ${PR_ENVS} | - | ${BASELINE_ENVS} | - |" >> $GITHUB_STEP_SUMMARY
-        shell: bash
-
-      - name: Post Performance Comment (Linux)
-        if: startsWith(matrix.os, 'ubuntu') && github.event_name == 'pull_request'
+      - name: Post Performance Comment
+        if: always() && github.event_name == 'pull_request'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          header: perf-linux
-          message: |
-            ## Performance Report (Linux) ${{ steps.perf-linux.outputs.delta_indicator }}
-
-            | Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta | Change |
-            |--------|----------|----------|----------------|-------|--------|
-            | Server Startup | ${{ steps.perf-linux.outputs.pr_startup }}ms | ${{ steps.perf-linux.outputs.pr_startup_p95 }}ms | ${{ steps.perf-linux.outputs.baseline_startup }}ms | ${{ steps.perf-linux.outputs.startup_diff }}ms | ${{ steps.perf-linux.outputs.startup_pct }}% |
-            | Full Refresh | ${{ steps.perf-linux.outputs.pr_refresh }}ms | ${{ steps.perf-linux.outputs.pr_refresh_p95 }}ms | ${{ steps.perf-linux.outputs.baseline_refresh }}ms | ${{ steps.perf-linux.outputs.refresh_diff }}ms | ${{ steps.perf-linux.outputs.refresh_pct }}% |
-
-            > Results based on 10 iterations. P50 = median, P95 = 95th percentile.
-
-            ---
-            <details>
-            <summary>Legend</summary>
-
-            - :rocket: Significant speedup (>100ms faster)
-            - :white_check_mark: Faster than baseline
-            - :heavy_minus_sign: No significant change
-            - :small_red_triangle: Slower than baseline (>100ms)
-            - :warning: Significant slowdown (>500ms)
-            </details>
-
-      - name: Post Performance Comment (Windows)
-        if: startsWith(matrix.os, 'windows') && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: perf-windows
-          message: |
-            ## Performance Report (Windows) ${{ steps.perf-windows.outputs.delta_indicator }}
-
-            | Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta | Change |
-            |--------|----------|----------|----------------|-------|--------|
-            | Server Startup | ${{ steps.perf-windows.outputs.pr_startup }}ms | ${{ steps.perf-windows.outputs.pr_startup_p95 }}ms | ${{ steps.perf-windows.outputs.baseline_startup }}ms | ${{ steps.perf-windows.outputs.startup_diff }}ms | ${{ steps.perf-windows.outputs.startup_pct }}% |
-            | Full Refresh | ${{ steps.perf-windows.outputs.pr_refresh }}ms | ${{ steps.perf-windows.outputs.pr_refresh_p95 }}ms | ${{ steps.perf-windows.outputs.baseline_refresh }}ms | ${{ steps.perf-windows.outputs.refresh_diff }}ms | ${{ steps.perf-windows.outputs.refresh_pct }}% |
-
-            > Results based on 10 iterations. P50 = median, P95 = 95th percentile.
-
-            ---
-            <details>
-            <summary>Legend</summary>
-
-            - :rocket: Significant speedup (>100ms faster)
-            - :white_check_mark: Faster than baseline
-            - :heavy_minus_sign: No significant change
-            - :small_red_triangle: Slower than baseline (>100ms)
-            - :warning: Significant slowdown (>500ms)
-            </details>
-
-      - name: Post Performance Comment (macOS)
-        if: startsWith(matrix.os, 'macos') && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: perf-macos
-          message: |
-            ## Performance Report (macOS)
-
-            | Metric | PR (P50) | PR (P95) | Baseline (P50) | Delta |
-            |--------|----------|----------|----------------|-------|
-            | Server Startup | ${{ steps.perf-macos.outputs.pr_startup }}ms | ${{ steps.perf-macos.outputs.pr_startup_p95 }}ms | ${{ steps.perf-macos.outputs.baseline_startup }}ms | ${{ steps.perf-macos.outputs.startup_diff }}ms |
-            | Full Refresh | ${{ steps.perf-macos.outputs.pr_refresh }}ms | ${{ steps.perf-macos.outputs.pr_refresh_p95 }}ms | ${{ steps.perf-macos.outputs.baseline_refresh }}ms | ${{ steps.perf-macos.outputs.refresh_diff }}ms |
-
-            > Results based on 10 iterations. P50 = median, P95 = 95th percentile.
-
-            ---
-            <details>
-            <summary>Legend</summary>
-
-            - :rocket: Significant speedup (>100ms faster)
-            - :white_check_mark: Faster than baseline
-            - :heavy_minus_sign: No significant change
-            - :small_red_triangle: Slower than baseline (>100ms)
-            - :warning: Significant slowdown (>500ms)
-            </details>
+          header: ${{ matrix.comment_header }}
+          path: performance-report.md
