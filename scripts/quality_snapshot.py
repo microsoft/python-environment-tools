@@ -102,7 +102,14 @@ def platform_key(platform: str) -> str:
 
 
 def performance_specs(platform: str) -> list[tuple[MetricSpec, RegressionBudget]]:
-    return list(zip(PERFORMANCE_METRICS, PERFORMANCE_BUDGETS[platform_key(platform)], strict=True))
+    key = platform_key(platform)
+    budgets = PERFORMANCE_BUDGETS[key]
+    if len(budgets) != len(PERFORMANCE_METRICS):
+        raise SnapshotError(
+            f'Performance budget count for {key} does not match metric count: '
+            f'{len(budgets)} != {len(PERFORMANCE_METRICS)}'
+        )
+    return list(zip(PERFORMANCE_METRICS, budgets))
 
 
 def load_json(path: Path) -> dict[str, Any]:

@@ -31,6 +31,8 @@ Linux and Windows line and function coverage are compared with the exact base co
 
 ## Running locally
 
+The comparator requires Python 3.10 or newer.
+
 ```powershell
 python -m unittest discover -s scripts/tests -p 'test_*.py' -v
 python scripts/quality_snapshot.py performance --current metrics.json --baseline baseline.json --platform Windows --report report.md

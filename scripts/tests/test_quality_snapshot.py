@@ -11,10 +11,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from quality_snapshot import (  # noqa: E402
+    PERFORMANCE_BUDGETS,
     SnapshotError,
     compare_coverage,
     compare_performance,
     load_json,
+    performance_specs,
     run_coverage,
     run_performance,
 )
@@ -80,6 +82,15 @@ class PerformanceSnapshotTests(unittest.TestCase):
         _, linux_failures = compare_performance(current, baseline, 'Linux')
         self.assertEqual(windows_failures, [])
         self.assertTrue(any('Full refresh P50' in failure for failure in linux_failures))
+
+    def test_budget_metric_mismatch_is_invalid(self):
+        original = PERFORMANCE_BUDGETS['windows']
+        PERFORMANCE_BUDGETS['windows'] = original[:-1]
+        try:
+            with self.assertRaisesRegex(SnapshotError, 'does not match metric count'):
+                performance_specs('Windows')
+        finally:
+            PERFORMANCE_BUDGETS['windows'] = original
 
     def test_unknown_platform_is_invalid(self):
         with self.assertRaises(SnapshotError):
