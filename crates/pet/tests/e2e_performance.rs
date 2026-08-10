@@ -278,6 +278,7 @@ pub struct PetClient {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    interpreter_probe_timeouts: Arc<Mutex<BTreeMap<String, usize>>>,
     stderr_handle: Option<JoinHandle<()>>,
     state: Arc<SharedState>,
     start_time: Instant,
@@ -325,13 +326,19 @@ impl PetClient {
             .take()
             .expect("PET stderr must be piped by the command above");
         let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
-        let stderr_handle = spawn_stderr_reader(stderr, stderr_tail.clone());
+        let interpreter_probe_timeouts = Arc::new(Mutex::new(BTreeMap::new()));
+        let stderr_handle = spawn_stderr_reader(
+            stderr,
+            stderr_tail.clone(),
+            interpreter_probe_timeouts.clone(),
+        );
 
         Ok(Self {
             process,
             stdin,
             stdout: BufReader::new(stdout),
             stderr_tail,
+            interpreter_probe_timeouts,
             stderr_handle: Some(stderr_handle),
             state: Arc::new(SharedState::new(capture_refresh_progress)),
             start_time,
@@ -411,13 +418,11 @@ impl PetClient {
             .join("\n")
     }
 
-    fn interpreter_probe_timeout_labels(&self) -> Vec<&'static str> {
-        self.stderr_tail
+    fn interpreter_probe_timeout_counts(&self) -> BTreeMap<String, usize> {
+        self.interpreter_probe_timeouts
             .lock()
-            .expect("PET stderr tail mutex poisoned")
-            .iter()
-            .filter_map(|line| interpreter_probe_timeout_label(line))
-            .collect()
+            .expect("interpreter probe timeout mutex poisoned")
+            .clone()
     }
 
     /// Configure the server
@@ -629,6 +634,7 @@ fn read_jsonrpc_message(reader: &mut impl BufRead) -> Result<Value, String> {
 fn spawn_stderr_reader(
     stderr: impl Read + Send + 'static,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    interpreter_probe_timeouts: Arc<Mutex<BTreeMap<String, usize>>>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
         for line in BufReader::new(stderr).lines() {
@@ -636,6 +642,13 @@ fn spawn_stderr_reader(
                 Ok(line) => line,
                 Err(error) => format!("Failed to read PET stderr: {error}"),
             };
+            if let Some(label) = interpreter_probe_timeout_label(&line) {
+                *interpreter_probe_timeouts
+                    .lock()
+                    .expect("interpreter probe timeout mutex poisoned")
+                    .entry(label.to_string())
+                    .or_default() += 1;
+            }
             let mut tail = stderr_tail.lock().expect("PET stderr tail mutex poisoned");
             if tail.len() == STDERR_TAIL_LINES {
                 tail.pop_front();
@@ -664,17 +677,32 @@ fn jsonrpc_reader_preserves_buffered_follow_up_message() {
 
 #[test]
 fn stderr_reader_drains_input_and_bounds_diagnostic_tail() {
-    let input = (0..STDERR_TAIL_LINES + 5)
-        .map(|index| format!("line {index}\n"))
-        .collect::<String>();
+    let timeout_line =
+        r#"Timed out after 15s resolving Python via spawn for "/usr/bin/python3"; killing child."#;
+    let input = format!(
+        "{timeout_line}\n{}",
+        (0..STDERR_TAIL_LINES + 5)
+            .map(|index| format!("line {index}\n"))
+            .collect::<String>()
+    );
     let tail = Arc::new(Mutex::new(VecDeque::new()));
-    let handle = spawn_stderr_reader(std::io::Cursor::new(input.into_bytes()), tail.clone());
+    let timeout_counts = Arc::new(Mutex::new(BTreeMap::new()));
+    let handle = spawn_stderr_reader(
+        std::io::Cursor::new(input.into_bytes()),
+        tail.clone(),
+        timeout_counts.clone(),
+    );
     handle.join().unwrap();
 
     let tail = tail.lock().unwrap();
     assert_eq!(tail.len(), STDERR_TAIL_LINES);
     assert_eq!(tail.front().map(String::as_str), Some("line 5"));
     assert_eq!(tail.back().map(String::as_str), Some("line 104"));
+    drop(tail);
+    assert_eq!(
+        timeout_counts.lock().unwrap().get("usrBinPython3"),
+        Some(&1)
+    );
 }
 
 fn refresh_phase_name(phase: RefreshProgressPhase) -> &'static str {
@@ -720,14 +748,12 @@ fn record_interpreter_probe_timeouts(
     client: &PetClient,
     probe_timeout_counts: &mut BTreeMap<String, usize>,
 ) {
-    let timeout_labels = client.interpreter_probe_timeout_labels();
-    for label in &timeout_labels {
-        *probe_timeout_counts
-            .entry((*label).to_string())
-            .or_default() += 1;
+    let timeout_counts = client.interpreter_probe_timeout_counts();
+    for (label, count) in &timeout_counts {
+        *probe_timeout_counts.entry(label.clone()).or_default() += count;
     }
-    if !timeout_labels.is_empty() {
-        println!("    Interpreter probe timeouts: {timeout_labels:?}");
+    if !timeout_counts.is_empty() {
+        println!("    Interpreter probe timeouts: {timeout_counts:?}");
     }
 }
 
