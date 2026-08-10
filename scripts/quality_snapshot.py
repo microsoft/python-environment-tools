@@ -200,6 +200,8 @@ def parse_lcov(path: Path) -> tuple[int, int, int, int]:
                 functions_hit += int(line[4:])
     except ValueError as error:
         raise SnapshotError(f'Coverage file has a malformed summary count: {path}') from error
+    if min(lines_hit, lines_found, functions_hit, functions_found) < 0:
+        raise SnapshotError(f'Coverage file has negative summary counts: {path}')
     if lines_found == 0 or functions_found == 0:
         raise SnapshotError(f'Coverage file has no line/function summary data: {path}')
     if lines_hit > lines_found or functions_hit > functions_found:

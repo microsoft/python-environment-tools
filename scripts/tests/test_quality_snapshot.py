@@ -154,6 +154,15 @@ class CoverageSnapshotTests(unittest.TestCase):
             with self.assertRaises(SnapshotError):
                 compare_coverage(current, baseline)
 
+    def test_negative_lcov_count_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            current = Path(directory) / 'current.info'
+            baseline = Path(directory) / 'baseline.info'
+            current.write_text('SF:example.rs\nLF:-1\nLH:-1\nFNF:1\nFNH:1\n', encoding='utf-8')
+            write_lcov(baseline, lines_hit=1, lines_found=1, functions_hit=1, functions_found=1)
+            with self.assertRaisesRegex(SnapshotError, 'negative summary counts'):
+                compare_coverage(current, baseline)
+
     def test_malformed_lcov_count_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             current = Path(directory) / 'current.info'
