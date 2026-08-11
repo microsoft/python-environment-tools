@@ -158,6 +158,53 @@ class PerformanceSnapshotTests(unittest.TestCase):
                 'Windows',
             )
 
+    def test_schema_v2_warm_p95_variance_passes_on_all_platforms(self):
+        cases = (
+            ('Linux', 60, 69, 16, 16),
+            ('Windows', 109, 206, 24, 47),
+            ('macOS', 160, 270, 133, 228),
+        )
+        for platform, base_refresh, current_refresh, base_first, current_first in cases:
+            with self.subTest(platform=platform):
+                baseline = performance_snapshot(
+                    schema_version=2,
+                    refresh_p95=base_refresh,
+                    first_p95=base_first,
+                )
+                current = performance_snapshot(
+                    schema_version=2,
+                    refresh_p95=current_refresh,
+                    first_p95=current_first,
+                )
+
+                _, failures = compare_performance(current, baseline, platform)
+
+                self.assertEqual(failures, [])
+
+    def test_schema_v2_warm_p95_budgets_reject_multi_second_regressions(self):
+        cases = (
+            ('Linux', 60, 16),
+            ('Windows', 109, 24),
+            ('macOS', 160, 133),
+        )
+        for platform, base_refresh, base_first in cases:
+            with self.subTest(platform=platform):
+                baseline = performance_snapshot(
+                    schema_version=2,
+                    refresh_p95=base_refresh,
+                    first_p95=base_first,
+                )
+                current = performance_snapshot(
+                    schema_version=2,
+                    refresh_p95=2_000,
+                    first_p95=1_000,
+                )
+
+                _, failures = compare_performance(current, baseline, platform)
+
+                self.assertTrue(any('Full refresh P95' in failure for failure in failures))
+                self.assertTrue(any('Time to first environment P95' in failure for failure in failures))
+
     def test_post_fix_macos_tail_variance_passes(self):
         baseline = performance_snapshot(startup_p95=621, refresh_p95=1_343, first_p95=649)
         current = performance_snapshot(startup_p95=691, refresh_p95=1_435, first_p95=745)
@@ -168,7 +215,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
     def test_tightened_macos_tail_budgets_reject_multi_second_regressions(self):
         baseline = performance_snapshot(startup_p95=621, refresh_p95=1_343, first_p95=649)
-        current = performance_snapshot(startup_p95=1_500, refresh_p95=2_500, first_p95=1_500)
+        current = performance_snapshot(startup_p95=1_500, refresh_p95=3_000, first_p95=1_500)
 
         _, failures = compare_performance(current, baseline, 'macOS')
 

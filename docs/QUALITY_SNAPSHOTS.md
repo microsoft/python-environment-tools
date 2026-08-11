@@ -17,16 +17,20 @@ A metric blocks when it exceeds both its absolute and relative budget:
 | Server startup P50 | 5 ms / 100% | 10 ms / 50% | 100 ms / 50% |
 | Server startup P95 | 50 ms / 200% | 50 ms / 100% | 750 ms / 100% |
 | Full refresh P50 | 25 ms / 30% | 50 ms / 30% | 100 ms / 50% |
-| Full refresh P95 | 1,000 ms / 100% | 5,000 ms / 100% | 1,000 ms / 50% |
+| Full refresh P95 | 50 ms / 50% | 250 ms / 100% | 300 ms / 100% |
 | Time to first environment P50 | 20 ms / 100% | 25 ms / 50% | 150 ms / 50% |
-| Time to first environment P95 | 250 ms / 100% | 500 ms / 100% | 750 ms / 100% |
+| Time to first environment P95 | 25 ms / 100% | 100 ms / 100% | 250 ms / 100% |
 | Cold refresh P50 | 100 ms / 50% | 150 ms / 50% | 250 ms / 50% |
 
-Each cell is `absolute / relative`. The Linux and Windows budgets plus the macOS P50 budgets reflect observed GitHub-hosted runner variance from 11 consecutive main-branch baselines. Tighten them when a noisy path is fixed rather than normalizing a known regression into the baseline.
+Each cell is `absolute / relative`. The warm P50 and server-startup budgets reflect observed GitHub-hosted runner variance from 11 consecutive main-branch baselines. Tighten them when a noisy path is fixed rather than normalizing a known regression into the baseline.
 
-The macOS P95 budget recalibration is tracked by issue #507 and follows PR #506's fix for issue #504. It uses three unchanged-content pull-request runs and the exact merged baseline at `f0c62d9`; the resulting absolute headroom is four to six times the observed post-fix run-to-run range.
+The macOS server-startup P95 budget recalibration is tracked by issue #507 and follows PR #506's fix for issue #504. It uses three unchanged-content pull-request runs and the exact merged baseline at `f0c62d9`; the resulting absolute headroom is four to six times the observed post-fix run-to-run range.
 
-Schema v2 records `full_refresh` and `time_to_first_env` from the warm member of each pair and adds cold refresh/time-to-first distributions. While the exact base still uses schema v1, cold P50 is checked against explicit absolute ceilings of 500ms on Linux, 750ms on Windows, and 1,000ms on macOS. Once both snapshots use schema v2, the table's dual budgets apply.
+The warm refresh and warm time-to-first P95 budgets were recalibrated in issue #511 after PR #510 separated cold and warm samples. Three unchanged-code PR runs plus the exact schema-v2 baseline at `ad7ca14` retain at least 2.5 times the observed absolute run-to-run range.
+
+Schema v2 records `full_refresh` and `time_to_first_env` from the warm member of each pair and adds cold refresh/time-to-first distributions. During its one-time rollout, comparisons against a schema-v1 base checked cold P50 against explicit absolute ceilings of 500ms on Linux, 750ms on Windows, and 1,000ms on macOS. Schema-v2-to-v2 comparisons use the table's dual budgets.
+
+The cold P50 budgets were calibrated in issue #509 using two unchanged-head all-platform runs and the final pull-request validation.
 
 The dual budget avoids failing on tiny percentage changes while still blocking material latency regressions. Warm tail metrics remain mandatory; cold P95 remains diagnostic because a single host event can dominate it, while cold P50 blocks delays that affect the independent cold iterations consistently.
 
