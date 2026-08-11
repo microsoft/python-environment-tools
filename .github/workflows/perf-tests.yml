@@ -128,8 +128,25 @@ jobs:
           path: metrics.json
           if-no-files-found: ignore
 
-      - name: Download Exact PR Base Performance
+      - name: Wait for Exact PR Base Performance
+        id: wait_for_base_performance
         if: always() && github.event_name == 'pull_request'
+        run: >-
+          python scripts/wait_for_baseline.py
+          --repository "${{ github.repository }}"
+          --workflow perf-baseline.yml
+          --commit "${{ github.event.pull_request.base.sha }}"
+          --artifact "perf-baseline-${{ matrix.os }}"
+          --timeout-seconds 1200
+          --poll-seconds 20
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+
+      - name: Download Exact PR Base Performance
+        if: >-
+          always() && github.event_name == 'pull_request' &&
+          steps.wait_for_base_performance.outcome == 'success'
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: perf-baseline.yml

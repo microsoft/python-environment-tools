@@ -208,8 +208,23 @@ jobs:
           path: lcov.info
           if-no-files-found: ignore
 
-      - name: Download Exact PR Base Coverage
+      - name: Wait for Exact PR Base Coverage
+        id: wait_for_base_coverage
         if: always()
+        run: >-
+          python scripts/wait_for_baseline.py
+          --repository "${{ github.repository }}"
+          --workflow coverage-baseline.yml
+          --commit "${{ github.event.pull_request.base.sha }}"
+          --artifact "coverage-baseline-${{ matrix.os }}"
+          --timeout-seconds 1200
+          --poll-seconds 20
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+
+      - name: Download Exact PR Base Coverage
+        if: always() && steps.wait_for_base_coverage.outcome == 'success'
         uses: dawidd6/action-download-artifact@v6
         with:
           workflow: coverage-baseline.yml
