@@ -1445,9 +1445,13 @@ fn test_performance_summary() {
             "Cold refresh",
             iteration,
         );
-        if let Some(ttfe) = cold_client.time_to_first_env() {
-            cold_time_to_first_env_stats.add(ttfe.as_millis());
-        }
+        let cold_ttfe = cold_client.time_to_first_env().unwrap_or_else(|| {
+            panic!(
+                "Cold refresh iteration {} produced no environment notification",
+                iteration + 1
+            )
+        });
+        cold_time_to_first_env_stats.add(cold_ttfe.as_millis());
         record_interpreter_probe_timeouts(&cold_client, &mut probe_timeout_counts);
 
         println!(
@@ -1480,9 +1484,13 @@ fn test_performance_summary() {
             "Warm refresh",
             iteration,
         );
-        if let Some(ttfe) = warm_client.time_to_first_env() {
-            warm_time_to_first_env_stats.add(ttfe.as_millis());
-        }
+        let warm_ttfe = warm_client.time_to_first_env().unwrap_or_else(|| {
+            panic!(
+                "Warm refresh iteration {} produced no environment notification",
+                iteration + 1
+            )
+        });
+        warm_time_to_first_env_stats.add(warm_ttfe.as_millis());
         record_interpreter_probe_timeouts(&warm_client, &mut probe_timeout_counts);
 
         println!(
