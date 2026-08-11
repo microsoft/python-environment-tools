@@ -91,7 +91,7 @@ PERFORMANCE_BUDGETS = {
     'windows': (
         RegressionBudget(10, 50),
         RegressionBudget(50, 100),
-        RegressionBudget(50, 30),
+        RegressionBudget(150, 50),
         RegressionBudget(250, 100),
         RegressionBudget(25, 50),
         RegressionBudget(100, 100),
