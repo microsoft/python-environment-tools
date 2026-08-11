@@ -23,7 +23,7 @@ A metric blocks when it exceeds both its absolute and relative budget:
 
 Each cell is `absolute / relative`. The budgets reflect observed GitHub-hosted runner variance from 11 consecutive main-branch baselines. Tighten them when a noisy path is fixed rather than normalizing a known regression into the baseline.
 
-The macOS P95 budgets were recalibrated after #504 using three unchanged-content pull-request runs and the exact merged baseline. Their absolute headroom is four to six times the observed post-fix run-to-run range.
+The macOS P95 budgets were recalibrated after PR #506 (tracking issue #504) using three unchanged-content pull-request runs and the exact merged baseline at `f0c62d9`. Their absolute headroom is four to six times the observed post-fix run-to-run range.
 
 The dual budget avoids failing on tiny percentage changes while still blocking material latency regressions. Tail metrics remain mandatory; a healthy median does not excuse a degraded P95.
 
@@ -52,4 +52,4 @@ Phase and locator telemetry is collected in separate, untimed refreshes so diagn
 
 ## Known investigations
 
-The macOS cold-refresh tail fixed by issue #504 remains guarded by phase and locator distributions plus privacy-safe interpreter timeout counts.
+The macOS cold-refresh tail fixed by PR #506 (tracked in issue #504) remains guarded by phase and locator distributions plus privacy-safe interpreter timeout counts.
