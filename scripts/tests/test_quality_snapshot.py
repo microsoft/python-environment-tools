@@ -64,6 +64,27 @@ class PerformanceSnapshotTests(unittest.TestCase):
         _, failures = compare_performance(current, performance_snapshot(refresh_p95=500), 'Windows')
         self.assertTrue(any('Full refresh P95' in failure for failure in failures))
 
+    def test_post_fix_macos_tail_variance_passes(self):
+        baseline = performance_snapshot(startup_p95=621, refresh_p95=1_343, first_p95=649)
+        current = performance_snapshot(startup_p95=691, refresh_p95=1_435, first_p95=745)
+
+        _, failures = compare_performance(current, baseline, 'macOS')
+
+        self.assertEqual(failures, [])
+
+    def test_tightened_macos_tail_budgets_reject_multi_second_regressions(self):
+        baseline = performance_snapshot(startup_p95=621, refresh_p95=1_343, first_p95=649)
+        current = performance_snapshot(startup_p95=1_500, refresh_p95=2_500, first_p95=1_500)
+
+        _, failures = compare_performance(current, baseline, 'macOS')
+
+        for label in (
+            'Server startup P95',
+            'Full refresh P95',
+            'Time to first environment P95',
+        ):
+            self.assertTrue(any(label in failure for failure in failures))
+
     def test_noise_inside_absolute_budget_passes(self):
         current = performance_snapshot(refresh_p50=140)
         _, failures = compare_performance(current, performance_snapshot(refresh_p50=100), 'Windows')
