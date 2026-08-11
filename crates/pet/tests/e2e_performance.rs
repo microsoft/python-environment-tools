@@ -547,10 +547,11 @@ fn get_pet_executable() -> PathBuf {
 }
 
 /// Get a temporary cache directory for tests
-fn get_test_cache_dir() -> PathBuf {
+fn get_test_cache_dir(test_name: &str) -> PathBuf {
     let tmp = env::temp_dir();
     tmp.join("pet-e2e-perf-tests")
         .join(format!("cache-{}", std::process::id()))
+        .join(test_name)
 }
 
 fn benchmark_iteration_cache_dir(cache_root: &Path, workload: &str, iteration: usize) -> PathBuf {
@@ -907,6 +908,11 @@ fn benchmark_cache_directories_are_isolated_by_workload_and_iteration() {
     assert_eq!(first_cold, root.join("cold").join("iteration-1"));
     assert_ne!(first_cold, second_cold);
     assert_ne!(first_cold, first_warm);
+
+    assert_ne!(
+        get_test_cache_dir("first-test"),
+        get_test_cache_dir("second-test")
+    );
 }
 
 // ============================================================================
@@ -920,7 +926,7 @@ fn test_server_startup_performance() {
     let mut configure_stats = StatisticalMetrics::new();
     let mut total_stats = StatisticalMetrics::new();
 
-    let cache_dir = get_test_cache_dir();
+    let cache_dir = get_test_cache_dir("server-startup");
     let workspace_dir = get_workspace_dir();
 
     println!(
@@ -991,7 +997,7 @@ fn test_full_refresh_performance() {
     let mut manager_count = 0usize;
     let mut kind_counts: HashMap<String, usize> = HashMap::new();
 
-    let cache_dir = get_test_cache_dir();
+    let cache_dir = get_test_cache_dir("full-refresh");
     let workspace_dir = get_workspace_dir();
 
     println!(
@@ -1079,7 +1085,7 @@ fn test_workspace_scoped_refresh_performance() {
     let mut client_duration_stats = StatisticalMetrics::new();
     let mut env_count = 0usize;
 
-    let cache_dir = get_test_cache_dir();
+    let cache_dir = get_test_cache_dir("workspace-refresh");
     let workspace_dir = get_workspace_dir();
 
     println!(
@@ -1135,7 +1141,7 @@ fn test_workspace_scoped_refresh_performance() {
 #[cfg_attr(feature = "ci-perf", test)]
 #[allow(dead_code)]
 fn test_kind_specific_refresh_performance() {
-    let cache_dir = get_test_cache_dir();
+    let cache_dir = get_test_cache_dir("kind-refresh");
     let workspace_dir = get_workspace_dir();
 
     // Test different environment kinds
@@ -1203,7 +1209,7 @@ fn test_resolve_performance() {
     let mut cold_resolve_stats = StatisticalMetrics::new();
     let mut warm_resolve_stats = StatisticalMetrics::new();
 
-    let cache_dir = get_test_cache_dir();
+    let cache_dir = get_test_cache_dir("resolve");
     let workspace_dir = get_workspace_dir();
 
     println!(
@@ -1306,7 +1312,7 @@ fn test_resolve_performance() {
 fn test_concurrent_resolve_performance() {
     let mut client = PetClient::spawn().expect("Failed to spawn server");
 
-    let cache_dir = get_test_cache_dir();
+    let cache_dir = get_test_cache_dir("concurrent-resolve");
     let workspace_dir = get_workspace_dir();
 
     let config = json!({
@@ -1351,7 +1357,7 @@ fn test_concurrent_resolve_performance() {
 #[allow(dead_code)]
 fn test_refresh_warm_vs_cold_cache() {
     // Clean cache directory
-    let cache_dir = get_test_cache_dir();
+    let cache_dir = get_test_cache_dir("warm-vs-cold");
     let _ = std::fs::remove_dir_all(&cache_dir);
     std::fs::create_dir_all(&cache_dir).expect("Failed to create cache dir");
 
@@ -1405,7 +1411,7 @@ fn test_performance_summary() {
     let mut probe_timeout_counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut expected_inventory = None;
 
-    let cache_root = get_test_cache_dir();
+    let cache_root = get_test_cache_dir("performance-summary");
     reset_cache_dir(&cache_root);
     let workspace_dir = get_workspace_dir();
 
