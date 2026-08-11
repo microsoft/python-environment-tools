@@ -28,6 +28,7 @@ static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 
 /// Number of iterations for statistical tests
 const STAT_ITERATIONS: usize = 10;
+const PERFORMANCE_METRICS_SCHEMA_VERSION: u8 = 2;
 const STDERR_TAIL_LINES: usize = 100;
 
 /// Statistical metrics with percentile calculations
@@ -552,6 +553,40 @@ fn get_test_cache_dir() -> PathBuf {
         .join(format!("cache-{}", std::process::id()))
 }
 
+fn benchmark_iteration_cache_dir(cache_root: &Path, workload: &str, iteration: usize) -> PathBuf {
+    cache_root
+        .join(workload)
+        .join(format!("iteration-{}", iteration + 1))
+}
+
+fn reset_cache_dir(cache_dir: &Path) {
+    match std::fs::remove_dir_all(cache_dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("Failed to remove cache directory {cache_dir:?}: {error}"),
+    }
+    std::fs::create_dir_all(cache_dir)
+        .unwrap_or_else(|error| panic!("Failed to create cache directory {cache_dir:?}: {error}"));
+}
+
+fn assert_stable_inventory(
+    expected: &mut Option<(usize, usize)>,
+    actual: (usize, usize),
+    workload: &str,
+    iteration: usize,
+) {
+    if let Some(expected) = expected {
+        assert_eq!(
+            actual,
+            *expected,
+            "{workload} inventory changed at iteration {}",
+            iteration + 1
+        );
+    } else {
+        *expected = Some(actual);
+    }
+}
+
 /// Get workspace directory (current project root)
 fn get_workspace_dir() -> PathBuf {
     env::var("GITHUB_WORKSPACE")
@@ -763,20 +798,22 @@ fn collect_refresh_diagnostics(
     phase_stats: &mut BTreeMap<String, StatisticalMetrics>,
     locator_stats: &mut BTreeMap<String, StatisticalMetrics>,
     probe_timeout_counts: &mut BTreeMap<String, usize>,
+    expected_inventory: (usize, usize),
 ) {
-    let diagnostic_cache_dir = cache_dir.join("refresh-progress");
-    let _ = std::fs::remove_dir_all(&diagnostic_cache_dir);
-    std::fs::create_dir_all(&diagnostic_cache_dir)
-        .expect("Failed to create refresh diagnostic cache dir");
+    let diagnostic_cache_root = cache_dir.join("refresh-progress");
+    reset_cache_dir(&diagnostic_cache_root);
 
-    println!("\nCollecting untimed refresh diagnostics...");
+    println!("\nCollecting untimed cold-refresh diagnostics...");
     for iteration in 0..STAT_ITERATIONS {
+        let diagnostic_cache_dir =
+            benchmark_iteration_cache_dir(&diagnostic_cache_root, "cold", iteration);
+        reset_cache_dir(&diagnostic_cache_dir);
         let mut client =
             PetClient::spawn_with_refresh_progress().expect("Failed to spawn diagnostic server");
         client
             .configure(json!({
                 "workspaceDirectories": [workspace_dir],
-                "cacheDirectory": diagnostic_cache_dir
+                "cacheDirectory": diagnostic_cache_dir,
             }))
             .expect("Failed to configure diagnostic server");
         let (result, _) = client
@@ -784,12 +821,19 @@ fn collect_refresh_diagnostics(
             .expect("Failed to run diagnostic refresh");
 
         collect_refresh_progress(&client.get_refresh_progress(), phase_stats, locator_stats);
+        let inventory = (client.get_environments().len(), client.get_managers().len());
+        assert_eq!(
+            inventory,
+            expected_inventory,
+            "Cold diagnostic inventory changed at iteration {}",
+            iteration + 1,
+        );
         record_interpreter_probe_timeouts(&client, probe_timeout_counts);
         println!(
-            "  Diagnostic iteration {}: refresh={}ms, envs={}",
+            "  Cold diagnostic iteration {}: refresh={}ms, envs={}",
             iteration + 1,
             result.duration,
-            client.get_environments().len()
+            inventory.0,
         );
     }
 }
@@ -851,6 +895,18 @@ fn refresh_progress_aggregation_separates_phases_and_locators() {
 
     assert_eq!(phases["locators"].samples, vec![30]);
     assert_eq!(locators["Conda"].samples, vec![20]);
+}
+
+#[test]
+fn benchmark_cache_directories_are_isolated_by_workload_and_iteration() {
+    let root = Path::new("benchmark-cache");
+    let first_cold = benchmark_iteration_cache_dir(root, "cold", 0);
+    let second_cold = benchmark_iteration_cache_dir(root, "cold", 1);
+    let first_warm = benchmark_iteration_cache_dir(root, "warm", 0);
+
+    assert_eq!(first_cold, root.join("cold").join("iteration-1"));
+    assert_ne!(first_cold, second_cold);
+    assert_ne!(first_cold, first_warm);
 }
 
 // ============================================================================
@@ -1340,73 +1396,124 @@ fn test_refresh_warm_vs_cold_cache() {
 #[allow(dead_code)]
 fn test_performance_summary() {
     let mut startup_stats = StatisticalMetrics::new();
-    let mut refresh_stats = StatisticalMetrics::new();
-    let mut time_to_first_env_stats = StatisticalMetrics::new();
+    let mut cold_refresh_stats = StatisticalMetrics::new();
+    let mut warm_refresh_stats = StatisticalMetrics::new();
+    let mut cold_time_to_first_env_stats = StatisticalMetrics::new();
+    let mut warm_time_to_first_env_stats = StatisticalMetrics::new();
     let mut phase_stats = BTreeMap::new();
     let mut locator_stats = BTreeMap::new();
     let mut probe_timeout_counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut expected_inventory = None;
 
-    let cache_dir = get_test_cache_dir();
-    let _ = std::fs::remove_dir_all(&cache_dir);
-    std::fs::create_dir_all(&cache_dir).expect("Failed to create cache dir");
-
+    let cache_root = get_test_cache_dir();
+    reset_cache_dir(&cache_root);
     let workspace_dir = get_workspace_dir();
 
     println!("\n========================================");
-    println!("  PERFORMANCE SUMMARY ({} iterations)", STAT_ITERATIONS);
+    println!(
+        "  COLD/WARM PERFORMANCE SUMMARY ({} pairs)",
+        STAT_ITERATIONS
+    );
     println!("========================================\n");
 
-    for i in 0..STAT_ITERATIONS {
-        // Measure server startup (fresh server each iteration)
+    for iteration in 0..STAT_ITERATIONS {
+        let iteration_cache = benchmark_iteration_cache_dir(&cache_root, "measured", iteration);
+        reset_cache_dir(&iteration_cache);
+
         let spawn_start = Instant::now();
-        let mut client = PetClient::spawn().expect("Failed to spawn server");
-
-        let config = json!({
-            "workspaceDirectories": [workspace_dir.clone()],
-            "cacheDirectory": cache_dir.clone()
-        });
-
-        client.configure(config).expect("Failed to configure");
+        let mut cold_client = PetClient::spawn().expect("Failed to spawn cold server");
+        cold_client
+            .configure(json!({
+                "workspaceDirectories": [workspace_dir.clone()],
+                "cacheDirectory": iteration_cache.clone(),
+            }))
+            .expect("Failed to configure cold server");
         let startup_time = spawn_start.elapsed().as_millis();
         startup_stats.add(startup_time);
 
-        // Measure full refresh
-        let (result, _) = client.refresh(None).expect("Failed to refresh");
-        refresh_stats.add(result.duration);
-
-        let inventory = (client.get_environments().len(), client.get_managers().len());
-        if let Some(expected) = expected_inventory {
-            assert_eq!(
-                inventory, expected,
-                "Environment and manager inventory changed after iteration 1"
-            );
-        } else {
-            expected_inventory = Some(inventory);
+        let (cold_result, _) = cold_client
+            .refresh(None)
+            .expect("Failed to run cold refresh");
+        cold_refresh_stats.add(cold_result.duration);
+        let cold_inventory = (
+            cold_client.get_environments().len(),
+            cold_client.get_managers().len(),
+        );
+        assert_stable_inventory(
+            &mut expected_inventory,
+            cold_inventory,
+            "Cold refresh",
+            iteration,
+        );
+        if let Some(ttfe) = cold_client.time_to_first_env() {
+            cold_time_to_first_env_stats.add(ttfe.as_millis());
         }
-
-        if let Some(ttfe) = client.time_to_first_env() {
-            time_to_first_env_stats.add(ttfe.as_millis());
-        }
-        record_interpreter_probe_timeouts(&client, &mut probe_timeout_counts);
+        record_interpreter_probe_timeouts(&cold_client, &mut probe_timeout_counts);
 
         println!(
-            "  Iteration {}: startup={}ms, refresh={}ms, envs={}",
-            i + 1,
+            "  Cold iteration {}: startup={}ms, refresh={}ms, envs={}",
+            iteration + 1,
             startup_time,
-            result.duration,
-            inventory.0
+            cold_result.duration,
+            cold_inventory.0,
+        );
+        drop(cold_client);
+
+        let mut warm_client = PetClient::spawn().expect("Failed to spawn warm server");
+        warm_client
+            .configure(json!({
+                "workspaceDirectories": [workspace_dir.clone()],
+                "cacheDirectory": iteration_cache,
+            }))
+            .expect("Failed to configure warm server");
+        let (warm_result, _) = warm_client
+            .refresh(None)
+            .expect("Failed to run warm refresh");
+        warm_refresh_stats.add(warm_result.duration);
+        let warm_inventory = (
+            warm_client.get_environments().len(),
+            warm_client.get_managers().len(),
+        );
+        assert_stable_inventory(
+            &mut expected_inventory,
+            warm_inventory,
+            "Warm refresh",
+            iteration,
+        );
+        if let Some(ttfe) = warm_client.time_to_first_env() {
+            warm_time_to_first_env_stats.add(ttfe.as_millis());
+        }
+        record_interpreter_probe_timeouts(&warm_client, &mut probe_timeout_counts);
+
+        println!(
+            "  Warm iteration {}: refresh={}ms, envs={}",
+            iteration + 1,
+            warm_result.duration,
+            warm_inventory.0,
         );
     }
 
     let (env_count, manager_count) =
         expected_inventory.expect("Performance summary must run at least one iteration");
+    for (label, count) in [
+        ("startup", startup_stats.count()),
+        ("cold refresh", cold_refresh_stats.count()),
+        ("warm refresh", warm_refresh_stats.count()),
+        ("cold time-to-first", cold_time_to_first_env_stats.count()),
+        ("warm time-to-first", warm_time_to_first_env_stats.count()),
+    ] {
+        assert_eq!(
+            count, STAT_ITERATIONS,
+            "Expected one {label} sample per benchmark pair"
+        );
+    }
     collect_refresh_diagnostics(
         &workspace_dir,
-        &cache_dir,
+        &cache_root,
         &mut phase_stats,
         &mut locator_stats,
         &mut probe_timeout_counts,
+        (env_count, manager_count),
     );
 
     for phase in ["locators", "path", "globalVirtualEnvs", "workspaces"] {
@@ -1429,10 +1536,10 @@ fn test_performance_summary() {
     println!("             STATISTICS                 ");
     println!("----------------------------------------");
     startup_stats.print_summary("Server startup");
-    refresh_stats.print_summary("Full refresh");
-    if time_to_first_env_stats.count() > 0 {
-        time_to_first_env_stats.print_summary("Time to first env");
-    }
+    cold_refresh_stats.print_summary("Cold full refresh");
+    warm_refresh_stats.print_summary("Warm full refresh");
+    cold_time_to_first_env_stats.print_summary("Cold time to first env");
+    warm_time_to_first_env_stats.print_summary("Warm time to first env");
     for (phase, metrics) in &phase_stats {
         metrics.print_summary(&format!("Phase {phase}"));
     }
@@ -1447,17 +1554,22 @@ fn test_performance_summary() {
     let locator_json = statistics_json(&locator_stats);
 
     // Output as JSON for CI parsing
-    // Includes both P50 values at top level (for backwards compatibility) and full stats
+    // Existing top-level refresh fields remain warm-cache values for schema compatibility.
     let json_output = serde_json::to_string_pretty(&json!({
+        "metrics_schema_version": PERFORMANCE_METRICS_SCHEMA_VERSION,
         "server_startup_ms": startup_stats.p50().unwrap_or(0),
-        "full_refresh_ms": refresh_stats.p50().unwrap_or(0),
-        "time_to_first_env_ms": time_to_first_env_stats.p50(),
+        "full_refresh_ms": warm_refresh_stats.p50().unwrap_or(0),
+        "cold_refresh_ms": cold_refresh_stats.p50().unwrap_or(0),
+        "time_to_first_env_ms": warm_time_to_first_env_stats.p50(),
+        "cold_time_to_first_env_ms": cold_time_to_first_env_stats.p50(),
         "environments_count": env_count,
         "managers_count": manager_count,
         "stats": {
             "server_startup": startup_stats.to_json(),
-            "full_refresh": refresh_stats.to_json(),
-            "time_to_first_env": time_to_first_env_stats.to_json()
+            "full_refresh": warm_refresh_stats.to_json(),
+            "cold_refresh": cold_refresh_stats.to_json(),
+            "time_to_first_env": warm_time_to_first_env_stats.to_json(),
+            "cold_time_to_first_env": cold_time_to_first_env_stats.to_json(),
         },
         "phases": phase_json,
         "locators": locator_json,
