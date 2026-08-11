@@ -28,7 +28,7 @@ The macOS server-startup P95 budget recalibration is tracked by issue #507 and f
 
 The warm refresh and warm time-to-first P95 budgets were recalibrated in issue #511 after PR #510 separated cold and warm samples. Three unchanged-code PR runs plus the exact schema-v2 baseline at `ad7ca14` retain at least 2.5 times the observed absolute run-to-run range.
 
-The Windows warm full-refresh P50 budget was recalibrated in issue #513 from repeated unchanged-code pull-request measurements plus the exact schema-v2 baseline at `ad7ca14`. It retains nearly twice the observed absolute range while blocking a sustained median above 255ms against that baseline.
+The Windows warm full-refresh P50 budget was recalibrated in issue #513 from five unchanged-code pull-request measurements plus the exact schema-v2 baseline at `ad7ca14` (six measurements total). It retains nearly twice the observed absolute range while blocking a sustained median above 255ms against that baseline.
 
 Schema v2 records `full_refresh` and `time_to_first_env` from the warm member of each pair and adds cold refresh/time-to-first distributions. During its one-time rollout, comparisons against a schema-v1 base checked cold P50 against explicit absolute ceilings of 500ms on Linux, 750ms on Windows, and 1,000ms on macOS. Schema-v2-to-v2 comparisons use the table's dual budgets.
 
