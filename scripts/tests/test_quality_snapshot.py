@@ -251,7 +251,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
 
     def test_relative_budget_must_also_be_exceeded(self):
-        current = performance_snapshot(refresh_p50=1_060)
+        current = performance_snapshot(refresh_p50=1_160)
         _, failures = compare_performance(current, performance_snapshot(refresh_p50=1_000), 'Windows')
         self.assertEqual(failures, [])
 
