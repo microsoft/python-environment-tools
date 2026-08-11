@@ -80,11 +80,11 @@ PERFORMANCE_BUDGETS = {
     ),
     'macos': (
         RegressionBudget(100, 50),
-        RegressionBudget(10_000, 100),
+        RegressionBudget(750, 100),
         RegressionBudget(100, 50),
-        RegressionBudget(5_000, 25),
+        RegressionBudget(1_000, 50),
         RegressionBudget(150, 50),
-        RegressionBudget(10_000, 100),
+        RegressionBudget(750, 100),
     ),
 }
 COVERAGE_BUDGET_PERCENTAGE_POINTS = 0.01
