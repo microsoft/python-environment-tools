@@ -16,6 +16,7 @@ from quality_snapshot import (  # noqa: E402
     compare_coverage,
     compare_performance,
     load_json,
+    performance_report,
     performance_specs,
     run_coverage,
     run_performance,
@@ -24,9 +25,11 @@ from quality_snapshot import (  # noqa: E402
 
 def performance_snapshot(
     *, refresh_p50=100, refresh_p95=500, startup_p50=10, startup_p95=20,
-    first_p50=15, first_p95=30, environments=5, managers=1
+    first_p50=15, first_p95=30, cold_p50=200, cold_p95=500,
+    cold_first_p50=25, cold_first_p95=50, environments=5, managers=1,
+    schema_version=1
 ):
-    return {
+    snapshot = {
         'server_startup_ms': startup_p50,
         'full_refresh_ms': refresh_p50,
         'time_to_first_env_ms': first_p50,
@@ -38,6 +41,21 @@ def performance_snapshot(
             'time_to_first_env': {'count': 10, 'p50': first_p50, 'p95': first_p95},
         },
     }
+    if schema_version >= 2:
+        snapshot['metrics_schema_version'] = schema_version
+        snapshot['cold_refresh_ms'] = cold_p50
+        snapshot['cold_time_to_first_env_ms'] = cold_first_p50
+        snapshot['stats']['cold_refresh'] = {
+            'count': 10,
+            'p50': cold_p50,
+            'p95': cold_p95,
+        }
+        snapshot['stats']['cold_time_to_first_env'] = {
+            'count': 10,
+            'p50': cold_first_p50,
+            'p95': cold_first_p95,
+        }
+    return snapshot
 
 
 def write_lcov(path, *, lines_hit, lines_found, functions_hit, functions_found):
@@ -63,6 +81,82 @@ class PerformanceSnapshotTests(unittest.TestCase):
         current = performance_snapshot(refresh_p95=7_000)
         _, failures = compare_performance(current, performance_snapshot(refresh_p95=500), 'Windows')
         self.assertTrue(any('Full refresh P95' in failure for failure in failures))
+
+    def test_schema_v2_compares_warm_and_cold_metrics(self):
+        current = performance_snapshot(schema_version=2)
+        baseline = performance_snapshot(schema_version=2)
+
+        comparisons, failures = compare_performance(current, baseline, 'Windows')
+
+        self.assertEqual(len(comparisons), 7)
+        self.assertEqual(failures, [])
+
+    def test_schema_v2_requires_cold_samples(self):
+        current = performance_snapshot(schema_version=2)
+        del current['stats']['cold_refresh']
+
+        with self.assertRaisesRegex(SnapshotError, 'current.stats.cold_refresh'):
+            compare_performance(current, performance_snapshot(), 'Windows')
+
+    def test_schema_v2_requires_cold_diagnostic_percentiles(self):
+        current = performance_snapshot(schema_version=2)
+        del current['stats']['cold_time_to_first_env']['p95']
+
+        with self.assertRaisesRegex(SnapshotError, 'cold_time_to_first_env.p95'):
+            compare_performance(current, performance_snapshot(), 'Windows')
+
+    def test_legacy_baseline_uses_absolute_cold_ceiling(self):
+        current = performance_snapshot(schema_version=2, cold_p50=499)
+
+        comparisons, failures = compare_performance(current, performance_snapshot(), 'Linux')
+
+        self.assertEqual(len(comparisons), 7)
+        self.assertEqual(comparisons[-1].label, 'Cold refresh P50')
+        self.assertEqual(failures, [])
+
+    def test_legacy_cold_ceiling_is_explicit_in_report(self):
+        current = performance_snapshot(schema_version=2, cold_p50=499)
+        baseline = performance_snapshot()
+        comparisons, failures = compare_performance(current, baseline, 'Linux')
+
+        report = performance_report('Linux', comparisons, failures, current, baseline)
+
+        self.assertIn('| Cold refresh P50 | 499ms | legacy schema |', report)
+        self.assertIn(
+            'Cold refresh uses a platform absolute ceiling while the exact base has legacy metrics.',
+            report,
+        )
+
+    def test_legacy_baseline_rejects_excessive_cold_p50(self):
+        current = performance_snapshot(schema_version=2, cold_p50=501)
+
+        _, failures = compare_performance(current, performance_snapshot(), 'Linux')
+
+        self.assertTrue(any('Cold refresh P50 exceeded' in failure for failure in failures))
+
+    def test_cold_p50_regression_fails_when_all_cold_samples_are_slow(self):
+        current = performance_snapshot(schema_version=2, cold_p50=400)
+        baseline = performance_snapshot(schema_version=2, cold_p50=150)
+
+        _, failures = compare_performance(current, baseline, 'Windows')
+
+        self.assertTrue(any('Cold refresh P50 regressed' in failure for failure in failures))
+
+    def test_legacy_current_is_invalid_against_schema_v2_baseline(self):
+        with self.assertRaisesRegex(SnapshotError, 'older than baseline schema'):
+            compare_performance(
+                performance_snapshot(),
+                performance_snapshot(schema_version=2),
+                'Windows',
+            )
+
+    def test_newer_performance_schema_is_invalid(self):
+        with self.assertRaisesRegex(SnapshotError, 'newer than supported version'):
+            compare_performance(
+                performance_snapshot(schema_version=3),
+                performance_snapshot(schema_version=2),
+                'Windows',
+            )
 
     def test_post_fix_macos_tail_variance_passes(self):
         baseline = performance_snapshot(startup_p95=621, refresh_p95=1_343, first_p95=649)

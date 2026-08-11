@@ -53,6 +53,24 @@ class MetricComparison:
         return self.delta > self.budget.absolute_ms and self.percent_change > self.budget.relative_percent
 
 
+@dataclass(frozen=True)
+class AbsoluteLimitComparison:
+    label: str
+    current: float
+    limit: float
+
+    @property
+    def delta(self) -> float:
+        return self.current - self.limit
+
+    @property
+    def regressed(self) -> bool:
+        return self.current > self.limit
+
+
+PerformanceComparison = MetricComparison | AbsoluteLimitComparison
+
+
 PERFORMANCE_METRICS = (
     MetricSpec('Server startup P50', 'server_startup', 'p50'),
     MetricSpec('Server startup P95', 'server_startup', 'p95'),
@@ -87,6 +105,19 @@ PERFORMANCE_BUDGETS = {
         RegressionBudget(750, 100),
     ),
 }
+PERFORMANCE_METRICS_SCHEMA_VERSION = 2
+COLD_REFRESH_SPEC = MetricSpec('Cold refresh P50', 'cold_refresh', 'p50')
+COLD_DIAGNOSTIC_SPECS = (
+    MetricSpec('Cold refresh P95', 'cold_refresh', 'p95'),
+    MetricSpec('Cold time to first environment P50', 'cold_time_to_first_env', 'p50'),
+    MetricSpec('Cold time to first environment P95', 'cold_time_to_first_env', 'p95'),
+)
+COLD_REFRESH_BUDGETS = {
+    'linux': RegressionBudget(100, 50),
+    'windows': RegressionBudget(150, 50),
+    'macos': RegressionBudget(250, 50),
+}
+COLD_REFRESH_LEGACY_LIMIT_MS = {'linux': 500, 'windows': 750, 'macos': 1_000}
 COVERAGE_BUDGET_PERCENTAGE_POINTS = 0.01
 
 
@@ -151,9 +182,54 @@ def performance_value(snapshot: dict[str, Any], spec: MetricSpec, source: str) -
     return require_number(group.get(spec.percentile), f'{source}.stats.{spec.group}.{spec.percentile}')
 
 
+def performance_schema_version(snapshot: dict[str, Any], source: str) -> int:
+    version = require_integer(
+        snapshot.get('metrics_schema_version', 1),
+        f'{source}.metrics_schema_version',
+        minimum=1,
+    )
+    if version > PERFORMANCE_METRICS_SCHEMA_VERSION:
+        raise SnapshotError(
+            f'{source}.metrics_schema_version {version} is newer than supported version '
+            f'{PERFORMANCE_METRICS_SCHEMA_VERSION}'
+        )
+    return version
+
+
+def cold_refresh_budget(platform: str) -> RegressionBudget:
+    key = platform_key(platform)
+    try:
+        return COLD_REFRESH_BUDGETS[key]
+    except KeyError as error:
+        raise SnapshotError(f'Missing cold-refresh budget for {key}') from error
+
+
+def cold_refresh_legacy_limit(platform: str) -> float:
+    key = platform_key(platform)
+    try:
+        return COLD_REFRESH_LEGACY_LIMIT_MS[key]
+    except KeyError as error:
+        raise SnapshotError(f'Missing legacy cold-refresh ceiling for {key}') from error
+
+
+def cold_refresh_value(snapshot: dict[str, Any], source: str) -> float:
+    value = performance_value(snapshot, COLD_REFRESH_SPEC, source)
+    for spec in COLD_DIAGNOSTIC_SPECS:
+        performance_value(snapshot, spec, source)
+    return value
+
+
 def compare_performance(
     current: dict[str, Any], baseline: dict[str, Any], platform: str
-) -> tuple[list[MetricComparison], list[str]]:
+) -> tuple[list[PerformanceComparison], list[str]]:
+    current_version = performance_schema_version(current, 'current')
+    baseline_version = performance_schema_version(baseline, 'baseline')
+    if current_version < baseline_version:
+        raise SnapshotError(
+            f'Current performance schema {current_version} is older than baseline schema '
+            f'{baseline_version}'
+        )
+
     current_envs = require_integer(current.get('environments_count'), 'current.environments_count', minimum=1)
     baseline_envs = require_integer(baseline.get('environments_count'), 'baseline.environments_count', minimum=1)
     current_managers = require_integer(current.get('managers_count'), 'current.managers_count')
@@ -165,7 +241,7 @@ def compare_performance(
     if current_managers != baseline_managers:
         failures.append(f'Manager inventory changed: current={current_managers}, baseline={baseline_managers}')
 
-    comparisons = [
+    comparisons: list[PerformanceComparison] = [
         MetricComparison(
             spec.label,
             performance_value(current, spec, 'current'),
@@ -174,11 +250,39 @@ def compare_performance(
         )
         for spec, budget in performance_specs(platform)
     ]
-    failures.extend(
-        f'{comparison.label} regressed by {comparison.delta:.0f}ms ({comparison.percent_change:.1f}%)'
-        for comparison in comparisons
-        if comparison.regressed
-    )
+    if current_version >= 2:
+        current_cold = cold_refresh_value(current, 'current')
+        if baseline_version >= 2:
+            comparisons.append(
+                MetricComparison(
+                    COLD_REFRESH_SPEC.label,
+                    current_cold,
+                    cold_refresh_value(baseline, 'baseline'),
+                    cold_refresh_budget(platform),
+                )
+            )
+        else:
+            comparisons.append(
+                AbsoluteLimitComparison(
+                    COLD_REFRESH_SPEC.label,
+                    current_cold,
+                    cold_refresh_legacy_limit(platform),
+                )
+            )
+
+    for comparison in comparisons:
+        if not comparison.regressed:
+            continue
+        if isinstance(comparison, MetricComparison):
+            failures.append(
+                f'{comparison.label} regressed by {comparison.delta:.0f}ms '
+                f'({comparison.percent_change:.1f}%)'
+            )
+        else:
+            failures.append(
+                f'{comparison.label} exceeded the legacy-baseline ceiling by '
+                f'{comparison.delta:.0f}ms'
+            )
     return comparisons, failures
 
 
@@ -244,19 +348,30 @@ def status_icon(failed: bool, delta: float) -> str:
 
 def performance_report(
     platform: str,
-    comparisons: Sequence[MetricComparison],
+    comparisons: Sequence[PerformanceComparison],
     failures: Sequence[str],
     current: dict[str, Any],
     baseline: dict[str, Any],
 ) -> str:
     rows = []
+    has_legacy_cold_baseline = False
     for comparison in comparisons:
-        rows.append(
-            f'| {comparison.label} | {comparison.current:.0f}ms | {comparison.baseline:.0f}ms | '
-            f'{comparison.delta:+.0f}ms | {comparison.percent_change:+.1f}% | '
-            f'>{comparison.budget.absolute_ms:.0f}ms and >{comparison.budget.relative_percent:.0f}% | '
-            f"{status_icon(comparison.regressed, comparison.delta)} |"
-        )
+        if isinstance(comparison, MetricComparison):
+            rows.append(
+                f'| {comparison.label} | {comparison.current:.0f}ms | '
+                f'{comparison.baseline:.0f}ms | {comparison.delta:+.0f}ms | '
+                f'{comparison.percent_change:+.1f}% | '
+                f'>{comparison.budget.absolute_ms:.0f}ms and '
+                f'>{comparison.budget.relative_percent:.0f}% | '
+                f"{status_icon(comparison.regressed, comparison.delta)} |"
+            )
+        else:
+            has_legacy_cold_baseline = True
+            rows.append(
+                f'| {comparison.label} | {comparison.current:.0f}ms | legacy schema | n/a | n/a | '
+                f'>{comparison.limit:.0f}ms absolute | '
+                f"{status_icon(comparison.regressed, comparison.delta)} |"
+            )
     result = ':x: Regression detected' if failures else ':white_check_mark: Within regression budgets'
     report = [
         f'## Performance Report ({platform})',
@@ -272,6 +387,11 @@ def performance_report(
         f"| Environments | {current['environments_count']} | {baseline['environments_count']} |",
         f"| Managers | {current['managers_count']} | {baseline['managers_count']} |",
     ]
+    if has_legacy_cold_baseline:
+        report.extend([
+            '',
+            '> Cold refresh uses a platform absolute ceiling while the exact base has legacy metrics.',
+        ])
     if failures:
         report.extend(['', '### Blocking findings', *[f'- {failure}' for failure in failures]])
     report.extend([
