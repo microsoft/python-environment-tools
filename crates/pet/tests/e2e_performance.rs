@@ -6,12 +6,15 @@
 //! These tests spawn the pet server as a subprocess and communicate via JSONRPC
 //! to measure discovery performance from a client perspective.
 
+use pet_core::telemetry::refresh_progress::{
+    RefreshProgress, RefreshProgressPhase, RefreshProgressStatus,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -199,14 +202,18 @@ pub struct Manager {
 struct SharedState {
     environments: Mutex<Vec<Environment>>,
     managers: Mutex<Vec<Manager>>,
+    refresh_progress: Mutex<Vec<RefreshProgress>>,
+    capture_refresh_progress: bool,
     first_env_time: Mutex<Option<Instant>>,
 }
 
 impl SharedState {
-    fn new() -> Self {
+    fn new(capture_refresh_progress: bool) -> Self {
         Self {
             environments: Mutex::new(Vec::new()),
             managers: Mutex::new(Vec::new()),
+            refresh_progress: Mutex::new(Vec::new()),
+            capture_refresh_progress,
             first_env_time: Mutex::new(None),
         }
     }
@@ -231,9 +238,23 @@ impl SharedState {
                     self.managers.lock().unwrap().push(mgr);
                 }
             }
-            "log" | "telemetry" => {
-                // Ignore log and telemetry notifications
+            "telemetry" if self.capture_refresh_progress => {
+                if params.get("event").and_then(Value::as_str) == Some("RefreshProgress") {
+                    if let Some(progress) = params
+                        .get("data")
+                        .and_then(|data| data.get("refreshProgress"))
+                        .and_then(|value| {
+                            serde_json::from_value::<RefreshProgress>(value.clone()).ok()
+                        })
+                    {
+                        self.refresh_progress
+                            .lock()
+                            .expect("refresh progress mutex poisoned")
+                            .push(progress);
+                    }
+                }
             }
+            "log" => {}
             _ => {
                 // Unknown notification
             }
@@ -243,6 +264,10 @@ impl SharedState {
     fn clear(&self) {
         self.environments.lock().unwrap().clear();
         self.managers.lock().unwrap().clear();
+        self.refresh_progress
+            .lock()
+            .expect("refresh progress mutex poisoned")
+            .clear();
         *self.first_env_time.lock().unwrap() = None;
     }
 }
@@ -253,6 +278,7 @@ pub struct PetClient {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    interpreter_probe_timeouts: Arc<Mutex<BTreeMap<String, usize>>>,
     stderr_handle: Option<JoinHandle<()>>,
     state: Arc<SharedState>,
     start_time: Instant,
@@ -261,6 +287,14 @@ pub struct PetClient {
 impl PetClient {
     /// Spawn the pet server and create a client
     pub fn spawn() -> Result<Self, String> {
+        Self::spawn_with_options(false)
+    }
+
+    fn spawn_with_refresh_progress() -> Result<Self, String> {
+        Self::spawn_with_options(true)
+    }
+
+    fn spawn_with_options(capture_refresh_progress: bool) -> Result<Self, String> {
         let pet_exe = get_pet_executable();
 
         if !pet_exe.exists() {
@@ -292,15 +326,21 @@ impl PetClient {
             .take()
             .expect("PET stderr must be piped by the command above");
         let stderr_tail = Arc::new(Mutex::new(VecDeque::with_capacity(STDERR_TAIL_LINES)));
-        let stderr_handle = spawn_stderr_reader(stderr, stderr_tail.clone());
+        let interpreter_probe_timeouts = Arc::new(Mutex::new(BTreeMap::new()));
+        let stderr_handle = spawn_stderr_reader(
+            stderr,
+            stderr_tail.clone(),
+            interpreter_probe_timeouts.clone(),
+        );
 
         Ok(Self {
             process,
             stdin,
             stdout: BufReader::new(stdout),
             stderr_tail,
+            interpreter_probe_timeouts,
             stderr_handle: Some(stderr_handle),
-            state: Arc::new(SharedState::new()),
+            state: Arc::new(SharedState::new(capture_refresh_progress)),
             start_time,
         })
     }
@@ -378,6 +418,13 @@ impl PetClient {
             .join("\n")
     }
 
+    fn interpreter_probe_timeout_counts(&self) -> BTreeMap<String, usize> {
+        self.interpreter_probe_timeouts
+            .lock()
+            .expect("interpreter probe timeout mutex poisoned")
+            .clone()
+    }
+
     /// Configure the server
     pub fn configure(&mut self, config: Value) -> Result<Duration, String> {
         let start = Instant::now();
@@ -415,6 +462,14 @@ impl PetClient {
     /// Get collected managers
     pub fn get_managers(&self) -> Vec<Manager> {
         self.state.managers.lock().unwrap().clone()
+    }
+
+    fn get_refresh_progress(&self) -> Vec<RefreshProgress> {
+        self.state
+            .refresh_progress
+            .lock()
+            .expect("refresh progress mutex poisoned")
+            .clone()
     }
 
     /// Get time from start to first environment
@@ -511,6 +566,39 @@ fn get_workspace_dir() -> PathBuf {
         })
 }
 
+fn interpreter_probe_timeout_label(line: &str) -> Option<&'static str> {
+    if !line.contains("Timed out after") || !line.contains("resolving Python via spawn") {
+        return None;
+    }
+    if line.contains("/usr/bin/python3") {
+        Some("usrBinPython3")
+    } else if line.contains("CommandLineTools") {
+        Some("commandLineTools")
+    } else if line.contains("hostedtoolcache") {
+        Some("hostedToolcache")
+    } else if line.contains("/Library/Frameworks/Python.framework") {
+        Some("pythonOrgFramework")
+    } else if line.contains("/usr/local/bin") {
+        Some("usrLocalBin")
+    } else {
+        Some("other")
+    }
+}
+
+#[test]
+fn interpreter_probe_timeouts_are_classified_without_exposing_paths() {
+    assert_eq!(
+        interpreter_probe_timeout_label(
+            r#"Timed out after 15s resolving Python via spawn for "/usr/bin/python3"; killing child."#
+        ),
+        Some("usrBinPython3")
+    );
+    assert_eq!(
+        interpreter_probe_timeout_label("ordinary PET warning"),
+        None
+    );
+}
+
 fn read_jsonrpc_message(reader: &mut impl BufRead) -> Result<Value, String> {
     let mut content_length = None;
     loop {
@@ -546,6 +634,7 @@ fn read_jsonrpc_message(reader: &mut impl BufRead) -> Result<Value, String> {
 fn spawn_stderr_reader(
     stderr: impl Read + Send + 'static,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
+    interpreter_probe_timeouts: Arc<Mutex<BTreeMap<String, usize>>>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
         for line in BufReader::new(stderr).lines() {
@@ -553,6 +642,13 @@ fn spawn_stderr_reader(
                 Ok(line) => line,
                 Err(error) => format!("Failed to read PET stderr: {error}"),
             };
+            if let Some(label) = interpreter_probe_timeout_label(&line) {
+                *interpreter_probe_timeouts
+                    .lock()
+                    .expect("interpreter probe timeout mutex poisoned")
+                    .entry(label.to_string())
+                    .or_default() += 1;
+            }
             let mut tail = stderr_tail.lock().expect("PET stderr tail mutex poisoned");
             if tail.len() == STDERR_TAIL_LINES {
                 tail.pop_front();
@@ -581,17 +677,180 @@ fn jsonrpc_reader_preserves_buffered_follow_up_message() {
 
 #[test]
 fn stderr_reader_drains_input_and_bounds_diagnostic_tail() {
-    let input = (0..STDERR_TAIL_LINES + 5)
-        .map(|index| format!("line {index}\n"))
-        .collect::<String>();
+    let timeout_line =
+        r#"Timed out after 15s resolving Python via spawn for "/usr/bin/python3"; killing child."#;
+    let input = format!(
+        "{timeout_line}\n{}",
+        (0..STDERR_TAIL_LINES + 5)
+            .map(|index| format!("line {index}\n"))
+            .collect::<String>()
+    );
     let tail = Arc::new(Mutex::new(VecDeque::new()));
-    let handle = spawn_stderr_reader(std::io::Cursor::new(input.into_bytes()), tail.clone());
+    let timeout_counts = Arc::new(Mutex::new(BTreeMap::new()));
+    let handle = spawn_stderr_reader(
+        std::io::Cursor::new(input.into_bytes()),
+        tail.clone(),
+        timeout_counts.clone(),
+    );
     handle.join().unwrap();
 
     let tail = tail.lock().unwrap();
     assert_eq!(tail.len(), STDERR_TAIL_LINES);
     assert_eq!(tail.front().map(String::as_str), Some("line 5"));
     assert_eq!(tail.back().map(String::as_str), Some("line 104"));
+    drop(tail);
+    assert_eq!(
+        timeout_counts.lock().unwrap().get("usrBinPython3"),
+        Some(&1)
+    );
+}
+
+fn refresh_phase_name(phase: RefreshProgressPhase) -> &'static str {
+    match phase {
+        RefreshProgressPhase::Locators => "locators",
+        RefreshProgressPhase::Path => "path",
+        RefreshProgressPhase::GlobalVirtualEnvs => "globalVirtualEnvs",
+        RefreshProgressPhase::Workspaces => "workspaces",
+    }
+}
+
+fn collect_refresh_progress(
+    progress: &[RefreshProgress],
+    phase_stats: &mut BTreeMap<String, StatisticalMetrics>,
+    locator_stats: &mut BTreeMap<String, StatisticalMetrics>,
+) {
+    for event in progress
+        .iter()
+        .filter(|event| event.status == RefreshProgressStatus::Completed)
+    {
+        if let (Some(locator), Some(duration)) = (&event.locator_name, event.locator_elapsed_ms) {
+            locator_stats
+                .entry(locator.clone())
+                .or_default()
+                .add(duration);
+        } else if let Some(duration) = event.phase_elapsed_ms {
+            phase_stats
+                .entry(refresh_phase_name(event.phase).to_string())
+                .or_default()
+                .add(duration);
+        }
+    }
+}
+
+fn statistics_json(statistics: &BTreeMap<String, StatisticalMetrics>) -> BTreeMap<String, Value> {
+    statistics
+        .iter()
+        .map(|(name, metrics)| (name.clone(), metrics.to_json()))
+        .collect()
+}
+
+fn record_interpreter_probe_timeouts(
+    client: &PetClient,
+    probe_timeout_counts: &mut BTreeMap<String, usize>,
+) {
+    let timeout_counts = client.interpreter_probe_timeout_counts();
+    for (label, count) in &timeout_counts {
+        *probe_timeout_counts.entry(label.clone()).or_default() += count;
+    }
+    if !timeout_counts.is_empty() {
+        println!("    Interpreter probe timeouts: {timeout_counts:?}");
+    }
+}
+
+fn collect_refresh_diagnostics(
+    workspace_dir: &Path,
+    cache_dir: &Path,
+    phase_stats: &mut BTreeMap<String, StatisticalMetrics>,
+    locator_stats: &mut BTreeMap<String, StatisticalMetrics>,
+    probe_timeout_counts: &mut BTreeMap<String, usize>,
+) {
+    let diagnostic_cache_dir = cache_dir.join("refresh-progress");
+    let _ = std::fs::remove_dir_all(&diagnostic_cache_dir);
+    std::fs::create_dir_all(&diagnostic_cache_dir)
+        .expect("Failed to create refresh diagnostic cache dir");
+
+    println!("\nCollecting untimed refresh diagnostics...");
+    for iteration in 0..STAT_ITERATIONS {
+        let mut client =
+            PetClient::spawn_with_refresh_progress().expect("Failed to spawn diagnostic server");
+        client
+            .configure(json!({
+                "workspaceDirectories": [workspace_dir],
+                "cacheDirectory": diagnostic_cache_dir
+            }))
+            .expect("Failed to configure diagnostic server");
+        let (result, _) = client
+            .refresh(None)
+            .expect("Failed to run diagnostic refresh");
+
+        collect_refresh_progress(&client.get_refresh_progress(), phase_stats, locator_stats);
+        record_interpreter_probe_timeouts(&client, probe_timeout_counts);
+        println!(
+            "  Diagnostic iteration {}: refresh={}ms, envs={}",
+            iteration + 1,
+            result.duration,
+            client.get_environments().len()
+        );
+    }
+}
+
+#[test]
+fn refresh_progress_notifications_are_collected_only_when_enabled() {
+    let notification = json!({
+        "event": "RefreshProgress",
+        "data": {
+            "refreshProgress": {
+                "refreshId": 7,
+                "phase": "locators",
+                "status": "completed",
+                "elapsedMs": 25,
+                "locatorName": "Conda",
+                "locatorElapsedMs": 20
+            }
+        }
+    });
+
+    let disabled_state = SharedState::new(false);
+    disabled_state.handle_notification("telemetry", notification.clone());
+    assert!(disabled_state.refresh_progress.lock().unwrap().is_empty());
+
+    let state = SharedState::new(true);
+    state.handle_notification("telemetry", notification);
+    let progress = state.refresh_progress.lock().unwrap();
+    assert_eq!(progress.len(), 1);
+    assert_eq!(progress[0].locator_name.as_deref(), Some("Conda"));
+    assert_eq!(progress[0].locator_elapsed_ms, Some(20));
+}
+
+#[test]
+fn refresh_progress_aggregation_separates_phases_and_locators() {
+    let progress = vec![
+        RefreshProgress {
+            refresh_id: 1,
+            phase: RefreshProgressPhase::Locators,
+            status: RefreshProgressStatus::Completed,
+            elapsed_ms: 30,
+            phase_elapsed_ms: Some(30),
+            locator_name: None,
+            locator_elapsed_ms: None,
+        },
+        RefreshProgress {
+            refresh_id: 1,
+            phase: RefreshProgressPhase::Locators,
+            status: RefreshProgressStatus::Completed,
+            elapsed_ms: 25,
+            phase_elapsed_ms: None,
+            locator_name: Some("Conda".to_string()),
+            locator_elapsed_ms: Some(20),
+        },
+    ];
+    let mut phases = BTreeMap::new();
+    let mut locators = BTreeMap::new();
+
+    collect_refresh_progress(&progress, &mut phases, &mut locators);
+
+    assert_eq!(phases["locators"].samples, vec![30]);
+    assert_eq!(locators["Conda"].samples, vec![20]);
 }
 
 // ============================================================================
@@ -1083,8 +1342,10 @@ fn test_performance_summary() {
     let mut startup_stats = StatisticalMetrics::new();
     let mut refresh_stats = StatisticalMetrics::new();
     let mut time_to_first_env_stats = StatisticalMetrics::new();
-    let mut env_count = 0usize;
-    let mut manager_count = 0usize;
+    let mut phase_stats = BTreeMap::new();
+    let mut locator_stats = BTreeMap::new();
+    let mut probe_timeout_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut expected_inventory = None;
 
     let cache_dir = get_test_cache_dir();
     let _ = std::fs::remove_dir_all(&cache_dir);
@@ -1114,21 +1375,54 @@ fn test_performance_summary() {
         let (result, _) = client.refresh(None).expect("Failed to refresh");
         refresh_stats.add(result.duration);
 
-        env_count = client.get_environments().len();
-        manager_count = client.get_managers().len();
+        let inventory = (client.get_environments().len(), client.get_managers().len());
+        if let Some(expected) = expected_inventory {
+            assert_eq!(
+                inventory, expected,
+                "Environment and manager inventory changed after iteration 1"
+            );
+        } else {
+            expected_inventory = Some(inventory);
+        }
 
         if let Some(ttfe) = client.time_to_first_env() {
             time_to_first_env_stats.add(ttfe.as_millis());
         }
+        record_interpreter_probe_timeouts(&client, &mut probe_timeout_counts);
 
         println!(
             "  Iteration {}: startup={}ms, refresh={}ms, envs={}",
             i + 1,
             startup_time,
             result.duration,
-            env_count
+            inventory.0
         );
     }
+
+    let (env_count, manager_count) =
+        expected_inventory.expect("Performance summary must run at least one iteration");
+    collect_refresh_diagnostics(
+        &workspace_dir,
+        &cache_dir,
+        &mut phase_stats,
+        &mut locator_stats,
+        &mut probe_timeout_counts,
+    );
+
+    for phase in ["locators", "path", "globalVirtualEnvs", "workspaces"] {
+        let count = phase_stats
+            .get(phase)
+            .map(StatisticalMetrics::count)
+            .unwrap_or_default();
+        assert_eq!(
+            count, STAT_ITERATIONS,
+            "Expected one completed {phase} phase per refresh iteration"
+        );
+    }
+    assert!(
+        !locator_stats.is_empty(),
+        "Expected per-locator timing in RefreshProgress telemetry"
+    );
 
     // Print statistical summary
     println!("\n----------------------------------------");
@@ -1139,9 +1433,18 @@ fn test_performance_summary() {
     if time_to_first_env_stats.count() > 0 {
         time_to_first_env_stats.print_summary("Time to first env");
     }
+    for (phase, metrics) in &phase_stats {
+        metrics.print_summary(&format!("Phase {phase}"));
+    }
+    for (locator, metrics) in &locator_stats {
+        metrics.print_summary(&format!("Locator {locator}"));
+    }
     println!("Environments found:    {}", env_count);
     println!("Managers found:        {}", manager_count);
     println!("========================================\n");
+
+    let phase_json = statistics_json(&phase_stats);
+    let locator_json = statistics_json(&locator_stats);
 
     // Output as JSON for CI parsing
     // Includes both P50 values at top level (for backwards compatibility) and full stats
@@ -1155,7 +1458,10 @@ fn test_performance_summary() {
             "server_startup": startup_stats.to_json(),
             "full_refresh": refresh_stats.to_json(),
             "time_to_first_env": time_to_first_env_stats.to_json()
-        }
+        },
+        "phases": phase_json,
+        "locators": locator_json,
+        "interpreter_probe_timeouts": probe_timeout_counts
     }))
     .unwrap();
 
