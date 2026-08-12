@@ -73,7 +73,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
         self.assertEqual(failures, [])
 
     def test_p50_regression_fails_when_both_budgets_are_exceeded(self):
-        current = performance_snapshot(refresh_p50=180)
+        current = performance_snapshot(refresh_p50=300)
         _, failures = compare_performance(current, performance_snapshot(refresh_p50=100), 'Windows')
         self.assertTrue(any('Full refresh P50' in failure for failure in failures))
 
@@ -158,6 +158,24 @@ class PerformanceSnapshotTests(unittest.TestCase):
                 'Windows',
             )
 
+    def test_schema_v2_windows_warm_p50_variance_passes(self):
+        baseline = performance_snapshot(schema_version=2, refresh_p50=105)
+        current = performance_snapshot(schema_version=2, refresh_p50=182)
+
+        _, failures = compare_performance(current, baseline, 'Windows')
+
+        self.assertEqual(failures, [])
+
+    def test_schema_v2_windows_warm_p50_material_regression_fails(self):
+        baseline = performance_snapshot(schema_version=2, refresh_p50=105)
+        current = performance_snapshot(schema_version=2, refresh_p50=300)
+
+        _, failures = compare_performance(current, baseline, 'Windows')
+
+        self.assertTrue(any('Full refresh P50' in failure for failure in failures))
+        self.assertFalse(any('Full refresh P95' in failure for failure in failures))
+        self.assertFalse(any('Cold refresh P50' in failure for failure in failures))
+
     def test_schema_v2_warm_p95_variance_passes_on_all_platforms(self):
         cases = (
             ('Linux', 60, 69, 16, 16),
@@ -233,7 +251,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
 
     def test_relative_budget_must_also_be_exceeded(self):
-        current = performance_snapshot(refresh_p50=1_060)
+        current = performance_snapshot(refresh_p50=1_160)
         _, failures = compare_performance(current, performance_snapshot(refresh_p50=1_000), 'Windows')
         self.assertEqual(failures, [])
 
