@@ -205,3 +205,44 @@ fn skips_path_lookup_when_conda_executable_provided() {
         locations
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn deduplicates_windows_install_aliases_and_preserves_disk_casing() {
+    use common::create_env_variables;
+    use pet_conda::environment_locations::get_conda_environment_paths;
+    use std::fs;
+
+    let temp_dir = tempfile::tempdir().expect("failed to create temporary test directory");
+    let home = temp_dir.path();
+    let install = home.join("Miniconda3");
+    let child = install.join("envs").join("MyEnv");
+
+    fs::create_dir_all(install.join("conda-meta"))
+        .expect("failed to create base conda-meta directory");
+    fs::create_dir_all(install.join("condabin")).expect("failed to create base condabin directory");
+    fs::create_dir_all(child.join("conda-meta"))
+        .expect("failed to create child conda-meta directory");
+
+    let conda_state = home.join(".conda");
+    fs::create_dir_all(&conda_state).expect("failed to create .conda directory");
+    fs::write(
+        conda_state.join("environments.txt"),
+        format!("{}\n{}\n", install.display(), child.display()),
+    )
+    .expect("failed to write environments.txt");
+
+    let mut env = create_env_variables(home.to_path_buf(), home.to_path_buf());
+    env.userprofile = Some(home.to_string_lossy().into_owned());
+
+    let environments = get_conda_environment_paths(&env, &None);
+    let mut local_environments = environments
+        .into_iter()
+        .filter(|path| path.starts_with(home))
+        .collect::<Vec<_>>();
+    local_environments.sort();
+
+    let mut expected = vec![install, child];
+    expected.sort();
+    assert_eq!(local_environments, expected);
+}

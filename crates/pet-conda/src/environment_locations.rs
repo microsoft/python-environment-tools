@@ -320,6 +320,25 @@ pub fn get_conda_envs_from_environment_txt(env_vars: &EnvVariables) -> Vec<PathB
 }
 
 #[cfg(windows)]
+fn restore_existing_leaf_case(path: PathBuf) -> PathBuf {
+    let Some(parent) = path.parent() else {
+        return path;
+    };
+    let Some(file_name) = path.file_name() else {
+        return path;
+    };
+    let Ok(entries) = fs::read_dir(parent) else {
+        return path;
+    };
+
+    entries
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().eq_ignore_ascii_case(file_name))
+        .map(|entry| entry.path())
+        .unwrap_or(path)
+}
+
+#[cfg(windows)]
 pub fn get_known_conda_install_locations(
     env_vars: &EnvVariables,
     conda_executable: &Option<PathBuf>,
@@ -416,15 +435,6 @@ pub fn get_known_conda_install_locations(
                 .join("conda"),
         );
     }
-    known_paths.sort();
-    known_paths.dedup();
-    // Ensure the casing of the paths are correct.
-    // Its possible the actual path is in a different case.
-    // E.g. instead of C:\username\miniconda it might bt C:\username\Miniconda
-    // We use lower cases above, but it could be in any case on disc.
-    // We do not want to have duplicates in different cases.
-    // & we'd like to preserve the case of the original path as on disc.
-    known_paths = known_paths.iter().map(norm_case).collect();
     if let Some(conda_dir) = get_conda_dir_from_exe(conda_executable) {
         known_paths.push(conda_dir);
     }
@@ -436,6 +446,13 @@ pub fn get_known_conda_install_locations(
     if let Some(mamba_dir) = get_conda_dir_from_exe(&find_mamba_binary(env_vars)) {
         known_paths.push(mamba_dir);
     }
+
+    known_paths = known_paths
+        .into_iter()
+        .filter(|path| path.exists())
+        .map(norm_case)
+        .map(restore_existing_leaf_case)
+        .collect();
     known_paths.sort();
     known_paths.dedup();
 
