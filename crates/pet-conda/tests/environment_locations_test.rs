@@ -211,6 +211,7 @@ fn skips_path_lookup_when_conda_executable_provided() {
 fn deduplicates_windows_install_aliases_and_preserves_disk_casing() {
     use common::create_env_variables;
     use pet_conda::environment_locations::get_conda_environment_paths;
+    use pet_fs::path::norm_case;
     use std::fs;
 
     let temp_dir = tempfile::tempdir().expect("failed to create temporary test directory");
@@ -236,13 +237,14 @@ fn deduplicates_windows_install_aliases_and_preserves_disk_casing() {
     env.userprofile = Some(home.to_string_lossy().into_owned());
 
     let environments = get_conda_environment_paths(&env, &None);
+    let normalized_home = norm_case(home);
     let mut local_environments = environments
         .into_iter()
-        .filter(|path| path.starts_with(home))
+        .filter(|path| path.starts_with(&normalized_home))
         .collect::<Vec<_>>();
     local_environments.sort();
 
-    let mut expected = vec![install, child];
+    let mut expected = vec![norm_case(install), norm_case(child)];
     expected.sort();
     assert_eq!(local_environments, expected);
 }
