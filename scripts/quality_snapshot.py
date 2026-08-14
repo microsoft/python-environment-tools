@@ -106,6 +106,7 @@ PERFORMANCE_BUDGETS = {
     ),
 }
 PERFORMANCE_METRICS_SCHEMA_VERSION = 2
+PERFORMANCE_INVENTORY_SCHEMA_VERSION = 2
 COLD_REFRESH_SPEC = MetricSpec('Cold refresh P50', 'cold_refresh', 'p50')
 COLD_DIAGNOSTIC_SPECS = (
     MetricSpec('Cold refresh P95', 'cold_refresh', 'p95'),
@@ -196,6 +197,20 @@ def performance_schema_version(snapshot: dict[str, Any], source: str) -> int:
     return version
 
 
+def inventory_schema_version(snapshot: dict[str, Any], source: str) -> int:
+    version = require_integer(
+        snapshot.get('inventory_schema_version', 1),
+        f'{source}.inventory_schema_version',
+        minimum=1,
+    )
+    if version > PERFORMANCE_INVENTORY_SCHEMA_VERSION:
+        raise SnapshotError(
+            f'{source}.inventory_schema_version {version} is newer than supported version '
+            f'{PERFORMANCE_INVENTORY_SCHEMA_VERSION}'
+        )
+    return version
+
+
 def cold_refresh_budget(platform: str) -> RegressionBudget:
     key = platform_key(platform)
     try:
@@ -230,16 +245,25 @@ def compare_performance(
             f'{baseline_version}'
         )
 
+    current_inventory_version = inventory_schema_version(current, 'current')
+    baseline_inventory_version = inventory_schema_version(baseline, 'baseline')
+    if current_inventory_version < baseline_inventory_version:
+        raise SnapshotError(
+            f'Current inventory schema {current_inventory_version} is older than baseline '
+            f'inventory schema {baseline_inventory_version}'
+        )
+
     current_envs = require_integer(current.get('environments_count'), 'current.environments_count', minimum=1)
     baseline_envs = require_integer(baseline.get('environments_count'), 'baseline.environments_count', minimum=1)
     current_managers = require_integer(current.get('managers_count'), 'current.managers_count')
     baseline_managers = require_integer(baseline.get('managers_count'), 'baseline.managers_count')
 
     failures: list[str] = []
-    if current_envs != baseline_envs:
-        failures.append(f'Environment inventory changed: current={current_envs}, baseline={baseline_envs}')
-    if current_managers != baseline_managers:
-        failures.append(f'Manager inventory changed: current={current_managers}, baseline={baseline_managers}')
+    if current_inventory_version == baseline_inventory_version:
+        if current_envs != baseline_envs:
+            failures.append(f'Environment inventory changed: current={current_envs}, baseline={baseline_envs}')
+        if current_managers != baseline_managers:
+            failures.append(f'Manager inventory changed: current={current_managers}, baseline={baseline_managers}')
 
     comparisons: list[PerformanceComparison] = [
         MetricComparison(
@@ -353,6 +377,8 @@ def performance_report(
     current: dict[str, Any],
     baseline: dict[str, Any],
 ) -> str:
+    current_inventory_version = inventory_schema_version(current, 'current')
+    baseline_inventory_version = inventory_schema_version(baseline, 'baseline')
     rows = []
     has_legacy_cold_baseline = False
     for comparison in comparisons:
@@ -392,12 +418,19 @@ def performance_report(
             '',
             '> Cold refresh uses a platform absolute ceiling while the exact base has legacy metrics.',
         ])
+    if current_inventory_version > baseline_inventory_version:
+        report.extend([
+            '',
+            '### Inventory schema transition',
+            f'- Inventory schema transitioned from v{baseline_inventory_version} to '
+            f'v{current_inventory_version}; exact count matching is skipped for this comparison.',
+        ])
     if failures:
         report.extend(['', '### Blocking findings', *[f'- {failure}' for failure in failures]])
     report.extend([
         '',
         '> A regression must exceed both the documented absolute and relative budget. '
-        'Environment and manager inventories must match exactly.',
+        'Environment and manager inventories must match exactly within the same inventory schema.',
     ])
     return '\n'.join(report) + '\n'
 
