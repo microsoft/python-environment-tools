@@ -29,6 +29,7 @@ static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 /// Number of iterations for statistical tests
 const STAT_ITERATIONS: usize = 10;
 const PERFORMANCE_METRICS_SCHEMA_VERSION: u8 = 2;
+const PERFORMANCE_INVENTORY_SCHEMA_VERSION: u8 = 2;
 const STDERR_TAIL_LINES: usize = 100;
 
 /// Statistical metrics with percentile calculations
@@ -1571,6 +1572,7 @@ fn test_performance_summary() {
     // Existing top-level refresh fields remain warm-cache values for schema compatibility.
     let json_output = serde_json::to_string_pretty(&json!({
         "metrics_schema_version": PERFORMANCE_METRICS_SCHEMA_VERSION,
+        "inventory_schema_version": PERFORMANCE_INVENTORY_SCHEMA_VERSION,
         "server_startup_ms": startup_stats.p50().unwrap_or(0),
         "full_refresh_ms": warm_refresh_stats.p50().unwrap_or(0),
         "cold_refresh_ms": cold_refresh_stats.p50().unwrap_or(0),

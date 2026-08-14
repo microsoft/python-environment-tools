@@ -7,7 +7,7 @@ PET uses pull-request snapshots to prevent performance and coverage drift. Each 
 The performance workflow runs 10 paired cache-cold/cache-warm JSON-RPC iterations on Linux, Windows, and macOS, plus 10 untimed cache-cold diagnostic iterations. A comparison is valid only when:
 
 - current and baseline metrics contain at least five samples for every required distribution;
-- environment and manager counts match exactly; and
+- environment and manager counts match exactly within the same inventory schema; and
 - the benchmark command and JSON extraction both succeed.
 
 A metric blocks when it exceeds both its absolute and relative budget:
@@ -31,6 +31,8 @@ The warm refresh and warm time-to-first P95 budgets were recalibrated in issue #
 The Windows warm full-refresh P50 budget was recalibrated in issue #513 from five unchanged-code pull-request measurements plus the exact schema-v2 baseline at `ad7ca14` (six measurements total). It retains nearly twice the observed absolute range while blocking a sustained median above 255ms against that baseline.
 
 Schema v2 records `full_refresh` and `time_to_first_env` from the warm member of each pair and adds cold refresh/time-to-first distributions. During its one-time rollout, comparisons against a schema-v1 base checked cold P50 against explicit absolute ceilings of 500ms on Linux, 750ms on Windows, and 1,000ms on macOS. Schema-v2-to-v2 comparisons use the table's dual budgets.
+
+Inventory schema v2 treats Windows Conda installation paths that differ only by on-disk casing as one logical workload entry. During the one-time v1-to-v2 transition, the report explicitly identifies the schema change and permits the expected count mismatch. Once the v2 baseline is published, exact environment and manager count matching resumes automatically.
 
 The cold P50 budgets were calibrated in issue #509 using two unchanged-head all-platform runs and the final pull-request validation.
 

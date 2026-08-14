@@ -27,7 +27,7 @@ def performance_snapshot(
     *, refresh_p50=100, refresh_p95=500, startup_p50=10, startup_p95=20,
     first_p50=15, first_p95=30, cold_p50=200, cold_p95=500,
     cold_first_p50=25, cold_first_p95=50, environments=5, managers=1,
-    schema_version=1
+    schema_version=1, inventory_schema_version=None
 ):
     snapshot = {
         'server_startup_ms': startup_p50,
@@ -55,6 +55,8 @@ def performance_snapshot(
             'p50': cold_first_p50,
             'p95': cold_first_p95,
         }
+    if inventory_schema_version is not None:
+        snapshot['inventory_schema_version'] = inventory_schema_version
     return snapshot
 
 
@@ -281,6 +283,44 @@ class PerformanceSnapshotTests(unittest.TestCase):
         _, failures = compare_performance(current, performance_snapshot(), 'Windows')
         self.assertTrue(any('Environment inventory changed' in failure for failure in failures))
         self.assertTrue(any('Manager inventory changed' in failure for failure in failures))
+
+    def test_inventory_schema_transition_allows_count_change(self):
+        current = performance_snapshot(
+            environments=6,
+            managers=1,
+            inventory_schema_version=2,
+        )
+        baseline = performance_snapshot(environments=8, managers=2)
+
+        comparisons, failures = compare_performance(current, baseline, 'Windows')
+        report = performance_report('Windows', comparisons, failures, current, baseline)
+
+        self.assertEqual(failures, [])
+        self.assertIn('Inventory schema transitioned from v1 to v2', report)
+
+    def test_same_inventory_schema_still_requires_matching_counts(self):
+        current = performance_snapshot(environments=6, inventory_schema_version=2)
+        baseline = performance_snapshot(environments=8, inventory_schema_version=2)
+
+        _, failures = compare_performance(current, baseline, 'Windows')
+
+        self.assertTrue(any('Environment inventory changed' in failure for failure in failures))
+
+    def test_older_current_inventory_schema_is_invalid(self):
+        with self.assertRaisesRegex(SnapshotError, 'older than baseline inventory schema'):
+            compare_performance(
+                performance_snapshot(),
+                performance_snapshot(inventory_schema_version=2),
+                'Windows',
+            )
+
+    def test_newer_inventory_schema_is_invalid(self):
+        with self.assertRaisesRegex(SnapshotError, 'newer than supported version'):
+            compare_performance(
+                performance_snapshot(inventory_schema_version=3),
+                performance_snapshot(),
+                'Windows',
+            )
 
     def test_missing_metric_is_invalid(self):
         current = performance_snapshot()
