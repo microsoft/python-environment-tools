@@ -158,15 +158,20 @@ fn get_interpreter_details_with_timeout(
     let result = child.wait_with_output();
     match result {
         Ok(output) => {
-            let output = String::from_utf8(output.stdout).unwrap().trim().to_string();
+            let output = output.stdout;
             trace!(
                 "Executed Python {:?} in {:?} & produced an output {:?}",
                 executable,
                 start.elapsed(),
-                output
+                String::from_utf8_lossy(&output)
             );
-            if let Some((_, output)) = output.split_once(PYTHON_INFO_JSON_SEPARATOR) {
-                if let Ok(info) = serde_json::from_str::<InterpreterInfo>(output) {
+            let separator = PYTHON_INFO_JSON_SEPARATOR.as_bytes();
+            if let Some(position) = output
+                .windows(separator.len())
+                .position(|bytes| bytes == separator)
+            {
+                let output = &output[position + separator.len()..];
+                if let Ok(info) = serde_json::from_slice::<InterpreterInfo>(output) {
                     let mut symlinks = vec![
                         PathBuf::from(executable),
                         PathBuf::from(info.executable.clone()),
@@ -183,14 +188,15 @@ fn get_interpreter_details_with_timeout(
                 } else {
                     error!(
                             "Python Execution for {:?} produced an output {:?} that could not be parsed as JSON",
-                            executable, output,
+                            executable, String::from_utf8_lossy(output),
                         );
                     None
                 }
             } else {
                 error!(
                     "Python Execution for {:?} produced an output {:?} without a separator",
-                    executable, output,
+                    executable,
+                    String::from_utf8_lossy(&output),
                 );
                 None
             }
@@ -209,6 +215,22 @@ fn get_interpreter_details_with_timeout(
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    // https://github.com/microsoft/python-environment-tools/issues/525:
+    // A launcher printing GBK-encoded "文件不存在" must not panic discovery.
+    #[test]
+    fn get_interpreter_details_handles_non_utf8_stdout() -> std::io::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let executable = directory.path().join("python");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nprintf '\\316\\304\\274\\376\\262\\273\\264\\346\\324\\332: -c\\r\\n'\n",
+        )?;
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
+        let result = get_interpreter_details_with_timeout(&executable, Duration::from_secs(5));
+        assert!(result.is_none());
+        directory.close()
+    }
 
     /// Regression test for #463: a spawn that never exits must not block the
     /// resolve path indefinitely. We use a shell script that sleeps far longer
