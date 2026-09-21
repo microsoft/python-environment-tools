@@ -13,11 +13,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::env;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -28,7 +28,7 @@ static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 
 /// Number of iterations for statistical tests
 const STAT_ITERATIONS: usize = 10;
-const PERFORMANCE_METRICS_SCHEMA_VERSION: u8 = 2;
+const PERFORMANCE_METRICS_SCHEMA_VERSION: u8 = 3;
 const PERFORMANCE_INVENTORY_SCHEMA_VERSION: u8 = 2;
 const STDERR_TAIL_LINES: usize = 100;
 
@@ -207,6 +207,8 @@ struct SharedState {
     refresh_progress: Mutex<Vec<RefreshProgress>>,
     capture_refresh_progress: bool,
     first_env_time: Mutex<Option<Instant>>,
+    refresh_started_at: Mutex<Option<Instant>>,
+    first_env_since_refresh: Mutex<Option<Duration>>,
 }
 
 impl SharedState {
@@ -217,28 +219,53 @@ impl SharedState {
             refresh_progress: Mutex::new(Vec::new()),
             capture_refresh_progress,
             first_env_time: Mutex::new(None),
+            refresh_started_at: Mutex::new(None),
+            first_env_since_refresh: Mutex::new(None),
         }
     }
 
-    fn handle_notification(&self, method: &str, params: Value) {
+    fn handle_notification(&self, method: &str, params: Value) -> Result<(), String> {
+        self.handle_notification_at(method, params, Instant::now())
+    }
+
+    fn handle_notification_at(
+        &self,
+        method: &str,
+        params: Value,
+        received_at: Instant,
+    ) -> Result<(), String> {
         match method {
             "environment" => {
-                // Record time to first environment
+                let env = serde_json::from_value::<Environment>(params)
+                    .map_err(|error| format!("Invalid environment notification: {error}"))?;
+                // Record time to first valid environment.
                 {
                     let mut first_env = self.first_env_time.lock().unwrap();
                     if first_env.is_none() {
-                        *first_env = Some(Instant::now());
+                        *first_env = Some(received_at);
+                    }
+                }
+                {
+                    let refresh_started_at = *self
+                        .refresh_started_at
+                        .lock()
+                        .expect("refresh start mutex poisoned");
+                    let mut first_env_since_refresh = self
+                        .first_env_since_refresh
+                        .lock()
+                        .expect("refresh TTFE mutex poisoned");
+                    if first_env_since_refresh.is_none() {
+                        *first_env_since_refresh = refresh_started_at
+                            .and_then(|started_at| received_at.checked_duration_since(started_at));
                     }
                 }
 
-                if let Ok(env) = serde_json::from_value::<Environment>(params) {
-                    self.environments.lock().unwrap().push(env);
-                }
+                self.environments.lock().unwrap().push(env);
             }
             "manager" => {
-                if let Ok(mgr) = serde_json::from_value::<Manager>(params) {
-                    self.managers.lock().unwrap().push(mgr);
-                }
+                let manager = serde_json::from_value::<Manager>(params)
+                    .map_err(|error| format!("Invalid manager notification: {error}"))?;
+                self.managers.lock().unwrap().push(manager);
             }
             "telemetry" if self.capture_refresh_progress => {
                 if params.get("event").and_then(Value::as_str) == Some("RefreshProgress") {
@@ -261,29 +288,48 @@ impl SharedState {
                 // Unknown notification
             }
         }
+        Ok(())
     }
 
-    fn clear(&self) {
+    fn prepare_refresh(&self) {
         self.environments.lock().unwrap().clear();
         self.managers.lock().unwrap().clear();
         self.refresh_progress
             .lock()
             .expect("refresh progress mutex poisoned")
             .clear();
-        *self.first_env_time.lock().unwrap() = None;
+    }
+
+    fn begin_refresh_at(&self, started_at: Instant) {
+        *self
+            .refresh_started_at
+            .lock()
+            .expect("refresh start mutex poisoned") = Some(started_at);
+        *self
+            .first_env_since_refresh
+            .lock()
+            .expect("refresh TTFE mutex poisoned") = None;
+    }
+
+    fn request_time_to_first_env(&self) -> Option<Duration> {
+        *self
+            .first_env_since_refresh
+            .lock()
+            .expect("refresh TTFE mutex poisoned")
     }
 }
 
 /// JSONRPC client for communicating with the pet server
 pub struct PetClient {
-    process: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    process: Option<Child>,
+    stdin: Box<dyn Write + Send>,
+    stdout: Box<dyn BufRead + Send>,
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
     interpreter_probe_timeouts: Arc<Mutex<BTreeMap<String, usize>>>,
     stderr_handle: Option<JoinHandle<()>>,
     state: Arc<SharedState>,
     start_time: Instant,
+    clock: Arc<dyn Fn() -> Instant + Send + Sync>,
 }
 
 impl PetClient {
@@ -306,7 +352,8 @@ impl PetClient {
             ));
         }
 
-        let start_time = Instant::now();
+        let clock: Arc<dyn Fn() -> Instant + Send + Sync> = Arc::new(Instant::now);
+        let start_time = clock();
 
         let mut process = Command::new(&pet_exe)
             .arg("server")
@@ -336,14 +383,15 @@ impl PetClient {
         );
 
         Ok(Self {
-            process,
-            stdin,
-            stdout: BufReader::new(stdout),
+            process: Some(process),
+            stdin: Box::new(stdin),
+            stdout: Box::new(BufReader::new(stdout)),
             stderr_tail,
             interpreter_probe_timeouts,
             stderr_handle: Some(stderr_handle),
             state: Arc::new(SharedState::new(capture_refresh_progress)),
             start_time,
+            clock,
         })
     }
 
@@ -391,10 +439,11 @@ impl PetClient {
             // Check if this is a notification or our response
             if let Some(notif_method) = value.get("method").and_then(|m| m.as_str()) {
                 // Handle notifications using the cloned state reference
-                state.handle_notification(
+                state.handle_notification_at(
                     notif_method,
                     value.get("params").cloned().unwrap_or(Value::Null),
-                );
+                    (self.clock)(),
+                )?;
                 continue;
             }
 
@@ -436,12 +485,15 @@ impl PetClient {
 
     /// Refresh environments
     pub fn refresh(&mut self, params: Option<Value>) -> Result<(RefreshResult, Duration), String> {
-        // Clear previous results
-        self.state.clear();
-
-        let start = Instant::now();
+        // The operation begins immediately before request serialization and pipe I/O.
+        // Clearing prior observations is intentionally outside the measured boundary.
+        self.state.prepare_refresh();
+        let started_at = (self.clock)();
+        self.state.begin_refresh_at(started_at);
         let result = self.send_request("refresh", params.unwrap_or(json!({})))?;
-        let elapsed = start.elapsed();
+        let elapsed = (self.clock)()
+            .checked_duration_since(started_at)
+            .expect("refresh completion must not precede its request boundary");
 
         let refresh_result: RefreshResult = serde_json::from_value(result)
             .map_err(|e| format!("Failed to parse refresh result: {}", e))?;
@@ -474,13 +526,18 @@ impl PetClient {
             .clone()
     }
 
-    /// Get time from start to first environment
-    pub fn time_to_first_env(&self) -> Option<Duration> {
+    /// Get time from process spawn to the first environment notification.
+    pub fn startup_time_to_first_env(&self) -> Option<Duration> {
         self.state
             .first_env_time
             .lock()
             .unwrap()
             .map(|t| t.duration_since(self.start_time))
+    }
+
+    /// Get time from the latest refresh request boundary to its first environment.
+    pub fn request_time_to_first_env(&self) -> Option<Duration> {
+        self.state.request_time_to_first_env()
     }
 
     /// Get startup time
@@ -492,8 +549,10 @@ impl PetClient {
 
 impl Drop for PetClient {
     fn drop(&mut self) {
-        let _ = self.process.kill();
-        let _ = self.process.wait();
+        if let Some(process) = self.process.as_mut() {
+            let _ = process.kill();
+            let _ = process.wait();
+        }
         if let Some(stderr_handle) = self.stderr_handle.take() {
             let _ = stderr_handle.join();
         }
@@ -840,6 +899,179 @@ fn collect_refresh_diagnostics(
     }
 }
 
+struct ChannelWriter {
+    sender: mpsc::Sender<Vec<u8>>,
+    buffered: Vec<u8>,
+}
+
+impl Write for ChannelWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.buffered.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let message = std::mem::take(&mut self.buffered);
+        self.sender
+            .send(message)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "fixture stopped"))
+    }
+}
+
+struct TimedChunk {
+    received_at: Instant,
+    bytes: Vec<u8>,
+}
+
+struct TimedChannelReader {
+    receiver: mpsc::Receiver<TimedChunk>,
+    current: Cursor<Vec<u8>>,
+    clock: Arc<Mutex<Instant>>,
+}
+
+impl Read for TimedChannelReader {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if self.current.position() as usize == self.current.get_ref().len() {
+            let chunk = self.receiver.recv().map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "fixture stopped")
+            })?;
+            *self.clock.lock().expect("fixture clock mutex poisoned") = chunk.received_at;
+            self.current = Cursor::new(chunk.bytes);
+        }
+        self.current.read(output)
+    }
+}
+
+fn frame_jsonrpc(value: &Value) -> Vec<u8> {
+    let body = serde_json::to_string(value).expect("fixture JSON must serialize");
+    format!("Content-Length: {}\r\n\r\n{}", body.len(), body).into_bytes()
+}
+
+#[test]
+fn refresh_path_measures_client_round_trip_and_resets_ttfe_per_request() {
+    let base = Instant::now();
+    let clock_value = Arc::new(Mutex::new(base));
+    let clock = {
+        let clock_value = clock_value.clone();
+        Arc::new(move || *clock_value.lock().expect("fixture clock mutex poisoned"))
+            as Arc<dyn Fn() -> Instant + Send + Sync>
+    };
+    let (request_sender, request_receiver) = mpsc::channel();
+    let (response_sender, response_receiver) = mpsc::channel();
+    let fixture = thread::spawn(move || {
+        for (environment_at_ms, response_at_ms, server_duration_ms) in [(40, 80, 2), (7, 50, 1)] {
+            let request = request_receiver
+                .recv()
+                .expect("client must send refresh request");
+            let request = read_jsonrpc_message(&mut BufReader::new(Cursor::new(request)))
+                .expect("fixture must parse refresh request");
+            assert_eq!(
+                request.get("method").and_then(Value::as_str),
+                Some("refresh")
+            );
+            let id = request
+                .get("id")
+                .cloned()
+                .expect("refresh request must have an id");
+            let request_start = if server_duration_ms == 2 {
+                base
+            } else {
+                base + Duration::from_millis(80)
+            };
+
+            response_sender
+                .send(TimedChunk {
+                    received_at: request_start + Duration::from_millis(environment_at_ms),
+                    bytes: frame_jsonrpc(&json!({
+                        "jsonrpc": "2.0",
+                        "method": "environment",
+                        "params": {"executable": "python"}
+                    })),
+                })
+                .expect("client must receive environment notification");
+            response_sender
+                .send(TimedChunk {
+                    received_at: request_start + Duration::from_millis(response_at_ms),
+                    bytes: frame_jsonrpc(&json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {"duration": server_duration_ms}
+                    })),
+                })
+                .expect("client must receive refresh response");
+        }
+    });
+
+    let state = Arc::new(SharedState::new(false));
+    let mut client = PetClient {
+        process: None,
+        stdin: Box::new(ChannelWriter {
+            sender: request_sender,
+            buffered: Vec::new(),
+        }),
+        stdout: Box::new(BufReader::new(TimedChannelReader {
+            receiver: response_receiver,
+            current: Cursor::new(Vec::new()),
+            clock: clock_value,
+        })),
+        stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+        interpreter_probe_timeouts: Arc::new(Mutex::new(BTreeMap::new())),
+        stderr_handle: None,
+        state,
+        start_time: base,
+        clock,
+    };
+
+    let (first_result, first_round_trip) =
+        client.refresh(None).expect("first refresh must succeed");
+    assert_eq!(first_result.duration, 2);
+    assert_eq!(first_round_trip, Duration::from_millis(80));
+    assert_eq!(
+        client.request_time_to_first_env(),
+        Some(Duration::from_millis(40))
+    );
+
+    let (second_result, second_round_trip) =
+        client.refresh(None).expect("second refresh must succeed");
+    assert_eq!(second_result.duration, 1);
+    assert_eq!(second_round_trip, Duration::from_millis(50));
+    assert_eq!(
+        client.request_time_to_first_env(),
+        Some(Duration::from_millis(7)),
+        "the second refresh must not retain the first request's TTFE",
+    );
+    assert_eq!(
+        client.startup_time_to_first_env(),
+        Some(Duration::from_millis(40)),
+        "startup TTFE remains tied to the first process notification",
+    );
+    fixture.join().expect("fixture server must finish");
+}
+
+#[test]
+fn malformed_environment_cannot_become_a_first_environment_sample() {
+    let state = SharedState::new(false);
+    let start = Instant::now();
+    state.begin_refresh_at(start);
+    let error = state
+        .handle_notification_at("environment", json!({"executable": 42}), start)
+        .expect_err("malformed notification must fail the benchmark request");
+    assert!(error.contains("Invalid environment notification"));
+    assert!(state.first_env_time.lock().unwrap().is_none());
+    assert!(state.request_time_to_first_env().is_none());
+    assert!(state.environments.lock().unwrap().is_empty());
+    let received = start + Duration::from_millis(25);
+    state
+        .handle_notification_at("environment", json!({"executable": "python"}), received)
+        .unwrap();
+    assert_eq!(*state.first_env_time.lock().unwrap(), Some(received));
+    assert_eq!(
+        state.request_time_to_first_env(),
+        Some(Duration::from_millis(25))
+    );
+    assert_eq!(state.environments.lock().unwrap().len(), 1);
+}
+
 #[test]
 fn refresh_progress_notifications_are_collected_only_when_enabled() {
     let notification = json!({
@@ -857,11 +1089,15 @@ fn refresh_progress_notifications_are_collected_only_when_enabled() {
     });
 
     let disabled_state = SharedState::new(false);
-    disabled_state.handle_notification("telemetry", notification.clone());
+    disabled_state
+        .handle_notification("telemetry", notification.clone())
+        .unwrap();
     assert!(disabled_state.refresh_progress.lock().unwrap().is_empty());
 
     let state = SharedState::new(true);
-    state.handle_notification("telemetry", notification);
+    state
+        .handle_notification("telemetry", notification)
+        .unwrap();
     let progress = state.refresh_progress.lock().unwrap();
     assert_eq!(progress.len(), 1);
     assert_eq!(progress[0].locator_name.as_deref(), Some("Conda"));
@@ -1025,7 +1261,7 @@ fn test_full_refresh_performance() {
         server_duration_stats.add(result.duration);
         client_duration_stats.add(client_elapsed.as_millis());
 
-        if let Some(time_to_first) = client.time_to_first_env() {
+        if let Some(time_to_first) = client.request_time_to_first_env() {
             time_to_first_env_stats.add(time_to_first.as_millis());
         }
 
@@ -1403,10 +1639,14 @@ fn test_refresh_warm_vs_cold_cache() {
 #[allow(dead_code)]
 fn test_performance_summary() {
     let mut startup_stats = StatisticalMetrics::new();
-    let mut cold_refresh_stats = StatisticalMetrics::new();
-    let mut warm_refresh_stats = StatisticalMetrics::new();
-    let mut cold_time_to_first_env_stats = StatisticalMetrics::new();
-    let mut warm_time_to_first_env_stats = StatisticalMetrics::new();
+    let mut cold_refresh_round_trip_stats = StatisticalMetrics::new();
+    let mut warm_refresh_round_trip_stats = StatisticalMetrics::new();
+    let mut cold_discovery_duration_stats = StatisticalMetrics::new();
+    let mut warm_discovery_duration_stats = StatisticalMetrics::new();
+    let mut cold_request_time_to_first_env_stats = StatisticalMetrics::new();
+    let mut warm_request_time_to_first_env_stats = StatisticalMetrics::new();
+    let mut cold_startup_time_to_first_env_stats = StatisticalMetrics::new();
+    let mut warm_startup_time_to_first_env_stats = StatisticalMetrics::new();
     let mut phase_stats = BTreeMap::new();
     let mut locator_stats = BTreeMap::new();
     let mut probe_timeout_counts: BTreeMap<String, usize> = BTreeMap::new();
@@ -1438,10 +1678,11 @@ fn test_performance_summary() {
         let startup_time = spawn_start.elapsed().as_millis();
         startup_stats.add(startup_time);
 
-        let (cold_result, _) = cold_client
+        let (cold_result, cold_round_trip) = cold_client
             .refresh(None)
             .expect("Failed to run cold refresh");
-        cold_refresh_stats.add(cold_result.duration);
+        cold_refresh_round_trip_stats.add(cold_round_trip.as_millis());
+        cold_discovery_duration_stats.add(cold_result.duration);
         let cold_inventory = (
             cold_client.get_environments().len(),
             cold_client.get_managers().len(),
@@ -1452,20 +1693,29 @@ fn test_performance_summary() {
             "Cold refresh",
             iteration,
         );
-        let cold_ttfe = cold_client.time_to_first_env().unwrap_or_else(|| {
+        let cold_request_ttfe = cold_client.request_time_to_first_env().unwrap_or_else(|| {
             panic!(
                 "Cold refresh iteration {} produced no environment notification",
                 iteration + 1
             )
         });
-        cold_time_to_first_env_stats.add(cold_ttfe.as_millis());
+        let cold_startup_ttfe = cold_client.startup_time_to_first_env().unwrap_or_else(|| {
+            panic!(
+                "Cold refresh iteration {} produced no startup-relative TTFE",
+                iteration + 1
+            )
+        });
+        cold_request_time_to_first_env_stats.add(cold_request_ttfe.as_millis());
+        cold_startup_time_to_first_env_stats.add(cold_startup_ttfe.as_millis());
         record_interpreter_probe_timeouts(&cold_client, &mut probe_timeout_counts);
 
         println!(
-            "  Cold iteration {}: startup={}ms, refresh={}ms, envs={}",
+            "  Cold iteration {}: startup={}ms, round-trip={}ms, discovery={}ms, request-TTFE={}ms, envs={}",
             iteration + 1,
             startup_time,
+            cold_round_trip.as_millis(),
             cold_result.duration,
+            cold_request_ttfe.as_millis(),
             cold_inventory.0,
         );
         drop(cold_client);
@@ -1477,10 +1727,11 @@ fn test_performance_summary() {
                 "cacheDirectory": iteration_cache,
             }))
             .expect("Failed to configure warm server");
-        let (warm_result, _) = warm_client
+        let (warm_result, warm_round_trip) = warm_client
             .refresh(None)
             .expect("Failed to run warm refresh");
-        warm_refresh_stats.add(warm_result.duration);
+        warm_refresh_round_trip_stats.add(warm_round_trip.as_millis());
+        warm_discovery_duration_stats.add(warm_result.duration);
         let warm_inventory = (
             warm_client.get_environments().len(),
             warm_client.get_managers().len(),
@@ -1491,19 +1742,28 @@ fn test_performance_summary() {
             "Warm refresh",
             iteration,
         );
-        let warm_ttfe = warm_client.time_to_first_env().unwrap_or_else(|| {
+        let warm_request_ttfe = warm_client.request_time_to_first_env().unwrap_or_else(|| {
             panic!(
                 "Warm refresh iteration {} produced no environment notification",
                 iteration + 1
             )
         });
-        warm_time_to_first_env_stats.add(warm_ttfe.as_millis());
+        let warm_startup_ttfe = warm_client.startup_time_to_first_env().unwrap_or_else(|| {
+            panic!(
+                "Warm refresh iteration {} produced no startup-relative TTFE",
+                iteration + 1
+            )
+        });
+        warm_request_time_to_first_env_stats.add(warm_request_ttfe.as_millis());
+        warm_startup_time_to_first_env_stats.add(warm_startup_ttfe.as_millis());
         record_interpreter_probe_timeouts(&warm_client, &mut probe_timeout_counts);
 
         println!(
-            "  Warm iteration {}: refresh={}ms, envs={}",
+            "  Warm iteration {}: round-trip={}ms, discovery={}ms, request-TTFE={}ms, envs={}",
             iteration + 1,
+            warm_round_trip.as_millis(),
             warm_result.duration,
+            warm_request_ttfe.as_millis(),
             warm_inventory.0,
         );
     }
@@ -1512,10 +1772,38 @@ fn test_performance_summary() {
         expected_inventory.expect("Performance summary must run at least one iteration");
     for (label, count) in [
         ("startup", startup_stats.count()),
-        ("cold refresh", cold_refresh_stats.count()),
-        ("warm refresh", warm_refresh_stats.count()),
-        ("cold time-to-first", cold_time_to_first_env_stats.count()),
-        ("warm time-to-first", warm_time_to_first_env_stats.count()),
+        (
+            "cold refresh round-trip",
+            cold_refresh_round_trip_stats.count(),
+        ),
+        (
+            "warm refresh round-trip",
+            warm_refresh_round_trip_stats.count(),
+        ),
+        (
+            "cold discovery duration",
+            cold_discovery_duration_stats.count(),
+        ),
+        (
+            "warm discovery duration",
+            warm_discovery_duration_stats.count(),
+        ),
+        (
+            "cold request time-to-first",
+            cold_request_time_to_first_env_stats.count(),
+        ),
+        (
+            "warm request time-to-first",
+            warm_request_time_to_first_env_stats.count(),
+        ),
+        (
+            "cold startup time-to-first",
+            cold_startup_time_to_first_env_stats.count(),
+        ),
+        (
+            "warm startup time-to-first",
+            warm_startup_time_to_first_env_stats.count(),
+        ),
     ] {
         assert_eq!(
             count, STAT_ITERATIONS,
@@ -1551,10 +1839,14 @@ fn test_performance_summary() {
     println!("             STATISTICS                 ");
     println!("----------------------------------------");
     startup_stats.print_summary("Server startup");
-    cold_refresh_stats.print_summary("Cold full refresh");
-    warm_refresh_stats.print_summary("Warm full refresh");
-    cold_time_to_first_env_stats.print_summary("Cold time to first env");
-    warm_time_to_first_env_stats.print_summary("Warm time to first env");
+    cold_refresh_round_trip_stats.print_summary("Cold refresh round-trip");
+    warm_refresh_round_trip_stats.print_summary("Warm refresh round-trip");
+    cold_discovery_duration_stats.print_summary("Cold discovery duration");
+    warm_discovery_duration_stats.print_summary("Warm discovery duration");
+    cold_request_time_to_first_env_stats.print_summary("Cold request-to-first environment");
+    warm_request_time_to_first_env_stats.print_summary("Warm request-to-first environment");
+    cold_startup_time_to_first_env_stats.print_summary("Cold startup-to-first environment");
+    warm_startup_time_to_first_env_stats.print_summary("Warm startup-to-first environment");
     for (phase, metrics) in &phase_stats {
         metrics.print_summary(&format!("Phase {phase}"));
     }
@@ -1569,23 +1861,31 @@ fn test_performance_summary() {
     let locator_json = statistics_json(&locator_stats);
 
     // Output as JSON for CI parsing
-    // Existing top-level refresh fields remain warm-cache values for schema compatibility.
+    // Schema v3 names every timing boundary explicitly.
     let json_output = serde_json::to_string_pretty(&json!({
         "metrics_schema_version": PERFORMANCE_METRICS_SCHEMA_VERSION,
         "inventory_schema_version": PERFORMANCE_INVENTORY_SCHEMA_VERSION,
         "server_startup_ms": startup_stats.p50().unwrap_or(0),
-        "full_refresh_ms": warm_refresh_stats.p50().unwrap_or(0),
-        "cold_refresh_ms": cold_refresh_stats.p50().unwrap_or(0),
-        "time_to_first_env_ms": warm_time_to_first_env_stats.p50(),
-        "cold_time_to_first_env_ms": cold_time_to_first_env_stats.p50(),
+        "refresh_round_trip_ms": warm_refresh_round_trip_stats.p50().unwrap_or(0),
+        "cold_refresh_round_trip_ms": cold_refresh_round_trip_stats.p50().unwrap_or(0),
+        "discovery_duration_ms": warm_discovery_duration_stats.p50().unwrap_or(0),
+        "cold_discovery_duration_ms": cold_discovery_duration_stats.p50().unwrap_or(0),
+        "request_time_to_first_env_ms": warm_request_time_to_first_env_stats.p50(),
+        "cold_request_time_to_first_env_ms": cold_request_time_to_first_env_stats.p50(),
+        "startup_time_to_first_env_ms": warm_startup_time_to_first_env_stats.p50(),
+        "cold_startup_time_to_first_env_ms": cold_startup_time_to_first_env_stats.p50(),
         "environments_count": env_count,
         "managers_count": manager_count,
         "stats": {
             "server_startup": startup_stats.to_json(),
-            "full_refresh": warm_refresh_stats.to_json(),
-            "cold_refresh": cold_refresh_stats.to_json(),
-            "time_to_first_env": warm_time_to_first_env_stats.to_json(),
-            "cold_time_to_first_env": cold_time_to_first_env_stats.to_json(),
+            "refresh_round_trip": warm_refresh_round_trip_stats.to_json(),
+            "cold_refresh_round_trip": cold_refresh_round_trip_stats.to_json(),
+            "discovery_duration": warm_discovery_duration_stats.to_json(),
+            "cold_discovery_duration": cold_discovery_duration_stats.to_json(),
+            "request_time_to_first_env": warm_request_time_to_first_env_stats.to_json(),
+            "cold_request_time_to_first_env": cold_request_time_to_first_env_stats.to_json(),
+            "startup_time_to_first_env": warm_startup_time_to_first_env_stats.to_json(),
+            "cold_startup_time_to_first_env": cold_startup_time_to_first_env_stats.to_json(),
         },
         "phases": phase_json,
         "locators": locator_json,

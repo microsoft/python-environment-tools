@@ -27,6 +27,8 @@ def performance_snapshot(
     *, refresh_p50=100, refresh_p95=500, startup_p50=10, startup_p95=20,
     first_p50=15, first_p95=30, cold_p50=200, cold_p95=500,
     cold_first_p50=25, cold_first_p95=50, environments=5, managers=1,
+    round_trip_p50=None, round_trip_p95=None, request_first_p50=None,
+    request_first_p95=None, cold_round_trip_p50=None, cold_round_trip_p95=None,
     schema_version=1, inventory_schema_version=None
 ):
     snapshot = {
@@ -55,6 +57,33 @@ def performance_snapshot(
             'p50': cold_first_p50,
             'p95': cold_first_p95,
         }
+    if schema_version >= 3:
+        round_trip_p50 = refresh_p50 if round_trip_p50 is None else round_trip_p50
+        round_trip_p95 = refresh_p95 if round_trip_p95 is None else round_trip_p95
+        request_first_p50 = first_p50 if request_first_p50 is None else request_first_p50
+        request_first_p95 = first_p95 if request_first_p95 is None else request_first_p95
+        cold_round_trip_p50 = cold_p50 if cold_round_trip_p50 is None else cold_round_trip_p50
+        cold_round_trip_p95 = cold_p95 if cold_round_trip_p95 is None else cold_round_trip_p95
+        snapshot.update({
+            'refresh_round_trip_ms': round_trip_p50,
+            'cold_refresh_round_trip_ms': cold_round_trip_p50,
+            'discovery_duration_ms': refresh_p50,
+            'cold_discovery_duration_ms': cold_p50,
+            'request_time_to_first_env_ms': request_first_p50,
+            'cold_request_time_to_first_env_ms': cold_first_p50,
+            'startup_time_to_first_env_ms': first_p50,
+            'cold_startup_time_to_first_env_ms': cold_first_p50,
+        })
+        snapshot['stats'].update({
+            'refresh_round_trip': {'count': 10, 'p50': round_trip_p50, 'p95': round_trip_p95},
+            'cold_refresh_round_trip': {'count': 10, 'p50': cold_round_trip_p50, 'p95': cold_round_trip_p95},
+            'discovery_duration': snapshot['stats'].pop('full_refresh'),
+            'cold_discovery_duration': snapshot['stats'].pop('cold_refresh'),
+            'request_time_to_first_env': {'count': 10, 'p50': request_first_p50, 'p95': request_first_p95},
+            'cold_request_time_to_first_env': {'count': 10, 'p50': cold_first_p50, 'p95': cold_first_p95},
+            'startup_time_to_first_env': snapshot['stats'].pop('time_to_first_env'),
+            'cold_startup_time_to_first_env': snapshot['stats'].pop('cold_time_to_first_env'),
+        })
     if inventory_schema_version is not None:
         snapshot['inventory_schema_version'] = inventory_schema_version
     return snapshot
@@ -77,12 +106,12 @@ class PerformanceSnapshotTests(unittest.TestCase):
     def test_p50_regression_fails_when_both_budgets_are_exceeded(self):
         current = performance_snapshot(refresh_p50=300)
         _, failures = compare_performance(current, performance_snapshot(refresh_p50=100), 'Windows')
-        self.assertTrue(any('Full refresh P50' in failure for failure in failures))
+        self.assertTrue(any('Discovery duration P50' in failure for failure in failures))
 
     def test_p95_regression_fails_even_when_p50_is_unchanged(self):
         current = performance_snapshot(refresh_p95=7_000)
         _, failures = compare_performance(current, performance_snapshot(refresh_p95=500), 'Windows')
-        self.assertTrue(any('Full refresh P95' in failure for failure in failures))
+        self.assertTrue(any('Discovery duration P95' in failure for failure in failures))
 
     def test_schema_v2_compares_warm_and_cold_metrics(self):
         current = performance_snapshot(schema_version=2)
@@ -113,7 +142,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
         comparisons, failures = compare_performance(current, performance_snapshot(), 'Linux')
 
         self.assertEqual(len(comparisons), 7)
-        self.assertEqual(comparisons[-1].label, 'Cold refresh P50')
+        self.assertEqual(comparisons[-1].label, 'Cold discovery duration P50')
         self.assertEqual(failures, [])
 
     def test_legacy_cold_ceiling_is_explicit_in_report(self):
@@ -123,7 +152,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
         report = performance_report('Linux', comparisons, failures, current, baseline)
 
-        self.assertIn('| Cold refresh P50 | 499ms | legacy schema |', report)
+        self.assertIn('| Cold discovery duration P50 | 499ms | legacy schema |', report)
         self.assertIn(
             'Cold refresh uses a platform absolute ceiling while the exact base has legacy metrics.',
             report,
@@ -134,7 +163,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
         _, failures = compare_performance(current, performance_snapshot(), 'Linux')
 
-        self.assertTrue(any('Cold refresh P50 exceeded' in failure for failure in failures))
+        self.assertTrue(any('Cold discovery duration P50 exceeded' in failure for failure in failures))
 
     def test_cold_p50_regression_fails_when_all_cold_samples_are_slow(self):
         current = performance_snapshot(schema_version=2, cold_p50=400)
@@ -142,7 +171,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
         _, failures = compare_performance(current, baseline, 'Windows')
 
-        self.assertTrue(any('Cold refresh P50 regressed' in failure for failure in failures))
+        self.assertTrue(any('Cold discovery duration P50 regressed' in failure for failure in failures))
 
     def test_legacy_current_is_invalid_against_schema_v2_baseline(self):
         with self.assertRaisesRegex(SnapshotError, 'older than baseline schema'):
@@ -155,10 +184,61 @@ class PerformanceSnapshotTests(unittest.TestCase):
     def test_newer_performance_schema_is_invalid(self):
         with self.assertRaisesRegex(SnapshotError, 'newer than supported version'):
             compare_performance(
+                performance_snapshot(schema_version=4),
                 performance_snapshot(schema_version=3),
-                performance_snapshot(schema_version=2),
                 'Windows',
             )
+
+    def test_schema_v3_exact_base_gates_client_metrics(self):
+        current = performance_snapshot(schema_version=3, round_trip_p50=500)
+        baseline = performance_snapshot(schema_version=3, round_trip_p50=100)
+
+        comparisons, failures = compare_performance(current, baseline, 'Windows')
+
+        self.assertEqual(len(comparisons), 12)
+        self.assertTrue(any('Refresh round-trip P50 regressed' in failure for failure in failures))
+
+    def test_schema_v3_client_improvement_passes(self):
+        current = performance_snapshot(
+            schema_version=3, round_trip_p50=80, round_trip_p95=300,
+            request_first_p50=10, request_first_p95=20,
+        )
+        baseline = performance_snapshot(
+            schema_version=3, round_trip_p50=100, round_trip_p95=500,
+            request_first_p50=15, request_first_p95=30,
+        )
+
+        _, failures = compare_performance(current, baseline, 'Windows')
+
+        self.assertEqual(failures, [])
+
+    def test_schema_v3_request_ttfe_regression_fails(self):
+        current = performance_snapshot(schema_version=3, request_first_p95=1_000)
+        baseline = performance_snapshot(schema_version=3, request_first_p95=30)
+
+        _, failures = compare_performance(current, baseline, 'Windows')
+
+        self.assertTrue(any('Request-to-first environment P95 regressed' in failure for failure in failures))
+
+    def test_schema_v3_missing_client_metric_is_invalid(self):
+        current = performance_snapshot(schema_version=3)
+        del current['stats']['refresh_round_trip']
+
+        with self.assertRaisesRegex(SnapshotError, 'current.stats.refresh_round_trip'):
+            compare_performance(current, performance_snapshot(schema_version=2), 'Windows')
+
+    def test_schema_v3_transition_preserves_legacy_gates(self):
+        current = performance_snapshot(schema_version=3, refresh_p50=300)
+        baseline = performance_snapshot(schema_version=2, refresh_p50=100)
+
+        comparisons, failures = compare_performance(current, baseline, 'Windows')
+        report = performance_report('Windows', comparisons, failures, current, baseline)
+
+        self.assertEqual(len(comparisons), 7)
+        self.assertTrue(any('Discovery duration P50 regressed' in failure for failure in failures))
+        self.assertIn('cannot be compared', report)
+        self.assertIn('| Refresh round-trip P50 | 300ms |', report)
+        self.assertIn('| Cold refresh round-trip P50 | 200ms |', report)
 
     def test_schema_v2_windows_warm_p50_variance_passes(self):
         baseline = performance_snapshot(schema_version=2, refresh_p50=105)
@@ -174,9 +254,9 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
         _, failures = compare_performance(current, baseline, 'Windows')
 
-        self.assertTrue(any('Full refresh P50' in failure for failure in failures))
-        self.assertFalse(any('Full refresh P95' in failure for failure in failures))
-        self.assertFalse(any('Cold refresh P50' in failure for failure in failures))
+        self.assertTrue(any('Discovery duration P50' in failure for failure in failures))
+        self.assertFalse(any('Discovery duration P95' in failure for failure in failures))
+        self.assertFalse(any('Cold discovery duration P50' in failure for failure in failures))
 
     def test_schema_v2_warm_p95_variance_passes_on_all_platforms(self):
         cases = (
@@ -222,8 +302,8 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
                 _, failures = compare_performance(current, baseline, platform)
 
-                self.assertTrue(any('Full refresh P95' in failure for failure in failures))
-                self.assertTrue(any('Time to first environment P95' in failure for failure in failures))
+                self.assertTrue(any('Discovery duration P95' in failure for failure in failures))
+                self.assertTrue(any('Startup-to-first environment P95' in failure for failure in failures))
 
     def test_post_fix_macos_tail_variance_passes(self):
         baseline = performance_snapshot(startup_p95=621, refresh_p95=1_343, first_p95=649)
@@ -241,8 +321,8 @@ class PerformanceSnapshotTests(unittest.TestCase):
 
         for label in (
             'Server startup P95',
-            'Full refresh P95',
-            'Time to first environment P95',
+            'Discovery duration P95',
+            'Startup-to-first environment P95',
         ):
             self.assertTrue(any(label in failure for failure in failures))
 
@@ -263,7 +343,7 @@ class PerformanceSnapshotTests(unittest.TestCase):
         _, windows_failures = compare_performance(current, baseline, 'Windows')
         _, linux_failures = compare_performance(current, baseline, 'Linux')
         self.assertEqual(windows_failures, [])
-        self.assertTrue(any('Full refresh P50' in failure for failure in linux_failures))
+        self.assertTrue(any('Discovery duration P50' in failure for failure in linux_failures))
 
     def test_budget_metric_mismatch_is_invalid(self):
         original = PERFORMANCE_BUDGETS['windows']
