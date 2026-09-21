@@ -57,20 +57,12 @@ impl CondaInfo {
                     let output = String::from_utf8_lossy(&output.stdout).to_string();
                     match serde_json::from_str::<CondaInfoJson>(output.trim()) {
                         Ok(info) => {
-                            let envs_path = info
-                                .envs_path
-                                .unwrap_or_default()
-                                .drain(..)
-                                .collect::<Vec<PathBuf>>();
-                            let mut envs_dirs = info
-                                .envs_dirs
-                                .unwrap_or_default()
-                                .drain(..)
-                                .collect::<Vec<PathBuf>>();
+                            let envs_path = info.envs_path.unwrap_or_default();
+                            let mut envs_dirs = info.envs_dirs.unwrap_or_default();
                             envs_dirs.extend(envs_path);
                             let info = CondaInfo {
                                 executable: executable.clone(),
-                                envs: info.envs.unwrap_or_default().drain(..).collect(),
+                                envs: info.envs.unwrap_or_default(),
                                 conda_prefix: info.conda_prefix,
                                 root_prefix: info.root_prefix,
                                 rc_path: info.rc_path,
@@ -78,11 +70,7 @@ impl CondaInfo {
                                 user_rc_path: info.user_rc_path,
                                 envs_dirs,
                                 conda_version: info.conda_version.unwrap_or_default(),
-                                config_files: info
-                                    .config_files
-                                    .unwrap_or_default()
-                                    .drain(..)
-                                    .collect(),
+                                config_files: info.config_files.unwrap_or_default(),
                             };
                             Some(info)
                         }
