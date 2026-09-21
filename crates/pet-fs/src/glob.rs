@@ -168,6 +168,12 @@ fn expand_braces_bounded(pattern: &str, limit: usize) -> Result<Vec<String>, Glo
             if let Some((open, close)) = group {
                 expanded = true;
                 for alternative in pattern[open + 1..close].split(',') {
+                    if steps == MAX_BRACE_EXPANSION_STEPS {
+                        return Err(GlobExpansionError::BraceWorkLimitExceeded {
+                            limit: MAX_BRACE_EXPANSION_STEPS,
+                        });
+                    }
+                    steps += 1;
                     let variant =
                         format!("{}{alternative}{}", &pattern[..open], &pattern[close + 1..]);
                     if unique.insert(variant.clone()) {
@@ -741,6 +747,27 @@ mod tests {
             expand_braces_bounded(&"{a}".repeat(MAX_BRACE_EXPANSION_STEPS), 1),
             Err(GlobExpansionError::BraceWorkLimitExceeded { .. })
         ));
+    }
+
+    #[test]
+    fn duplicate_brace_alternatives_count_toward_work_limit() {
+        let within_limit = format!("{{{}}}", vec!["a"; MAX_BRACE_EXPANSION_STEPS - 2].join(","));
+        assert_eq!(expand_braces_bounded(&within_limit, 1).unwrap(), vec!["a"]);
+
+        let over_limit = format!("{{{}}}", vec!["a"; MAX_BRACE_EXPANSION_STEPS].join(","));
+        assert_eq!(
+            expand_braces_bounded(&over_limit, 1).unwrap_err(),
+            GlobExpansionError::BraceWorkLimitExceeded {
+                limit: MAX_BRACE_EXPANSION_STEPS
+            },
+        );
+        assert_eq!(
+            expand_glob_patterns_bounded(&[PathBuf::from(over_limit)], bounded_limits(1, 1))
+                .unwrap_err(),
+            GlobExpansionError::BraceWorkLimitExceeded {
+                limit: MAX_BRACE_EXPANSION_STEPS
+            },
+        );
     }
 
     #[test]

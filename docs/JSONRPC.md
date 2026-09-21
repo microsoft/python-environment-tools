@@ -187,8 +187,9 @@ refreshes with the same normalized expanded paths, options, and configuration ge
 join one operation; different options or generations do not.
 
 Expansion allows at most 1,024 distinct brace-expanded patterns and 10,000
-filesystem candidates per request. Brace expansion also stops after 10,000 intermediate
-patterns per input pattern. Invalid patterns, traversal failures, or exceeded
+filesystem candidates per request. Brace expansion also stops after 10,000 work steps
+per input pattern, counting each pending pattern and each alternative before formatting
+or deduplication (including duplicate alternatives). Invalid patterns, traversal failures, or exceeded
 limits return a JSON-RPC error (`-4`) and no partial refresh inventory. Limits are
 checked between filesystem entries; they are not a timeout and cannot interrupt an
 operating-system filesystem call already in progress.
