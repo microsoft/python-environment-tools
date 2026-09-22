@@ -44,3 +44,7 @@ When adding mutable state to a locator, classify it before relying on it across 
 3. If later requests need refresh-discovered state, use `SyncedDiscoveryState`, implement `sync_refresh_state_from()`, and cover full, workspace, and kind-filtered scopes with tests.
 
 The locator graph has a regression test in `crates/pet/src/jsonrpc.rs` that pins the current classification of each locator created by `create_locators()`.
+
+## Module Ownership
+
+The CLI and JSONRPC server both use the `pet` library's public `find` and `locators` modules. The binary owns CLI dispatch and its `jsonrpc` adapter, rather than compiling separate copies of discovery and locator code. Discovery/locator unit tests run under the library target; JSONRPC orchestration tests remain under the binary target. This module boundary does not change the transient and shared locator lifetimes described above.

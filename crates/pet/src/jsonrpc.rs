@@ -1,13 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::find::find_and_report_envs;
-use crate::find::find_python_environments_in_workspace_folder_recursive;
-use crate::find::identify_python_executables_using_locators;
-use crate::find::SearchScope;
-use crate::locators::create_locators;
 use log::{error, info, trace, warn};
+use pet::find::find_and_report_envs;
+use pet::find::find_python_environments_in_workspace_folder_recursive;
+use pet::find::identify_python_executables_using_locators;
+use pet::find::SearchScope;
 use pet::initialize_tracing;
+use pet::locators::create_locators;
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
 use pet_conda::CondaLocator;

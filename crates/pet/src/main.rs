@@ -8,9 +8,7 @@ use jsonrpc::start_jsonrpc_server;
 use pet::{find_and_report_envs_stdio, resolve_report_stdio, FindOptions};
 use pet_core::python_environment::PythonEnvironmentKind;
 
-mod find;
 mod jsonrpc;
-mod locators;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
