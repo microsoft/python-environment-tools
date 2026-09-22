@@ -389,6 +389,19 @@ fn expand_filesystem_pattern_bounded(
     candidates_seen: &mut usize,
     candidate_limit: usize,
 ) -> Result<Vec<PathBuf>, GlobExpansionError> {
+    Pattern::new(pattern).map_err(|error| GlobExpansionError::InvalidPattern {
+        pattern: pattern.to_string(),
+        message: error.to_string(),
+    })?;
+    #[cfg(windows)]
+    if let Some(Component::Prefix(prefix)) = Path::new(pattern).components().next() {
+        // Match glob 0.3.3: only verbatim disk prefixes are eligible for traversal.
+        if prefix.kind().is_verbatim()
+            && !matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_))
+        {
+            return Ok(Vec::new());
+        }
+    }
     let require_directory = pattern
         .chars()
         .next_back()
@@ -409,7 +422,7 @@ fn expand_filesystem_pattern_bounded(
                     if !matches!(components.last(), Some(BoundedGlobComponent::Recursive)) {
                         components.push(BoundedGlobComponent::Recursive);
                     }
-                } else if component_text.contains(GLOB_METACHARACTERS) {
+                } else if component_text.contains(['*', '?', '[']) {
                     let component_pattern = Pattern::new(&component_text).map_err(|error| {
                         GlobExpansionError::InvalidPattern {
                             pattern: pattern.to_string(),
@@ -740,6 +753,69 @@ mod tests {
             expand_glob_pattern(&temp.path().join("Env*").to_string_lossy()),
             expand_glob_pattern(&temp.path().join("env*").to_string_lossy())
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bounded_expansion_preserves_windows_verbatim_prefix_rules() {
+        for pattern in [
+            r"\\?\UNC\pet.invalid\share\*",
+            r"\\?\GLOBALROOT\Device\PetTest\*",
+            r"\\?\Volume{pet-test}\*",
+        ] {
+            assert!(glob(pattern).unwrap().next().is_none());
+            let mut candidates = 0;
+            assert!(
+                expand_filesystem_pattern_bounded(pattern, &mut candidates, 0)
+                    .expect("unsupported verbatim prefixes must not traverse the filesystem")
+                    .is_empty()
+            );
+            assert_eq!(candidates, 0);
+            assert!(
+                expand_glob_patterns_bounded(&[PathBuf::from(pattern)], bounded_limits(1, 0),)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        let invalid = r"\\?\UNC\pet.invalid\share\[";
+        assert!(glob(invalid).is_err());
+        assert!(matches!(
+            expand_glob_patterns_bounded(&[PathBuf::from(invalid)], bounded_limits(1, 0)),
+            Err(GlobExpansionError::InvalidPattern { .. }),
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bounded_expansion_preserves_windows_verbatim_disk_matches() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("python.exe"), "fixture").unwrap();
+        let verbatim = fs::canonicalize(temp.path()).unwrap();
+        assert!(matches!(
+            verbatim.components().next(),
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_)),
+        ));
+        assert_bounded_matches_legacy(&verbatim, "*");
+        assert_eq!(
+            expand_glob_patterns_bounded(&[verbatim.join("*")], bounded_limits(1, 64),).unwrap(),
+            vec![verbatim.join("python.exe")]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bounded_expansion_preserves_windows_literal_bracket_lookup() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("file]"), "fixture").unwrap();
+        fs::create_dir(temp.path().join("Folder]")).unwrap();
+        fs::write(temp.path().join("Folder]").join("python.exe"), "fixture").unwrap();
+        for suffix in ["FILE]", "FOLDER]/*"] {
+            assert_bounded_matches_legacy(temp.path(), suffix);
+            assert_eq!(
+                expand_glob_pattern(&temp.path().join(suffix).to_string_lossy()).len(),
+                1
+            );
+        }
     }
 
     #[test]

@@ -186,6 +186,12 @@ Duplicate input patterns and duplicate expanded paths are searched once. Concurr
 refreshes with the same normalized expanded paths, options, and configuration generation
 join one operation; different options or generations do not.
 
+Windows glob matching preserves the pinned matcher rules: verbatim disk paths such
+as `\\?\C:\envs\*` are supported, while other verbatim prefixes (including
+`\\?\UNC\...`) produce no matches without filesystem traversal. Invalid patterns
+still fail syntax validation before that prefix rule is applied. Literal components,
+including names containing a lone `]`, retain normal filesystem lookup semantics.
+
 Expansion allows at most 1,024 distinct brace-expanded patterns and 10,000
 filesystem candidates per request. Brace expansion also stops after 10,000 work steps
 per input pattern, counting each pending pattern and each alternative before formatting
