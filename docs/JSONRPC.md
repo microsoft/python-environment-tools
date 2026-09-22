@@ -75,6 +75,9 @@ interface ConfigureParams {
    * This is because poetry, pipenv, and the like are project-specific environments.
    *
    * Glob patterns are supported (e.g., `/home/user/projects/*`). Avoid recursive `**` patterns when a single-level pattern is sufficient.
+   * Expansion is limited to 1,024 distinct brace-expanded patterns and 10,000
+   * filesystem candidates per configured field. Invalid patterns, traversal failures, and
+   * exceeded limits fail the configure request; PET does not apply a partial configuration.
    */
   workspaceDirectories?: string[];
   /**
@@ -84,8 +87,8 @@ interface ConfigureParams {
    * Useful for VS Code so users can configure where they store virtual environments.
    *
    * Values identify directories that contain environments. Glob patterns are supported (e.g., `<root>/envs`, `<root>/*/envs`).
-   * Avoid recursive patterns such as `<root>/**/envs`: they can traverse large directory trees,
-   * delay configure responses, and trigger client timeouts.
+   * Avoid recursive patterns such as `<root>/**/envs`: they can traverse large directory trees.
+   * The same 1,024-pattern and 10,000-candidate limits apply to these patterns.
    */
   environmentDirectories?: string[];
   /**
@@ -176,6 +179,31 @@ interface RefreshResult {
   refreshId: number;
 }
 ```
+
+`searchPaths` are parsed on the transport thread but expanded in the refresh worker,
+so filesystem traversal does not delay dispatch of unrelated requests such as `info`.
+Duplicate input patterns and duplicate expanded paths are searched once. Concurrent
+refreshes with the same normalized expanded paths, options, and configuration generation
+join one operation; different options or generations do not.
+
+Windows glob matching preserves the pinned matcher rules: verbatim disk paths such
+as `\\?\C:\envs\*` are supported, while other verbatim prefixes (including
+`\\?\UNC\...`) produce no matches without filesystem traversal. Invalid patterns
+still fail syntax validation before that prefix rule is applied. Literal components,
+including names containing a lone `]`, retain normal filesystem lookup semantics.
+
+Expansion allows at most 1,024 distinct brace-expanded patterns and 10,000
+filesystem candidates per request. Brace expansion also stops after 10,000 work steps
+per input pattern, counting each pending pattern and each alternative before formatting
+or deduplication (including duplicate alternatives). Invalid patterns, traversal failures, or exceeded
+limits return a JSON-RPC error (`-4`) and no partial refresh inventory. Limits are
+checked between filesystem entries; they are not a timeout and cannot interrupt an
+operating-system filesystem call already in progress.
+
+PET admits at most two configure/refresh glob or brace expansions concurrently.
+Requests containing only literal paths do not consume these slots. Additional expansion
+requests receive JSON-RPC error `-4` instead of creating an unbounded traversal queue.
+Input deduplication preserves the first occurrence order of configured paths.
 
 ## Refresh Progress Telemetry
 

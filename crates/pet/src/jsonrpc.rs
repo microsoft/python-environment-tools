@@ -21,7 +21,10 @@ use pet_core::{
     Configuration, Locator, RefreshStatePersistence, RefreshStateSyncScope,
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
-use pet_fs::glob::{expand_glob_pattern, expand_glob_patterns, is_recursive_glob_pattern};
+use pet_fs::glob::{
+    expand_glob_patterns_bounded, is_glob_pattern, is_recursive_glob_pattern, GlobExpansionError,
+    DEFAULT_GLOB_EXPANSION_LIMITS,
+};
 use pet_fs::path::norm_case;
 use pet_jsonrpc::{
     send_error, send_reply,
@@ -37,7 +40,7 @@ use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_json::{self, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::{
@@ -63,11 +66,77 @@ struct RefreshKey {
 }
 
 impl RefreshKey {
-    fn new(options: &RefreshOptions, config_generation: u64) -> Self {
+    fn from_expanded(options: &RefreshOptions, config_generation: u64) -> Self {
         Self {
             options: options.clone(),
             config_generation,
         }
+    }
+}
+
+const MAX_CONCURRENT_GLOB_EXPANSIONS: usize = 2;
+
+#[derive(Debug)]
+struct GlobExpansionAdmission {
+    active: Mutex<usize>,
+    limit: usize,
+}
+
+impl Default for GlobExpansionAdmission {
+    fn default() -> Self {
+        Self {
+            active: Mutex::new(0),
+            limit: MAX_CONCURRENT_GLOB_EXPANSIONS,
+        }
+    }
+}
+
+impl GlobExpansionAdmission {
+    fn try_acquire_for_patterns<'a>(
+        self: &Arc<Self>,
+        patterns: impl Iterator<Item = &'a PathBuf>,
+    ) -> Result<Option<GlobExpansionPermit>, String> {
+        if !patterns
+            .into_iter()
+            .any(|pattern| is_glob_pattern(&pattern.to_string_lossy()))
+        {
+            return Ok(None);
+        }
+        self.try_acquire().map(Some).ok_or_else(|| {
+            format!(
+                "Glob expansion capacity exceeded; at most {} expansions may run concurrently",
+                self.limit
+            )
+        })
+    }
+
+    fn try_acquire(self: &Arc<Self>) -> Option<GlobExpansionPermit> {
+        let mut active = self
+            .active
+            .lock()
+            .expect("refresh expansion admission mutex poisoned");
+        if *active == self.limit {
+            return None;
+        }
+        *active += 1;
+        Some(GlobExpansionPermit {
+            admission: self.clone(),
+        })
+    }
+}
+
+struct GlobExpansionPermit {
+    admission: Arc<GlobExpansionAdmission>,
+}
+
+impl Drop for GlobExpansionPermit {
+    fn drop(&mut self) {
+        let mut active = self
+            .admission
+            .active
+            .lock()
+            .expect("refresh expansion admission mutex poisoned");
+        *active -= 1;
     }
 }
 
@@ -480,6 +549,7 @@ pub struct Context {
     conda_locator: Arc<Conda>,
     os_environment: Arc<dyn Environment>,
     refresh_coordinator: RefreshCoordinator,
+    glob_expansion_admission: Arc<GlobExpansionAdmission>,
 }
 
 const MISSING_ENVS_AVAILABLE: u64 = u64::MAX;
@@ -505,6 +575,7 @@ pub fn start_jsonrpc_server() {
         configure_in_progress: Arc::new(Mutex::new(())),
         os_environment: Arc::new(environment),
         refresh_coordinator: RefreshCoordinator::default(),
+        glob_expansion_admission: Arc::new(GlobExpansionAdmission::default()),
     };
 
     let mut handlers = HandlersKeyedByMethodName::new(Arc::new(context));
@@ -567,31 +638,37 @@ pub struct ConfigureOptions {
 /// The client has a 30-second timeout for configure requests.
 const GLOB_EXPANSION_WARN_THRESHOLD: Duration = Duration::from_secs(5);
 
-fn expand_configure_directory_patterns(kind: &str, patterns: Vec<PathBuf>) -> Vec<PathBuf> {
-    patterns
-        .into_iter()
-        .flat_map(|pattern| {
-            let start = Instant::now();
-            let expanded = expand_glob_pattern(&pattern.to_string_lossy());
-            let elapsed = start.elapsed();
-            trace!(
-                "Expanded {} pattern '{}' in {:?}",
-                kind,
-                pattern.display(),
-                elapsed
-            );
-            if elapsed >= GLOB_EXPANSION_WARN_THRESHOLD {
-                warn!(
-                    "Expanding {} pattern '{}' took {:?}, this may cause client timeouts",
-                    kind,
-                    pattern.display(),
-                    elapsed
-                );
+fn expand_configure_directory_patterns(
+    kind: &str,
+    patterns: Vec<PathBuf>,
+) -> Result<Vec<PathBuf>, GlobExpansionError> {
+    let start = Instant::now();
+    let patterns = deduplicate_path_patterns(&patterns);
+    let expanded = expand_glob_patterns_bounded(&patterns, DEFAULT_GLOB_EXPANSION_LIMITS)?;
+    let elapsed = start.elapsed();
+    trace!("Expanded {kind} patterns in {elapsed:?}");
+    if elapsed >= GLOB_EXPANSION_WARN_THRESHOLD {
+        warn!("Expanding {kind} patterns took {elapsed:?}, this may cause client timeouts");
+    }
+    let mut directories = Vec::new();
+    for path in expanded {
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => directories.push(path),
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) => {}
+            Err(error) => {
+                return Err(GlobExpansionError::Traversal {
+                    pattern: path.to_string_lossy().into_owned(),
+                    message: error.to_string(),
+                })
             }
-            expanded
-        })
-        .filter(|path| path.is_dir())
-        .collect()
+        }
+    }
+    Ok(directories)
 }
 
 fn recursive_environment_patterns(patterns: &[PathBuf]) -> impl Iterator<Item = &PathBuf> {
@@ -612,6 +689,19 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
     match serde_json::from_value::<ConfigureOptions>(params.clone()) {
         Ok(mut configure_options) => {
             info!("Received configure request");
+            let expansion_permit = match context.glob_expansion_admission.try_acquire_for_patterns(
+                configure_options
+                    .workspace_directories
+                    .iter()
+                    .flatten()
+                    .chain(configure_options.environment_directories.iter().flatten()),
+            ) {
+                Ok(permit) => permit,
+                Err(message) => {
+                    send_error(Some(id), -4, message);
+                    return;
+                }
+            };
             // Start in a new thread, we can have multiple requests.
             thread::spawn(move || {
                 let now = Instant::now();
@@ -624,20 +714,40 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
 
                 // Expand glob patterns before acquiring the write lock so we
                 // don't block readers/writers while traversing the filesystem.
-                let workspace_directories =
-                    configure_options
-                        .workspace_directories
-                        .take()
-                        .map(|patterns| {
-                            expand_configure_directory_patterns("workspaceDirectories", patterns)
-                        });
-                let environment_directories =
-                    configure_options
-                        .environment_directories
-                        .take()
-                        .map(|patterns| {
-                            expand_configure_directory_patterns("environmentDirectories", patterns)
-                        });
+                let expanded_directories = configure_options
+                    .workspace_directories
+                    .take()
+                    .map(|patterns| {
+                        expand_configure_directory_patterns("workspaceDirectories", patterns)
+                    })
+                    .transpose()
+                    .and_then(|workspace_directories| {
+                        configure_options
+                            .environment_directories
+                            .take()
+                            .map(|patterns| {
+                                expand_configure_directory_patterns(
+                                    "environmentDirectories",
+                                    patterns,
+                                )
+                            })
+                            .transpose()
+                            .map(|environment_directories| {
+                                (workspace_directories, environment_directories)
+                            })
+                    });
+                let (workspace_directories, environment_directories) = match expanded_directories {
+                    Ok(directories) => directories,
+                    Err(error) => {
+                        send_error(
+                            Some(id),
+                            -4,
+                            format!("Configure glob expansion failed: {error}"),
+                        );
+                        return;
+                    }
+                };
+                drop(expansion_permit);
                 let glob_elapsed = now.elapsed();
                 trace!("Glob expansion completed in {:?}", glob_elapsed);
                 if glob_elapsed >= GLOB_EXPANSION_WARN_THRESHOLD {
@@ -709,23 +819,33 @@ fn normalize_refresh_params(params: Value) -> Value {
     }
 }
 
-fn canonicalize_refresh_options(mut options: RefreshOptions) -> RefreshOptions {
-    if let Some(search_paths) = options.search_paths.take() {
-        let mut expanded = expand_glob_patterns(&search_paths)
-            .into_iter()
-            .map(norm_case)
-            .collect::<Vec<PathBuf>>();
-        expanded.sort();
-        expanded.dedup();
-        options.search_paths = Some(expanded);
-    }
-
-    options
+fn deduplicate_path_patterns(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    paths
+        .iter()
+        .filter(|path| seen.insert(path.as_os_str()))
+        .cloned()
+        .collect()
 }
 
 fn parse_refresh_options(params: Value) -> Result<RefreshOptions, serde_json::Error> {
     serde_json::from_value::<Option<RefreshOptions>>(normalize_refresh_params(params))
-        .map(|options| canonicalize_refresh_options(options.unwrap_or_default()))
+        .map(|options| options.unwrap_or_default())
+}
+
+fn expand_refresh_options(options: &RefreshOptions) -> Result<RefreshOptions, GlobExpansionError> {
+    let mut expanded_options = options.clone();
+    if let Some(search_paths) = options.search_paths.as_ref() {
+        let patterns = deduplicate_path_patterns(search_paths);
+        let mut expanded = expand_glob_patterns_bounded(&patterns, DEFAULT_GLOB_EXPANSION_LIMITS)?
+            .into_iter()
+            .map(norm_case)
+            .collect::<Vec<_>>();
+        expanded.sort();
+        expanded.dedup();
+        expanded_options.search_paths = Some(expanded);
+    }
+    Ok(expanded_options)
 }
 
 fn apply_configure_options(
@@ -1172,77 +1292,7 @@ fn report_refresh_follow_up(execution: RefreshExecution) {
 pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
     match parse_refresh_options(params.clone()) {
         Ok(refresh_options) => {
-            // Start in a new thread, we can have multiple requests.
-            thread::spawn(move || {
-                let _span = info_span!("handle_refresh",
-                    search_kind = ?refresh_options.search_kind,
-                    has_search_paths = refresh_options.search_paths.is_some()
-                )
-                .entered();
-
-                loop {
-                    let configuration_state = context.configuration.read().unwrap().clone();
-                    let refresh_key =
-                        RefreshKey::new(&refresh_options, configuration_state.generation);
-
-                    match context
-                        .refresh_coordinator
-                        .register_request(id, refresh_key.clone())
-                    {
-                        RefreshRegistration::Joined => return,
-                        RefreshRegistration::Wait => {
-                            context.refresh_coordinator.wait_until_idle();
-                        }
-                        RefreshRegistration::Start => {
-                            // Safety guard: if anything in this arm panics
-                            // (including begin_completion), force the
-                            // coordinator back to Idle so waiters are not
-                            // stuck forever.
-                            // Move refresh_key into the guard to avoid an
-                            // extra clone of potentially large search_paths.
-                            let mut safety_guard =
-                                RefreshSafetyGuard::new(&context.refresh_coordinator, refresh_key);
-
-                            let refresh_result = panic::catch_unwind(AssertUnwindSafe(|| {
-                                execute_refresh(
-                                    context.as_ref(),
-                                    &refresh_options,
-                                    &configuration_state,
-                                )
-                            }));
-
-                            match refresh_result {
-                                Ok(execution) => {
-                                    let refresh_result = execution.result.clone();
-                                    let mut completion_guard = RefreshCompletionGuard::begin(
-                                        &context.refresh_coordinator,
-                                        &safety_guard.key,
-                                    );
-                                    safety_guard.disarm();
-                                    finish_refresh_replies(&mut completion_guard, &refresh_result);
-                                    report_refresh_follow_up(execution);
-                                }
-                                Err(_) => {
-                                    error!(
-                                        "Refresh panicked for generation {} and options {:?}",
-                                        configuration_state.generation, refresh_options
-                                    );
-                                    let mut completion_guard = RefreshCompletionGuard::begin(
-                                        &context.refresh_coordinator,
-                                        &safety_guard.key,
-                                    );
-                                    safety_guard.disarm();
-                                    finish_refresh_errors(
-                                        &mut completion_guard,
-                                        "Refresh failed unexpectedly",
-                                    );
-                                }
-                            }
-                            return;
-                        }
-                    }
-                }
-            });
+            spawn_refresh_worker(context, id, refresh_options, expand_refresh_options)
         }
         Err(e) => {
             error!("Failed to parse refresh {params:?}: {e}");
@@ -1312,6 +1362,96 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
             );
         }
     }
+}
+
+fn spawn_refresh_worker<F>(
+    context: Arc<Context>,
+    id: u32,
+    refresh_options: RefreshOptions,
+    expand: F,
+) where
+    F: Fn(&RefreshOptions) -> Result<RefreshOptions, GlobExpansionError> + Send + 'static,
+{
+    let expansion_permit = match context
+        .glob_expansion_admission
+        .try_acquire_for_patterns(refresh_options.search_paths.iter().flatten())
+    {
+        Ok(permit) => permit,
+        Err(message) => {
+            send_error(Some(id), -4, message);
+            return;
+        }
+    };
+    thread::spawn(move || {
+        let _span = info_span!("handle_refresh",
+            search_kind = ?refresh_options.search_kind,
+            has_search_paths = refresh_options.search_paths.is_some()
+        )
+        .entered();
+
+        let expanded_options = match expand(&refresh_options) {
+            Ok(options) => options,
+            Err(error) => {
+                send_error(
+                    Some(id),
+                    -4,
+                    format!("Refresh glob expansion failed: {error}"),
+                );
+                return;
+            }
+        };
+        drop(expansion_permit);
+
+        loop {
+            let configuration_state = context.configuration.read().unwrap().clone();
+            let refresh_key =
+                RefreshKey::from_expanded(&expanded_options, configuration_state.generation);
+
+            match context
+                .refresh_coordinator
+                .register_request(id, refresh_key.clone())
+            {
+                RefreshRegistration::Joined => return,
+                RefreshRegistration::Wait => context.refresh_coordinator.wait_until_idle(),
+                RefreshRegistration::Start => {
+                    let mut safety_guard =
+                        RefreshSafetyGuard::new(&context.refresh_coordinator, refresh_key);
+                    let refresh_result = panic::catch_unwind(AssertUnwindSafe(|| {
+                        execute_refresh(context.as_ref(), &expanded_options, &configuration_state)
+                    }));
+
+                    match refresh_result {
+                        Ok(execution) => {
+                            let refresh_result = execution.result.clone();
+                            let mut completion_guard = RefreshCompletionGuard::begin(
+                                &context.refresh_coordinator,
+                                &safety_guard.key,
+                            );
+                            safety_guard.disarm();
+                            finish_refresh_replies(&mut completion_guard, &refresh_result);
+                            report_refresh_follow_up(execution);
+                        }
+                        Err(_) => {
+                            error!(
+                                "Refresh panicked for generation {} and options {:?}",
+                                configuration_state.generation, refresh_options
+                            );
+                            let mut completion_guard = RefreshCompletionGuard::begin(
+                                &context.refresh_coordinator,
+                                &safety_guard.key,
+                            );
+                            safety_guard.disarm();
+                            finish_refresh_errors(
+                                &mut completion_guard,
+                                "Refresh failed unexpectedly",
+                            );
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+    });
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1505,10 +1645,22 @@ mod tests {
             expand_configure_directory_patterns(
                 "environmentDirectories",
                 vec![temp.path().join("*")],
-            ),
+            )
+            .unwrap(),
             vec![directory]
         );
     }
+    #[test]
+    fn configure_pattern_expansion_reports_malformed_patterns() {
+        assert!(matches!(
+            expand_configure_directory_patterns(
+                "workspaceDirectories",
+                vec![PathBuf::from("malformed[")],
+            ),
+            Err(GlobExpansionError::InvalidPattern { .. })
+        ));
+    }
+
     #[derive(Default)]
     struct RecordingReporter {
         environments: Mutex<Vec<PythonEnvironment>>,
@@ -1635,7 +1787,214 @@ mod tests {
     }
 
     fn make_refresh_key(generation: u64, options: RefreshOptions) -> RefreshKey {
-        RefreshKey::new(&options, generation)
+        RefreshKey::from_expanded(&options, generation)
+    }
+
+    fn make_test_context() -> Arc<Context> {
+        let environment = EnvironmentApi::new();
+        let conda_locator = Arc::new(Conda::from(&environment));
+        let poetry_locator = Arc::new(Poetry::from(&environment));
+        Arc::new(Context {
+            locators: create_locators(conda_locator.clone(), poetry_locator, &environment),
+            conda_locator,
+            configuration: Arc::new(RwLock::new(ConfigurationState::default())),
+            configure_in_progress: Arc::new(Mutex::new(())),
+            os_environment: Arc::new(environment),
+            refresh_coordinator: RefreshCoordinator::default(),
+            glob_expansion_admission: Arc::new(GlobExpansionAdmission::default()),
+        })
+    }
+
+    #[test]
+    fn blocked_refresh_expansion_does_not_block_info() {
+        let context = make_test_context();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        spawn_refresh_worker(
+            context.clone(),
+            100,
+            RefreshOptions {
+                search_paths: Some(vec![PathBuf::from("blocked*")]),
+                ..RefreshOptions::default()
+            },
+            move |_| {
+                started_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                Err(GlobExpansionError::InvalidPattern {
+                    pattern: "injected".to_string(),
+                    message: "released test expansion".to_string(),
+                })
+            },
+        );
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let (info_done_tx, info_done_rx) = mpsc::channel();
+        let info_context = context.clone();
+        thread::spawn(move || {
+            handle_info(info_context, 101, json!({}));
+            info_done_tx.send(()).unwrap();
+        });
+        info_done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        release_tx.send(()).unwrap();
+        for _ in 0..100 {
+            if *context.glob_expansion_admission.active.lock().unwrap() == 0 {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("refresh expansion did not finish");
+    }
+
+    #[test]
+    fn glob_expansion_admission_rejects_overload() {
+        let admission = Arc::new(GlobExpansionAdmission {
+            active: Mutex::new(0),
+            limit: 1,
+        });
+        let first = admission.try_acquire().unwrap();
+        assert!(admission.try_acquire().is_none());
+        drop(first);
+        assert!(admission.try_acquire().is_some());
+    }
+
+    #[test]
+    fn glob_admission_does_not_block_non_glob_requests() {
+        let admission = Arc::new(GlobExpansionAdmission::default());
+        let _first = admission.try_acquire().unwrap();
+        let _second = admission.try_acquire().unwrap();
+        assert!(admission
+            .try_acquire_for_patterns(std::iter::empty())
+            .unwrap()
+            .is_none());
+        let literal = PathBuf::from("a-literal-workspace");
+        assert!(admission
+            .try_acquire_for_patterns(std::iter::once(&literal))
+            .unwrap()
+            .is_none());
+        for text in [
+            "workspace/*",
+            "workspace/**",
+            "malformed[",
+            "workspace/{a,b}",
+        ] {
+            let pattern = PathBuf::from(text);
+            assert!(admission
+                .try_acquire_for_patterns(std::iter::once(&pattern))
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn saturated_glob_admission_accepts_non_glob_handlers() {
+        let mut context = make_test_context();
+        let (configure_started_tx, configure_started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        Arc::get_mut(&mut context).unwrap().locators =
+            Arc::new(vec![Arc::new(BlockingConfigureLocator {
+                started: configure_started_tx,
+                release: Mutex::new(release_rx),
+                configured_workspace_directories: Mutex::new(None),
+            })]);
+        let _first = context.glob_expansion_admission.try_acquire().unwrap();
+        let _second = context.glob_expansion_admission.try_acquire().unwrap();
+        handle_configure(context.clone(), 200, json!({}));
+        let configured = configure_started_rx.recv_timeout(Duration::from_secs(2));
+        release_tx.send(()).unwrap();
+        configured.expect("configure without patterns must bypass glob admission");
+
+        let (refresh_started_tx, refresh_started_rx) = mpsc::channel();
+        spawn_refresh_worker(context, 201, RefreshOptions::default(), move |_| {
+            refresh_started_tx.send(()).unwrap();
+            Err(GlobExpansionError::InvalidPattern {
+                pattern: "injected".into(),
+                message: "stop after verifying admission".into(),
+            })
+        });
+        refresh_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("refresh without paths must bypass glob admission");
+    }
+
+    #[test]
+    fn pattern_deduplication_preserves_configured_priority() {
+        let paths = [
+            PathBuf::from("z-priority"),
+            PathBuf::from("a-fallback"),
+            PathBuf::from("z-priority"),
+        ];
+        assert_eq!(deduplicate_path_patterns(&paths), paths[..2]);
+    }
+
+    #[test]
+    fn pattern_deduplication_preserves_directory_only_globs() {
+        let patterns = [PathBuf::from("workspace/*"), PathBuf::from("workspace/*/")];
+        assert_eq!(deduplicate_path_patterns(&patterns).len(), 2);
+    }
+
+    #[test]
+    fn refresh_key_coalesces_equivalent_expanded_searches() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("EnvOne")).unwrap();
+        let first = expand_refresh_options(&RefreshOptions {
+            search_kind: Some(PythonEnvironmentKind::Venv),
+            search_paths: Some(vec![temp.path().join("Env*")]),
+        })
+        .unwrap();
+        let second = expand_refresh_options(&RefreshOptions {
+            search_kind: Some(PythonEnvironmentKind::Venv),
+            search_paths: Some(vec![
+                temp.path().join("{EnvOne,EnvOne}"),
+                temp.path().join("EnvOne"),
+            ]),
+        })
+        .unwrap();
+        let coordinator = RefreshCoordinator::default();
+        let first_key = make_refresh_key(7, first);
+        let second_key = make_refresh_key(7, second);
+        assert!(matches!(
+            coordinator.register_request(1, first_key),
+            RefreshRegistration::Start
+        ));
+        assert!(matches!(
+            coordinator.register_request(2, second_key),
+            RefreshRegistration::Joined
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn differently_matching_windows_patterns_are_not_deduplicated_or_joined() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("EnvOne")).unwrap();
+        let patterns =
+            deduplicate_path_patterns(&[temp.path().join("Env*"), temp.path().join("env*")]);
+        assert_eq!(patterns.len(), 2);
+
+        let first = expand_refresh_options(&RefreshOptions {
+            search_kind: None,
+            search_paths: Some(vec![temp.path().join("Env*")]),
+        })
+        .unwrap();
+        let second = expand_refresh_options(&RefreshOptions {
+            search_kind: None,
+            search_paths: Some(vec![temp.path().join("env*")]),
+        })
+        .unwrap();
+        assert_ne!(
+            make_refresh_key(7, first.clone()),
+            make_refresh_key(7, second.clone())
+        );
+
+        let coordinator = RefreshCoordinator::default();
+        assert!(matches!(
+            coordinator.register_request(1, make_refresh_key(7, first)),
+            RefreshRegistration::Start
+        ));
+        assert!(matches!(
+            coordinator.register_request(2, make_refresh_key(7, second)),
+            RefreshRegistration::Wait
+        ));
     }
 
     #[test]
@@ -1698,17 +2057,30 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_refresh_options_canonicalizes_search_paths() {
+    fn test_parse_refresh_options_does_not_expand_search_paths() {
+        let pattern = PathBuf::from("definitely-missing-root/**/venv");
+        let options = parse_refresh_options(json!({ "searchPaths": [pattern] })).unwrap();
+        assert_eq!(options.search_paths, Some(vec![pattern]));
+    }
+
+    #[test]
+    fn test_expand_refresh_options_canonicalizes_search_paths() {
         let temp_dir = tempfile::tempdir().unwrap();
         let alpha = temp_dir.path().join("alpha");
         let beta = temp_dir.path().join("beta");
         std::fs::create_dir(&alpha).unwrap();
         std::fs::create_dir(&beta).unwrap();
 
-        let options = canonicalize_refresh_options(RefreshOptions {
+        let options = expand_refresh_options(&RefreshOptions {
             search_kind: Some(PythonEnvironmentKind::Venv),
-            search_paths: Some(vec![beta.clone(), temp_dir.path().join("*"), alpha.clone()]),
-        });
+            search_paths: Some(vec![
+                beta.clone(),
+                temp_dir.path().join("*"),
+                alpha.clone(),
+                temp_dir.path().join("*"),
+            ]),
+        })
+        .unwrap();
 
         assert_eq!(
             options,

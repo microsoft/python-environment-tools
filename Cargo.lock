@@ -536,6 +536,7 @@ dependencies = [
  "lazy_static",
  "log",
  "msvc_spectre_libs",
+ "tempfile",
  "windows-sys 0.59.0",
 ]
 
