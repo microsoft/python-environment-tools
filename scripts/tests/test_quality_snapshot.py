@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 import argparse
+import itertools
 import json
 import sys
 import tempfile
@@ -98,6 +99,45 @@ def write_lcov(path, *, lines_hit, lines_found, functions_hit, functions_found):
 
 
 class PerformanceSnapshotTests(unittest.TestCase):
+    def test_calibrated_client_budgets_cover_unchanged_hosted_variance(self):
+        # Three workflow_dispatch baselines and the PR run at 9c1b003; see quality docs.
+        samples = {
+            'Linux': [(53, 57, 11, 13, 142), (48, 52, 9, 11, 122),
+                      (58, 62, 11, 13, 163), (59, 60, 12, 15, 154)],
+            'Windows': [(161, 168, 16, 30, 163), (105, 109, 9, 13, 106),
+                        (160, 172, 12, 27, 165), (158, 172, 15, 21, 160)],
+            'macOS': [(87, 111, 18, 28, 250), (145, 213, 34, 61, 474),
+                      (98, 110, 17, 34, 291), (192, 215, 36, 69, 506)],
+        }
+        for platform, rows in samples.items():
+            snapshots = [performance_snapshot(
+                schema_version=3, round_trip_p50=r50, round_trip_p95=r95,
+                request_first_p50=t50, request_first_p95=t95, cold_round_trip_p50=cold,
+            ) for r50, r95, t50, t95, cold in rows]
+            for current, baseline in itertools.permutations(snapshots, 2):
+                with self.subTest(platform=platform, current=current['refresh_round_trip_ms']):
+                    _, failures = compare_performance(current, baseline, platform)
+                    self.assertEqual(failures, [])
+
+    def test_calibrated_client_gates_reject_material_delay_on_all_platforms(self):
+        for platform in ('Linux', 'Windows', 'macOS'):
+            baseline = performance_snapshot(schema_version=3)
+            current = performance_snapshot(schema_version=3, round_trip_p50=2000,
+                round_trip_p95=3000, request_first_p50=1000, request_first_p95=2000,
+                cold_round_trip_p50=3000)
+            _, failures = compare_performance(current, baseline, platform)
+            for label in ('Refresh round-trip P50', 'Refresh round-trip P95',
+                          'Request-to-first environment P50', 'Request-to-first environment P95',
+                          'Cold refresh round-trip P50'):
+                self.assertTrue(any(label in failure for failure in failures), (platform, label))
+
+    def test_client_calibration_does_not_relax_macos_discovery_gates(self):
+        baseline = performance_snapshot(schema_version=3, refresh_p50=87, cold_p50=250)
+        current = performance_snapshot(schema_version=3, refresh_p50=192, cold_p50=506)
+        _, failures = compare_performance(current, baseline, 'macOS')
+        self.assertTrue(any('Discovery duration P50' in failure for failure in failures))
+        self.assertTrue(any('Cold discovery duration P50' in failure for failure in failures))
+
     def test_unchanged_snapshot_passes(self):
         comparisons, failures = compare_performance(performance_snapshot(), performance_snapshot(), 'Windows')
         self.assertEqual(len(comparisons), 6)

@@ -110,6 +110,25 @@ PERFORMANCE_BUDGETS = {
         RegressionBudget(150, 50), RegressionBudget(250, 100),
     ),
 }
+CLIENT_PERFORMANCE_BUDGETS = {
+    'linux': (
+        RegressionBudget(25, 30), RegressionBudget(50, 50),
+        RegressionBudget(20, 100), RegressionBudget(25, 100),
+    ),
+    'windows': (
+        RegressionBudget(150, 50), RegressionBudget(250, 100),
+        RegressionBudget(25, 50), RegressionBudget(100, 100),
+    ),
+    'macos': (
+        RegressionBudget(250, 50), RegressionBudget(300, 100),
+        RegressionBudget(50, 50), RegressionBudget(100, 100),
+    ),
+}
+CLIENT_COLD_REFRESH_BUDGETS = {
+    'linux': RegressionBudget(100, 50),
+    'windows': RegressionBudget(150, 50),
+    'macos': RegressionBudget(600, 50),
+}
 PERFORMANCE_METRICS_SCHEMA_VERSION = 3
 PERFORMANCE_INVENTORY_SCHEMA_VERSION = 2
 LEGACY_COLD_DISCOVERY_SPEC = MetricSpec('Cold discovery duration P50', 'cold_refresh', 'p50')
@@ -160,8 +179,11 @@ def performance_specs(platform: str) -> list[tuple[MetricSpec, RegressionBudget]
 
 
 def client_performance_specs(platform: str) -> list[tuple[MetricSpec, RegressionBudget]]:
-    budgets = PERFORMANCE_BUDGETS[platform_key(platform)]
-    return list(zip(CLIENT_PERFORMANCE_METRICS, budgets[2:6]))
+    key = platform_key(platform)
+    budgets = CLIENT_PERFORMANCE_BUDGETS[key]
+    if len(budgets) != len(CLIENT_PERFORMANCE_METRICS):
+        raise SnapshotError(f'Client performance budget count for {key} does not match metric count')
+    return list(zip(CLIENT_PERFORMANCE_METRICS, budgets))
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -346,7 +368,7 @@ def compare_performance(
             COLD_REFRESH_ROUND_TRIP_SPEC.label,
             performance_value(current, COLD_REFRESH_ROUND_TRIP_SPEC, 'current'),
             performance_value(baseline, COLD_REFRESH_ROUND_TRIP_SPEC, 'baseline'),
-            cold_refresh_budget(platform),
+            CLIENT_COLD_REFRESH_BUDGETS[platform_key(platform)],
         ))
 
     for comparison in comparisons:

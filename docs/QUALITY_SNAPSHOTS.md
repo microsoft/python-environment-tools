@@ -27,24 +27,53 @@ concurrency-safe attribution and post-response notifications cannot be assigned 
 measured refresh uses a fresh process to avoid that ambiguity. It must produce every required
 sample; missing data is invalid rather than silently skipped.
 
-A metric blocks only when it exceeds both its absolute and relative budget. Schema v3 keeps the
-existing discovery/startup-relative gates and applies the corresponding unchanged tolerances to
-client round-trip/request-relative metrics once both exact-base snapshots are v3:
+A metric blocks only when it exceeds both its absolute and relative budget. Schema v3
+preserves all existing discovery/startup-relative gates:
 
-| Metric family | Linux | Windows | macOS |
+| Existing metric | Linux | Windows | macOS |
 | --- | ---: | ---: | ---: |
 | Server startup P50 | 5 ms / 100% | 10 ms / 50% | 100 ms / 50% |
 | Server startup P95 | 50 ms / 200% | 50 ms / 100% | 750 ms / 100% |
-| Discovery duration and refresh round-trip P50 | 25 ms / 30% | 150 ms / 50% | 100 ms / 50% |
-| Discovery duration and refresh round-trip P95 | 50 ms / 50% | 250 ms / 100% | 300 ms / 100% |
-| Startup/request-to-first environment P50 | 20 ms / 100% | 25 ms / 50% | 150 ms / 50% |
-| Startup/request-to-first environment P95 | 25 ms / 100% | 100 ms / 100% | 250 ms / 100% |
-| Cold discovery duration and refresh round-trip P50 | 100 ms / 50% | 150 ms / 50% | 250 ms / 50% |
+| Discovery duration P50 | 25 ms / 30% | 150 ms / 50% | 100 ms / 50% |
+| Discovery duration P95 | 50 ms / 50% | 250 ms / 100% | 300 ms / 100% |
+| Startup-to-first environment P50 | 20 ms / 100% | 25 ms / 50% | 150 ms / 50% |
+| Startup-to-first environment P95 | 25 ms / 100% | 100 ms / 100% | 250 ms / 100% |
+| Cold discovery duration P50 | 100 ms / 50% | 150 ms / 50% | 250 ms / 50% |
 
-Each cell is `absolute / relative`. No threshold was widened for schema v3. These client thresholds
-are conservative initial gates, not a claimed cross-platform calibration: release acceptance still
-requires comparable repeated schema-v3 baselines on all three hosted-runner platforms. Those runs
-must be reviewed before changing any threshold.
+Client gates use their own calibration, active only when both exact-base snapshots are v3:
+
+| New client metric | Linux | Windows | macOS |
+| --- | ---: | ---: | ---: |
+| Refresh round-trip P50 | 25 ms / 30% | 150 ms / 50% | 250 ms / 50% |
+| Refresh round-trip P95 | 50 ms / 50% | 250 ms / 100% | 300 ms / 100% |
+| Request-to-first environment P50 | 20 ms / 100% | 25 ms / 50% | 50 ms / 50% |
+| Request-to-first environment P95 | 25 ms / 100% | 100 ms / 100% | 100 ms / 100% |
+| Cold refresh round-trip P50 | 100 ms / 50% | 150 ms / 50% | 600 ms / 50% |
+
+Each cell is `absolute / relative`. Initial client calibration in #531 uses four runs of
+unchanged benchmark source at `9c1b003`: [baseline 1](https://github.com/microsoft/python-environment-tools/actions/runs/35669490808),
+[baseline 2](https://github.com/microsoft/python-environment-tools/actions/runs/35669544096),
+[baseline 3](https://github.com/microsoft/python-environment-tools/actions/runs/35669544153), and
+[PR measurement](https://github.com/microsoft/python-environment-tools/actions/runs/35669495406).
+Each platform has 40 cold/warm pairs; inventories were stable at 5/8/10 environments on
+Linux/Windows/macOS respectively, with one manager. The PR Windows artifact upload hit HTTP 403;
+its successful benchmark/comparison JSON was recovered from the job log instead of discarded.
+
+Observed run-to-run ranges (maximum minus minimum statistic, not individual-sample spread):
+
+| Client statistic range | Linux | Windows | macOS |
+| --- | ---: | ---: | ---: |
+| Round-trip P50 / P95 | 11 / 10 ms | 56 / 63 ms | 105 / 105 ms |
+| Request-to-first P50 / P95 | 3 / 4 ms | 7 / 17 ms | 19 / 41 ms |
+| Cold round-trip P50 | 41 ms | 59 ms | 256 ms |
+
+Client absolute budgets retain at least twice those observed ranges, rounded up; existing
+larger Linux/Windows tolerances were retained. Relative tolerances remain unchanged. macOS
+request-relative TTFE tolerances are tighter than the unrelated startup-relative ones. Directly
+reusing discovery tolerances for macOS client P50/cold P50 falsely rejected unchanged source.
+No existing discovery, startup, or coverage gate is relaxed: they can still block independently.
+These are initial hosted-runner noise budgets, not user latency SLOs. Cold P95 stays diagnostic
+because individual host events dominate it; recalibrate only with new comparable evidence.
 
 ### Exact-base schema transition
 
