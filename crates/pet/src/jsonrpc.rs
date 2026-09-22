@@ -1463,53 +1463,57 @@ pub struct FindOptions {
     pub search_path: PathBuf,
 }
 
+fn execute_find(context: &Context, find_options: &FindOptions) -> Vec<PythonEnvironment> {
+    let now = Instant::now();
+    trace!("Finding environments in {:?}", find_options.search_path);
+    let global_env_search_paths: Vec<PathBuf> =
+        get_search_paths_from_env_variables(context.os_environment.as_ref());
+
+    let collect_reporter = Arc::new(collect::create_reporter());
+    let reporter = CacheReporter::new(collect_reporter.clone());
+    if find_options.search_path.is_file() {
+        identify_python_executables_using_locators(
+            vec![find_options.search_path.clone()],
+            &context.locators,
+            &reporter,
+            &global_env_search_paths,
+        );
+    } else {
+        let environment_directories = context
+            .configuration
+            .read()
+            .expect("configuration lock poisoned")
+            .config
+            .environment_directories
+            .clone();
+        find_python_environments_in_workspace_folder_recursive(
+            &find_options.search_path,
+            &reporter,
+            &context.locators,
+            &global_env_search_paths,
+            environment_directories.as_deref().unwrap_or(&[]),
+        );
+    }
+
+    let envs = collect_reporter
+        .environments
+        .lock()
+        .expect("environments mutex poisoned")
+        .clone();
+    trace!(
+        "Find completed in {:?}, found {} environments in {:?}",
+        now.elapsed(),
+        envs.len(),
+        find_options.search_path
+    );
+    envs
+}
+
 pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
     thread::spawn(
         move || match serde_json::from_value::<FindOptions>(params.clone()) {
             Ok(find_options) => {
-                let now = Instant::now();
-                trace!("Finding environments in {:?}", find_options.search_path);
-                let global_env_search_paths: Vec<PathBuf> =
-                    get_search_paths_from_env_variables(context.os_environment.as_ref());
-
-                let collect_reporter = Arc::new(collect::create_reporter());
-                let reporter = CacheReporter::new(collect_reporter.clone());
-                if find_options.search_path.is_file() {
-                    identify_python_executables_using_locators(
-                        vec![find_options.search_path.clone()],
-                        &context.locators,
-                        &reporter,
-                        &global_env_search_paths,
-                    );
-                } else {
-                    find_python_environments_in_workspace_folder_recursive(
-                        &find_options.search_path,
-                        &reporter,
-                        &context.locators,
-                        &global_env_search_paths,
-                        context
-                            .configuration
-                            .read()
-                            .unwrap()
-                            .config
-                            .clone()
-                            .environment_directories
-                            .as_deref()
-                            .unwrap_or(&[]),
-                    );
-                }
-
-                let envs = collect_reporter
-                    .environments
-                    .lock()
-                    .expect("environments mutex poisoned")
-                    .clone();
-                trace!(
-                    "Find completed in {:?}, found {} environments in {:?}",
-                    now.elapsed(),
-                    envs.len(),
-                    find_options.search_path
-                );
+                let envs = execute_find(&context, &find_options);
                 if envs.is_empty() {
                     send_reply(id, None::<Vec<PythonEnvironment>>);
                 } else {
@@ -1803,6 +1807,152 @@ mod tests {
             refresh_coordinator: RefreshCoordinator::default(),
             glob_expansion_admission: Arc::new(GlobExpansionAdmission::default()),
         })
+    }
+
+    struct BlockingFindLocator {
+        blocked_executable: PathBuf,
+        started: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl Locator for BlockingFindLocator {
+        fn get_kind(&self) -> LocatorKind {
+            LocatorKind::Venv
+        }
+
+        fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+            vec![PythonEnvironmentKind::Venv]
+        }
+
+        fn try_from(&self, env: &pet_core::env::PythonEnv) -> Option<PythonEnvironment> {
+            if env.executable == self.blocked_executable {
+                self.started.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("test must release blocked discovery");
+            }
+            Some(PythonEnvironment::new(
+                Some(env.executable.clone()),
+                Some(PythonEnvironmentKind::Venv),
+                env.executable.parent().unwrap().parent().map(PathBuf::from),
+                None,
+                Some("3.12.0".to_string()),
+            ))
+        }
+
+        fn find(&self, _reporter: &dyn Reporter) {}
+    }
+
+    fn create_find_test_executable(directory: &std::path::Path) -> PathBuf {
+        let executable = if cfg!(windows) {
+            directory.join("Scripts").join("python.exe")
+        } else {
+            directory.join("bin").join("python")
+        };
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, "").unwrap();
+        norm_case(executable)
+    }
+
+    #[test]
+    fn find_releases_configuration_lock_and_keeps_directory_snapshot() {
+        let workspace = tempfile::tempdir().unwrap();
+        let first_executable = create_find_test_executable(&workspace.path().join(".venv"));
+        let old_directory = workspace.path().join(".cache");
+        let old_executable = create_find_test_executable(&old_directory);
+        let new_directory = workspace.path().join(".git");
+        create_find_test_executable(&new_directory);
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let mut context = make_test_context();
+        Arc::get_mut(&mut context).unwrap().locators =
+            Arc::new(vec![Arc::new(BlockingFindLocator {
+                blocked_executable: first_executable.clone(),
+                started: started_tx,
+                release: Mutex::new(release_rx),
+            })]);
+        context
+            .configuration
+            .write()
+            .unwrap()
+            .config
+            .environment_directories = Some(vec![old_directory]);
+
+        let worker_context = context.clone();
+        let options = FindOptions {
+            search_path: workspace.path().to_path_buf(),
+        };
+        let worker = thread::spawn(move || execute_find(&worker_context, &options));
+        started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let updated = context.configuration.try_write().map(|mut state| {
+            state.config.environment_directories = Some(vec![new_directory]);
+            state.generation += 1;
+        });
+        release_tx.send(()).unwrap();
+        let environments = worker.join().unwrap();
+
+        assert!(
+            updated.is_ok(),
+            "find held the configuration lock during discovery"
+        );
+        let mut executables: Vec<_> = environments
+            .iter()
+            .map(|environment| environment.executable.clone().unwrap())
+            .collect();
+        executables.sort();
+        let mut expected = vec![first_executable, old_executable];
+        expected.sort();
+        assert_eq!(executables, expected);
+        assert!(environments.iter().all(|environment| {
+            environment.kind == Some(PythonEnvironmentKind::Venv)
+                && environment.version.as_deref() == Some("3.12.0")
+        }));
+    }
+
+    #[test]
+    fn find_executable_path_preserves_identified_environment() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = create_find_test_executable(directory.path());
+        let (started_tx, _started_rx) = mpsc::channel();
+        let (_release_tx, release_rx) = mpsc::channel();
+        let mut context = make_test_context();
+        Arc::get_mut(&mut context).unwrap().locators =
+            Arc::new(vec![Arc::new(BlockingFindLocator {
+                blocked_executable: PathBuf::new(),
+                started: started_tx,
+                release: Mutex::new(release_rx),
+            })]);
+        let environments = execute_find(
+            &context,
+            &FindOptions {
+                search_path: executable.clone(),
+            },
+        );
+        assert_eq!(
+            environments,
+            vec![PythonEnvironment::new(
+                Some(executable.clone()),
+                Some(PythonEnvironmentKind::Venv),
+                executable.parent().unwrap().parent().map(PathBuf::from),
+                None,
+                Some("3.12.0".to_string()),
+            )]
+        );
+    }
+
+    #[test]
+    fn find_empty_workspace_returns_no_environments() {
+        let workspace = tempfile::tempdir().unwrap();
+        let context = make_test_context();
+        assert!(execute_find(
+            &context,
+            &FindOptions {
+                search_path: workspace.path().to_path_buf()
+            },
+        )
+        .is_empty());
     }
 
     #[test]
