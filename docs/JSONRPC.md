@@ -194,9 +194,10 @@ limits return a JSON-RPC error (`-4`) and no partial refresh inventory. Limits a
 checked between filesystem entries; they are not a timeout and cannot interrupt an
 operating-system filesystem call already in progress.
 
-PET admits at most two configure/refresh filesystem glob expansions concurrently.
-Requests without wildcard patterns do not consume these slots. Additional wildcard
+PET admits at most two configure/refresh glob or brace expansions concurrently.
+Requests containing only literal paths do not consume these slots. Additional expansion
 requests receive JSON-RPC error `-4` instead of creating an unbounded traversal queue.
+Input deduplication preserves the first occurrence order of configured paths.
 
 ## Refresh Progress Telemetry
 

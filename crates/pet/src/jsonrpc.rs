@@ -22,7 +22,7 @@ use pet_core::{
 };
 use pet_env_var_path::get_search_paths_from_env_variables;
 use pet_fs::glob::{
-    expand_glob_patterns_bounded, is_recursive_glob_pattern, GlobExpansionError,
+    expand_glob_patterns_bounded, is_glob_pattern, is_recursive_glob_pattern, GlobExpansionError,
     DEFAULT_GLOB_EXPANSION_LIMITS,
 };
 use pet_fs::path::norm_case;
@@ -40,7 +40,7 @@ use pet_telemetry::report_inaccuracies_identified_after_resolving;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_json::{self, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use std::{
@@ -98,7 +98,7 @@ impl GlobExpansionAdmission {
     ) -> Result<Option<GlobExpansionPermit>, String> {
         if !patterns
             .into_iter()
-            .any(|pattern| pattern.to_string_lossy().contains(['*', '?', '[', ']']))
+            .any(|pattern| is_glob_pattern(&pattern.to_string_lossy()))
         {
             return Ok(None);
         }
@@ -820,13 +820,12 @@ fn normalize_refresh_params(params: Value) -> Value {
 }
 
 fn deduplicate_path_patterns(paths: &[PathBuf]) -> Vec<PathBuf> {
-    let mut patterns = BTreeMap::new();
-    for path in paths {
-        patterns
-            .entry(path.as_os_str().to_owned())
-            .or_insert_with(|| path.clone());
-    }
-    patterns.into_values().collect()
+    let mut seen = HashSet::new();
+    paths
+        .iter()
+        .filter(|path| seen.insert(path.as_os_str()))
+        .cloned()
+        .collect()
 }
 
 fn parse_refresh_options(params: Value) -> Result<RefreshOptions, serde_json::Error> {
@@ -1873,7 +1872,12 @@ mod tests {
             .try_acquire_for_patterns(std::iter::once(&literal))
             .unwrap()
             .is_none());
-        for text in ["workspace/*", "workspace/**", "malformed["] {
+        for text in [
+            "workspace/*",
+            "workspace/**",
+            "malformed[",
+            "workspace/{a,b}",
+        ] {
             let pattern = PathBuf::from(text);
             assert!(admission
                 .try_acquire_for_patterns(std::iter::once(&pattern))
@@ -1910,6 +1914,16 @@ mod tests {
         refresh_started_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("refresh without paths must bypass glob admission");
+    }
+
+    #[test]
+    fn pattern_deduplication_preserves_configured_priority() {
+        let paths = [
+            PathBuf::from("z-priority"),
+            PathBuf::from("a-fallback"),
+            PathBuf::from("z-priority"),
+        ];
+        assert_eq!(deduplicate_path_patterns(&paths), paths[..2]);
     }
 
     #[test]

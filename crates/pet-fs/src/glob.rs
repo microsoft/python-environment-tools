@@ -136,6 +136,11 @@ fn expand_braces_inner(pattern: &str, results: &mut Vec<String>) {
             .and_then(|open| pattern[open..].find('}').map(|close| (open, open + close)));
         if let Some((open, close)) = group {
             for alternative in pattern[open + 1..close].split(',').rev() {
+                if steps == MAX_BRACE_EXPANSION_STEPS {
+                    log::warn!("Brace expansion exceeded its work limit, truncating '{pattern}'");
+                    return;
+                }
+                steps += 1;
                 pending.push(format!(
                     "{}{alternative}{}",
                     &pattern[..open],
@@ -747,6 +752,14 @@ mod tests {
             expand_braces_bounded(&"{a}".repeat(MAX_BRACE_EXPANSION_STEPS), 1),
             Err(GlobExpansionError::BraceWorkLimitExceeded { .. })
         ));
+    }
+
+    #[test]
+    fn legacy_brace_expansion_charges_alternatives_before_formatting() {
+        let pattern = format!("{{{}}}", vec!["a"; MAX_BRACE_EXPANSION_STEPS].join(","));
+        assert!(expand_braces(&pattern).is_empty());
+        assert!(expand_glob_pattern(&pattern).is_empty());
+        assert!(!is_recursive_glob_pattern(&pattern));
     }
 
     #[test]
