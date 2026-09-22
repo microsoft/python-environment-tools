@@ -1229,7 +1229,7 @@ fn test_server_startup_performance() {
 fn test_full_refresh_performance() {
     let mut server_duration_stats = StatisticalMetrics::new();
     let mut client_duration_stats = StatisticalMetrics::new();
-    let mut time_to_first_env_stats = StatisticalMetrics::new();
+    let mut request_time_to_first_env_stats = StatisticalMetrics::new();
     let mut env_count = 0usize;
     let mut manager_count = 0usize;
     let mut kind_counts: HashMap<String, usize> = HashMap::new();
@@ -1262,7 +1262,7 @@ fn test_full_refresh_performance() {
         client_duration_stats.add(client_elapsed.as_millis());
 
         if let Some(time_to_first) = client.request_time_to_first_env() {
-            time_to_first_env_stats.add(time_to_first.as_millis());
+            request_time_to_first_env_stats.add(time_to_first.as_millis());
         }
 
         // Track counts from last iteration
@@ -1290,8 +1290,8 @@ fn test_full_refresh_performance() {
     println!();
     server_duration_stats.print_summary("Server duration");
     client_duration_stats.print_summary("Client duration");
-    if time_to_first_env_stats.count() > 0 {
-        time_to_first_env_stats.print_summary("Time to first env");
+    if request_time_to_first_env_stats.count() > 0 {
+        request_time_to_first_env_stats.print_summary("Request-to-first environment");
     }
     println!("Environments discovered: {}", env_count);
     println!("Managers discovered: {}", manager_count);
@@ -1301,7 +1301,7 @@ fn test_full_refresh_performance() {
     let json_output = serde_json::to_string_pretty(&json!({
         "server_duration": server_duration_stats.to_json(),
         "client_duration": client_duration_stats.to_json(),
-        "time_to_first_env": time_to_first_env_stats.to_json(),
+        "request_time_to_first_env": request_time_to_first_env_stats.to_json(),
         "environments_count": env_count,
         "managers_count": manager_count
     }))

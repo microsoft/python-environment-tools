@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -393,6 +394,17 @@ class PerformanceSnapshotTests(unittest.TestCase):
                 performance_specs('Windows')
         finally:
             PERFORMANCE_BUDGETS['windows'] = original
+
+    def test_baseline_metric_shape_mismatch_fails_closed(self):
+        import quality_snapshot
+        current = performance_snapshot(schema_version=3)
+        baseline = performance_snapshot(schema_version=2)
+        original = quality_snapshot.LEGACY_PERFORMANCE_METRICS
+        for specs in (original[:-1], original + original[:1]):
+            with self.subTest(metric_count=len(specs)):
+                with patch.object(quality_snapshot, 'LEGACY_PERFORMANCE_METRICS', specs):
+                    with self.assertRaisesRegex(SnapshotError, 'metric counts do not match'):
+                        compare_performance(current, baseline, 'Windows')
 
     def test_unknown_platform_is_invalid(self):
         with self.assertRaises(SnapshotError):

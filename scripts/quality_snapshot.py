@@ -328,6 +328,11 @@ def compare_performance(
             f'Performance budget count for {platform_key(platform)} does not match metric count: '
             f'{len(budgets)} != {len(current_specs)}'
         )
+    if len(current_specs) != len(baseline_specs):
+        raise SnapshotError(
+            'Current and baseline performance metric counts do not match: '
+            f'{len(current_specs)} != {len(baseline_specs)}'
+        )
     comparisons: list[PerformanceComparison] = [
         MetricComparison(
             current_spec.label,
