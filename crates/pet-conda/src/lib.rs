@@ -153,6 +153,13 @@ impl Conda {
         self.mamba_managers.clear();
     }
 
+    fn prune_environment_info_cache(&self, active_prefixes: &HashSet<PathBuf>) {
+        self.environment_info_cache
+            .write()
+            .expect("conda environment info cache lock poisoned")
+            .retain(|prefix, _| active_prefixes.contains(prefix));
+    }
+
     fn get_environment_details(&self, path: &Path) -> Option<CondaEnvironmentDetails> {
         self.get_or_load_environment_details(path, || {
             let environment = get_conda_environment_info(path, &None)?;
@@ -517,10 +524,7 @@ impl Locator for Conda {
                 });
             }
 
-            self.environment_info_cache
-                .write()
-                .expect("conda environment info cache lock poisoned")
-                .retain(|prefix, _| active_prefixes.contains(prefix));
+            self.prune_environment_info_cache(&active_prefixes);
         });
     }
 }
@@ -550,6 +554,82 @@ mod tests {
             ),
             conda_dir: None,
         }
+    }
+
+    #[test]
+    fn environment_info_cache_pruning_retains_active_and_reloads_removed_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let active = root.path().join("active");
+        let stale = root.path().join("stale");
+        let environment = EnvironmentApi::new();
+        let shared = Conda::from(&environment);
+        let refresh = Conda::from_shared_environment_cache(&environment, &shared);
+        let loads = AtomicUsize::new(0);
+
+        for prefix in [&active, &stale] {
+            let metadata = prefix.join("conda-meta");
+            fs::create_dir_all(&metadata).unwrap();
+            fs::write(metadata.join("history"), "unchanged history").unwrap();
+            shared
+                .get_or_load_environment_details(prefix, || {
+                    let load = loads.fetch_add(1, Ordering::Relaxed) + 1;
+                    Some(test_details(prefix, load))
+                })
+                .unwrap();
+        }
+        assert_eq!(shared.environment_info_cache.read().unwrap().len(), 2);
+
+        #[cfg(windows)]
+        let active_alias = PathBuf::from(active.to_string_lossy().replace('\\', "/"));
+        #[cfg(not(windows))]
+        let active_alias = active.clone();
+        let active_prefixes = HashSet::from([norm_case(&active_alias)]);
+        refresh.prune_environment_info_cache(&active_prefixes);
+
+        {
+            let cache = shared.environment_info_cache.read().unwrap();
+            assert_eq!(cache.len(), 1);
+            assert!(cache.contains_key(&norm_case(&active)));
+            assert!(!cache.contains_key(&norm_case(&stale)));
+        }
+        let retained = shared
+            .get_or_load_environment_details(&active_alias, || {
+                panic!("active metadata should survive pruning without reloading")
+            })
+            .unwrap();
+        assert_eq!(retained.environment.prefix, Some(active_alias));
+        assert_eq!(retained.environment.version.as_deref(), Some("1"));
+        assert_eq!(loads.load(Ordering::Relaxed), 2);
+
+        let reloaded = shared
+            .get_or_load_environment_details(&stale, || {
+                let load = loads.fetch_add(1, Ordering::Relaxed) + 1;
+                Some(test_details(&stale, load))
+            })
+            .unwrap();
+        assert_eq!(reloaded.environment.version.as_deref(), Some("3"));
+        assert_eq!(loads.load(Ordering::Relaxed), 3);
+
+        refresh.prune_environment_info_cache(&HashSet::new());
+        assert!(shared.environment_info_cache.read().unwrap().is_empty());
+        for prefix in [&active, &stale] {
+            shared
+                .get_or_load_environment_details(prefix, || {
+                    let load = loads.fetch_add(1, Ordering::Relaxed) + 1;
+                    Some(test_details(prefix, load))
+                })
+                .unwrap();
+        }
+        assert_eq!(loads.load(Ordering::Relaxed), 5);
+    }
+
+    #[test]
+    fn environment_info_cache_pruning_empty_cache_does_not_create_entries() {
+        let root = tempfile::tempdir().unwrap();
+        let locator = Conda::from(&EnvironmentApi::new());
+        locator.prune_environment_info_cache(&HashSet::new());
+        locator.prune_environment_info_cache(&HashSet::from([norm_case(root.path())]));
+        assert!(locator.environment_info_cache.read().unwrap().is_empty());
     }
 
     #[test]
