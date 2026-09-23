@@ -6,6 +6,10 @@ license.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Pipes"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dependencies]
 lazy_static = "1.4.0"
@@ -17,6 +21,9 @@ log = "0.4.21"
 serde_json = "1.0.93"
 sha2 = "0.10.6"
 env_logger = "0.10.2"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = "3.10"

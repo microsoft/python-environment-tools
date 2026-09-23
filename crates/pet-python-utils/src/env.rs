@@ -6,20 +6,19 @@ use pet_core::{arch::Architecture, env::PythonEnv, python_environment::PythonEnv
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
-    thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
-use crate::{cache::create_cache, executable::new_silent_command};
+use crate::{
+    cache::create_cache,
+    executable::new_silent_command,
+    process::{output, ProcessError},
+};
 
 const PYTHON_INFO_JSON_SEPARATOR: &str = "093385e9-59f7-4a16-a604-14bf206256fe";
 const PYTHON_INFO_CMD:&str = "import json, sys; print('093385e9-59f7-4a16-a604-14bf206256fe');print(json.dumps({'version': '.'.join(str(n) for n in sys.version_info), 'sys_prefix': sys.prefix, 'executable': sys.executable, 'is64_bit': sys.maxsize > 2**32}))";
 
-/// Maximum wall-clock time to wait for a spawned Python interpreter to print
-/// its info JSON before we give up and kill it. Stale cached paths on Windows
-/// (Store stubs, vanished network shares, EDR-stalled `CreateProcess`) can
-/// otherwise block `resolve` for tens to hundreds of seconds (Fixes #463).
+/// Maximum execution time after synchronous interpreter spawn returns.
 const RESOLVE_SPAWN_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Deserialize, Clone)]
@@ -107,114 +106,95 @@ fn get_interpreter_details_with_timeout(
     let executable = executable.to_str()?;
     let start = SystemTime::now();
     trace!("Executing Python: {} -c {}", executable, PYTHON_INFO_CMD);
-    let mut child = match new_silent_command(executable)
-        .args(["-c", PYTHON_INFO_CMD])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(err) => {
-            error!(
-                "Failed to spawn Python to resolve info {:?}: {}",
-                executable, err
-            );
-            return None;
-        }
-    };
-
-    // Poll for completion up to the timeout. A stale cached path on Windows
-    // (Store stub, vanished network share, EDR-stalled `CreateProcess`) can
-    // otherwise block `wait_with_output()` for tens to hundreds of seconds.
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_status)) => break,
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    warn!(
-                        "Timed out after {:?} resolving Python via spawn for {:?}; killing child.",
-                        timeout, executable
-                    );
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-            Err(err) => {
-                error!(
-                    "Failed to wait on Python interpreter spawn for {:?}: {}",
-                    executable, err
-                );
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    }
-
-    let result = child.wait_with_output();
+    let result = output(
+        new_silent_command(executable).args(["-c", PYTHON_INFO_CMD]),
+        timeout,
+    );
     match result {
-        Ok(output) => {
-            let output = output.stdout;
-            trace!(
-                "Executed Python {:?} in {:?} & produced an output {:?}",
-                executable,
-                start.elapsed(),
-                String::from_utf8_lossy(&output)
-            );
-            let separator = PYTHON_INFO_JSON_SEPARATOR.as_bytes();
-            if let Some(position) = output
-                .windows(separator.len())
-                .position(|bytes| bytes == separator)
-            {
-                let output = &output[position + separator.len()..];
-                if let Ok(info) = serde_json::from_slice::<InterpreterInfo>(output) {
-                    let mut symlinks = vec![
-                        PathBuf::from(executable),
-                        PathBuf::from(info.executable.clone()),
-                    ];
-                    symlinks.sort();
-                    symlinks.dedup();
-                    Some(ResolvedPythonEnv {
-                        executable: PathBuf::from(info.executable.clone()),
-                        prefix: PathBuf::from(info.sys_prefix),
-                        version: info.version.trim().to_string(),
-                        is64_bit: info.is64_bit,
-                        symlinks: Some(symlinks),
-                    })
-                } else {
-                    error!(
-                            "Python Execution for {:?} produced an output {:?} that could not be parsed as JSON",
-                            executable, String::from_utf8_lossy(output),
-                        );
-                    None
-                }
-            } else {
-                error!(
-                    "Python Execution for {:?} produced an output {:?} without a separator",
-                    executable,
-                    String::from_utf8_lossy(&output),
-                );
-                None
-            }
+        Ok(output) => parse_interpreter_result(executable, &output, start),
+        Err(ProcessError::Timeout(timeout)) => {
+            warn!("Timed out after {:?} resolving Python via spawn for {:?}; terminated direct child.", timeout, executable);
+            None
         }
-        Err(err) => {
+        Err(error) => {
             error!(
                 "Failed to execute Python to resolve info {:?}: {}",
-                executable, err
+                executable, error
             );
             None
         }
     }
 }
 
+fn parse_interpreter_result(
+    executable: &str,
+    output: &std::process::Output,
+    start: SystemTime,
+) -> Option<ResolvedPythonEnv> {
+    if !output.status.success() {
+        error!(
+            "Python interpreter {:?} exited with {}: {}",
+            executable,
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return None;
+    }
+    parse_interpreter_output(executable, &output.stdout, start)
+}
+
+fn parse_interpreter_output(
+    executable: &str,
+    output: &[u8],
+    start: SystemTime,
+) -> Option<ResolvedPythonEnv> {
+    trace!(
+        "Executed Python {:?} in {:?} & produced an output {:?}",
+        executable,
+        start.elapsed(),
+        String::from_utf8_lossy(output)
+    );
+    let separator = PYTHON_INFO_JSON_SEPARATOR.as_bytes();
+    if let Some(position) = output
+        .windows(separator.len())
+        .position(|bytes| bytes == separator)
+    {
+        let output = &output[position + separator.len()..];
+        if let Ok(info) = serde_json::from_slice::<InterpreterInfo>(output) {
+            let mut symlinks = vec![
+                PathBuf::from(executable),
+                PathBuf::from(info.executable.clone()),
+            ];
+            symlinks.sort();
+            symlinks.dedup();
+            Some(ResolvedPythonEnv {
+                executable: PathBuf::from(info.executable.clone()),
+                prefix: PathBuf::from(info.sys_prefix),
+                version: info.version.trim().to_string(),
+                is64_bit: info.is64_bit,
+                symlinks: Some(symlinks),
+            })
+        } else {
+            error!(
+                "Python Execution for {:?} produced an output {:?} that could not be parsed as JSON",
+                executable, String::from_utf8_lossy(output),
+            );
+            None
+        }
+    } else {
+        error!(
+            "Python Execution for {:?} produced an output {:?} without a separator",
+            executable,
+            String::from_utf8_lossy(output),
+        );
+        None
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::{os::unix::fs::PermissionsExt, time::Instant};
 
     // https://github.com/microsoft/python-environment-tools/issues/525:
     // A launcher printing GBK-encoded "文件不存在" must not panic discovery.
@@ -230,6 +210,36 @@ mod tests {
         let result = get_interpreter_details_with_timeout(&executable, Duration::from_secs(5));
         assert!(result.is_none());
         directory.close()
+    }
+
+    #[test]
+    fn noisy_interpreter_output_resolves_only_on_success() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("python");
+        let payload = format!(
+            "{}\n{}",
+            PYTHON_INFO_JSON_SEPARATOR,
+            r#"{"version":"3.13.1","sys_prefix":"prefix","executable":"python","is64_bit":true}"#
+        );
+        for exit_code in [0, 23] {
+            let script = format!(
+                "#!/bin/sh\nprintf '%s' '{}' >&2\nprintf '\\377\\376%s\\n' '{}'\nexit {exit_code}\n",
+                "x".repeat(128 * 1024), payload
+            );
+            std::fs::write(&executable, script).unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let started = Instant::now();
+            let result = get_interpreter_details_with_timeout(&executable, Duration::from_secs(5));
+            assert!(started.elapsed() < Duration::from_secs(5));
+            if exit_code == 0 {
+                assert_eq!(result.unwrap().version, "3.13.1");
+            } else {
+                assert!(
+                    result.is_none(),
+                    "valid JSON from a failed interpreter must not be cached"
+                );
+            }
+        }
     }
 
     /// Regression test for #463: a spawn that never exits must not block the
@@ -248,7 +258,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let fake_exe = tmp_dir.join("hangs");
-        std::fs::write(&fake_exe, "#!/bin/sh\nsleep 60\n").unwrap();
+        std::fs::write(&fake_exe, "#!/bin/sh\nexec sleep 60\n").unwrap();
         let mut perms = std::fs::metadata(&fake_exe).unwrap().permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(&fake_exe, perms).unwrap();
@@ -262,9 +272,66 @@ mod tests {
 
         assert!(result.is_none(), "hanging spawn must return None");
         assert!(
-            elapsed < Duration::from_secs(5),
-            "spawn must be killed near the timeout (took {:?})",
+            elapsed < Duration::from_secs(3),
+            "spawn must return within the execution and cleanup budgets (took {:?})",
             elapsed
         );
+    }
+}
+
+#[cfg(test)]
+mod parser_tests {
+    use super::*;
+
+    #[test]
+    fn preserves_non_utf8_preamble_and_unicode_json() {
+        let mut bytes = vec![0xff, 0xfe, b'\n'];
+        bytes.extend_from_slice(PYTHON_INFO_JSON_SEPARATOR.as_bytes());
+        bytes.extend_from_slice(br#"{"version":" 3.13.1 ","sys_prefix":"C:\\env\\\u65e5","executable":"python","is64_bit":true}"#);
+        let info = parse_interpreter_output("python", &bytes, SystemTime::now()).unwrap();
+        assert_eq!(info.version, "3.13.1");
+        assert_eq!(info.executable, PathBuf::from("python"));
+        assert_eq!(info.prefix, PathBuf::from("C:\\env\\\u{65e5}"));
+        assert_eq!(info.symlinks, Some(vec![PathBuf::from("python")]));
+        assert!(info.is64_bit);
+    }
+
+    #[test]
+    fn rejects_valid_interpreter_json_from_failed_process() {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt;
+        #[cfg(windows)]
+        use std::os::windows::process::ExitStatusExt;
+        let stdout = format!(
+            "{}{}",
+            PYTHON_INFO_JSON_SEPARATOR,
+            r#"{"version":"3.13.1","sys_prefix":"prefix","executable":"python","is64_bit":true}"#
+        )
+        .into_bytes();
+        for code in [0, 23] {
+            #[cfg(unix)]
+            let status = std::process::ExitStatus::from_raw(code << 8);
+            #[cfg(windows)]
+            let status = std::process::ExitStatus::from_raw(code);
+            let output = std::process::Output {
+                status,
+                stdout: stdout.clone(),
+                stderr: b"fixture stderr".to_vec(),
+            };
+            assert_eq!(
+                parse_interpreter_result("python", &output, SystemTime::now()).is_some(),
+                code == 0
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_missing_separator_and_malformed_json() {
+        for bytes in [
+            b"\xffinvalid".as_slice(),
+            PYTHON_INFO_JSON_SEPARATOR.as_bytes(),
+        ] {
+            assert!(parse_interpreter_output("python", bytes, SystemTime::now()).is_none());
+        }
     }
 }
