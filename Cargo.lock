@@ -716,6 +716,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "lazy_static",
+ "libc",
  "log",
  "msvc_spectre_libs",
  "pet-core",
@@ -725,6 +726,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

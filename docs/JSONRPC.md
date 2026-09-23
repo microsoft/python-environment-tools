@@ -277,6 +277,9 @@ Use this request to resolve a Python environment from a given Python path.
 **Notes:**
 
 - This request will generally end up spawning the Python process to get the environment information.
+- Spawned interpreter probes drain stdout and stderr while running and retain at most 4 MiB combined (a captured-byte limit, not a total memory limit). Excess output, a nonzero exit, unreadable output, or invalid interpreter JSON is logged and treated as a failed probe.
+- The interpreter execution deadline is 15 seconds after synchronous OS process creation returns. Failed probes terminate and reap the direct child, allowing up to 2 additional seconds for cleanup; exceptional OS cleanup failures are logged, retain the primary error, and attempt background reaping. If OS resource exhaustion also prevents starting that waiter, the failure and child PID are logged; reaping cannot be guaranteed in that exceptional case. This does not bound OS process creation or supervise descendant process trees.
+- After the direct interpreter exits, PET continues draining within the same execution deadline. If output has not reached EOF by that deadline (for example, because a descendant retains a write handle), the probe fails explicitly with incomplete output instead of waiting indefinitely. Conda/Poetry subprocesses and server shutdown have separate lifecycle behavior; these interpreter limits do not apply to them.
   Hence it is advisable to use this request sparingly and rely on Python environments being discovered or relying on the information returned by the `refresh` request.
 - If the `cacheDirectory` has been provided and the same python executable was previously spanwed (resolved), then the tool will return the cached information.
 
