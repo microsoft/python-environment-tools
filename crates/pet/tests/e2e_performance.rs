@@ -311,6 +311,13 @@ impl SharedState {
             .expect("refresh TTFE mutex poisoned") = None;
     }
 
+    fn finish_refresh(&self) {
+        *self
+            .refresh_started_at
+            .lock()
+            .expect("refresh start mutex poisoned") = None;
+    }
+
     fn request_time_to_first_env(&self) -> Option<Duration> {
         *self
             .first_env_since_refresh
@@ -486,12 +493,15 @@ impl PetClient {
     /// Refresh environments
     pub fn refresh(&mut self, params: Option<Value>) -> Result<(RefreshResult, Duration), String> {
         // The operation begins immediately before request serialization and pipe I/O.
-        // Clearing prior observations is intentionally outside the measured boundary.
+        // Inventory/progress clearing is intentionally outside the measured boundary.
         self.state.prepare_refresh();
         let started_at = (self.clock)();
         self.state.begin_refresh_at(started_at);
-        let result = self.send_request("refresh", params.unwrap_or(json!({})))?;
-        let elapsed = (self.clock)()
+        let result = self.send_request("refresh", params.unwrap_or(json!({})));
+        let completed_at = (self.clock)();
+        self.state.finish_refresh();
+        let result = result?;
+        let elapsed = completed_at
             .checked_duration_since(started_at)
             .expect("refresh completion must not precede its request boundary");
 
@@ -902,10 +912,13 @@ fn collect_refresh_diagnostics(
 struct ChannelWriter {
     sender: mpsc::Sender<Vec<u8>>,
     buffered: Vec<u8>,
+    clock: Arc<Mutex<Instant>>,
+    write_delay: Duration,
 }
 
 impl Write for ChannelWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        *self.clock.lock().expect("fixture clock mutex poisoned") += self.write_delay;
         self.buffered.extend_from_slice(bytes);
         Ok(bytes.len())
     }
@@ -947,17 +960,45 @@ fn frame_jsonrpc(value: &Value) -> Vec<u8> {
     format!("Content-Length: {}\r\n\r\n{}", body.len(), body).into_bytes()
 }
 
-#[test]
-fn refresh_path_measures_client_round_trip_and_resets_ttfe_per_request() {
-    let base = Instant::now();
+fn timed_fixture_client(
+    base: Instant,
+    write_delay: Duration,
+) -> (PetClient, mpsc::Receiver<Vec<u8>>, mpsc::Sender<TimedChunk>) {
     let clock_value = Arc::new(Mutex::new(base));
     let clock = {
         let clock_value = clock_value.clone();
         Arc::new(move || *clock_value.lock().expect("fixture clock mutex poisoned"))
-            as Arc<dyn Fn() -> Instant + Send + Sync>
     };
     let (request_sender, request_receiver) = mpsc::channel();
     let (response_sender, response_receiver) = mpsc::channel();
+    let client = PetClient {
+        process: None,
+        stdin: Box::new(ChannelWriter {
+            sender: request_sender,
+            buffered: Vec::new(),
+            clock: clock_value.clone(),
+            write_delay,
+        }),
+        stdout: Box::new(BufReader::new(TimedChannelReader {
+            receiver: response_receiver,
+            current: Cursor::new(Vec::new()),
+            clock: clock_value,
+        })),
+        stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
+        interpreter_probe_timeouts: Arc::new(Mutex::new(BTreeMap::new())),
+        stderr_handle: None,
+        state: Arc::new(SharedState::new(false)),
+        start_time: base,
+        clock,
+    };
+    (client, request_receiver, response_sender)
+}
+
+#[test]
+fn refresh_path_measures_client_round_trip_and_resets_ttfe_per_request() {
+    let base = Instant::now();
+    let (mut client, request_receiver, response_sender) =
+        timed_fixture_client(base, Duration::from_millis(5));
     let fixture = thread::spawn(move || {
         for (environment_at_ms, response_at_ms, server_duration_ms) in [(40, 80, 2), (7, 50, 1)] {
             let request = request_receiver
@@ -1002,26 +1043,6 @@ fn refresh_path_measures_client_round_trip_and_resets_ttfe_per_request() {
         }
     });
 
-    let state = Arc::new(SharedState::new(false));
-    let mut client = PetClient {
-        process: None,
-        stdin: Box::new(ChannelWriter {
-            sender: request_sender,
-            buffered: Vec::new(),
-        }),
-        stdout: Box::new(BufReader::new(TimedChannelReader {
-            receiver: response_receiver,
-            current: Cursor::new(Vec::new()),
-            clock: clock_value,
-        })),
-        stderr_tail: Arc::new(Mutex::new(VecDeque::new())),
-        interpreter_probe_timeouts: Arc::new(Mutex::new(BTreeMap::new())),
-        stderr_handle: None,
-        state,
-        start_time: base,
-        clock,
-    };
-
     let (first_result, first_round_trip) =
         client.refresh(None).expect("first refresh must succeed");
     assert_eq!(first_result.duration, 2);
@@ -1046,6 +1067,117 @@ fn refresh_path_measures_client_round_trip_and_resets_ttfe_per_request() {
         "startup TTFE remains tied to the first process notification",
     );
     fixture.join().expect("fixture server must finish");
+}
+
+#[test]
+fn refresh_timing_window_closes_before_later_notifications() {
+    for (mut response, expected_error) in [
+        (json!({"result": {"duration": 2}}), None),
+        (
+            json!({"error": {"code": -4, "message": "fixture refresh failed"}}),
+            Some("JSONRPC error"),
+        ),
+        (
+            json!({"result": {"duration": "invalid"}}),
+            Some("Failed to parse refresh result"),
+        ),
+    ] {
+        let base = Instant::now();
+        let (mut client, request_receiver, response_sender) =
+            timed_fixture_client(base, Duration::ZERO);
+        let fixture = thread::spawn(move || {
+            for (method, received_at_ms) in [("refresh", 10), ("info", 30)] {
+                let request = request_receiver.recv().expect("client must send request");
+                let request = read_jsonrpc_message(&mut BufReader::new(Cursor::new(request)))
+                    .expect("fixture must parse request");
+                assert_eq!(request.get("method").and_then(Value::as_str), Some(method));
+                if method == "info" {
+                    response_sender
+                        .send(TimedChunk {
+                            received_at: base + Duration::from_millis(20),
+                            bytes: frame_jsonrpc(&json!({
+                                "jsonrpc": "2.0",
+                                "method": "environment",
+                                "params": {"executable": "python"}
+                            })),
+                        })
+                        .expect("client must receive late environment");
+                    response = json!({"result": {}});
+                }
+                response["jsonrpc"] = json!("2.0");
+                response["id"] = request.get("id").cloned().expect("request must have an id");
+                response_sender
+                    .send(TimedChunk {
+                        received_at: base + Duration::from_millis(received_at_ms),
+                        bytes: frame_jsonrpc(&response),
+                    })
+                    .expect("client must receive response");
+            }
+        });
+        let result = client.refresh(None);
+        if let Some(expected_error) = expected_error {
+            assert!(result
+                .expect_err("refresh must fail")
+                .contains(expected_error));
+        } else {
+            result.expect("refresh must succeed");
+        }
+        assert!(client.request_time_to_first_env().is_none());
+        client
+            .send_request("info", json!({}))
+            .expect("info must succeed");
+        assert!(client.request_time_to_first_env().is_none());
+        assert_eq!(
+            client.startup_time_to_first_env(),
+            Some(Duration::from_millis(20))
+        );
+        assert_eq!(client.get_environments().len(), 1);
+        fixture.join().expect("fixture server must finish");
+    }
+}
+
+#[test]
+fn refresh_timing_window_closes_after_transport_errors() {
+    for write_fails in [true, false] {
+        let base = Instant::now();
+        let (mut client, request_receiver, response_sender) =
+            timed_fixture_client(base, Duration::ZERO);
+        drop(response_sender);
+        if write_fails {
+            drop(request_receiver);
+        }
+        let error = client.refresh(None).expect_err("transport must fail");
+        if write_fails {
+            assert!(error.contains("Failed to flush stdin"));
+        } else {
+            assert!(error.contains("fixture stopped"));
+        }
+        client
+            .state
+            .handle_notification_at(
+                "environment",
+                json!({"executable": "python"}),
+                base + Duration::from_millis(20),
+            )
+            .unwrap();
+        assert!(client.request_time_to_first_env().is_none());
+    }
+}
+
+fn required_request_ttfe(client: &PetClient, workload: &str, iteration: usize) -> Duration {
+    client.request_time_to_first_env().unwrap_or_else(|| {
+        panic!(
+            "{workload} iteration {} produced no environment notification",
+            iteration + 1
+        )
+    })
+}
+
+#[test]
+#[should_panic(expected = "Full refresh iteration 1 produced no environment notification")]
+fn required_request_ttfe_rejects_missing_samples() {
+    let (client, _requests, _responses) = timed_fixture_client(Instant::now(), Duration::ZERO);
+    required_request_ttfe(&client, "Full refresh", 0);
 }
 
 #[test]
@@ -1261,9 +1393,8 @@ fn test_full_refresh_performance() {
         server_duration_stats.add(result.duration);
         client_duration_stats.add(client_elapsed.as_millis());
 
-        if let Some(time_to_first) = client.request_time_to_first_env() {
-            request_time_to_first_env_stats.add(time_to_first.as_millis());
-        }
+        let time_to_first = required_request_ttfe(&client, "Full refresh", i);
+        request_time_to_first_env_stats.add(time_to_first.as_millis());
 
         // Track counts from last iteration
         env_count = environments.len();
@@ -1290,9 +1421,7 @@ fn test_full_refresh_performance() {
     println!();
     server_duration_stats.print_summary("Server duration");
     client_duration_stats.print_summary("Client duration");
-    if request_time_to_first_env_stats.count() > 0 {
-        request_time_to_first_env_stats.print_summary("Request-to-first environment");
-    }
+    request_time_to_first_env_stats.print_summary("Request-to-first environment");
     println!("Environments discovered: {}", env_count);
     println!("Managers discovered: {}", manager_count);
     println!("Environment kinds: {:?}", kind_counts);
@@ -1693,12 +1822,7 @@ fn test_performance_summary() {
             "Cold refresh",
             iteration,
         );
-        let cold_request_ttfe = cold_client.request_time_to_first_env().unwrap_or_else(|| {
-            panic!(
-                "Cold refresh iteration {} produced no environment notification",
-                iteration + 1
-            )
-        });
+        let cold_request_ttfe = required_request_ttfe(&cold_client, "Cold refresh", iteration);
         let cold_startup_ttfe = cold_client.startup_time_to_first_env().unwrap_or_else(|| {
             panic!(
                 "Cold refresh iteration {} produced no startup-relative TTFE",
@@ -1742,12 +1866,7 @@ fn test_performance_summary() {
             "Warm refresh",
             iteration,
         );
-        let warm_request_ttfe = warm_client.request_time_to_first_env().unwrap_or_else(|| {
-            panic!(
-                "Warm refresh iteration {} produced no environment notification",
-                iteration + 1
-            )
-        });
+        let warm_request_ttfe = required_request_ttfe(&warm_client, "Warm refresh", iteration);
         let warm_startup_ttfe = warm_client.startup_time_to_first_env().unwrap_or_else(|| {
             panic!(
                 "Warm refresh iteration {} produced no startup-relative TTFE",

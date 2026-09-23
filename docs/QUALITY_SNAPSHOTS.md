@@ -20,12 +20,15 @@ Schema v3 separates client-observed operation latency from server attribution:
 - `discovery_duration` retains the server's discovery-only `RefreshResult.duration` for attribution.
 - cold distributions use the same boundaries; phase, locator, and timeout data remain diagnostics.
 
-The benchmark clears local notification state before starting the operation clock, keeps one
-buffered stdout reader for the process lifetime, and continuously drains a bounded stderr tail.
+The benchmark clears collected inventories and progress before starting the operation clock,
+keeps one buffered stdout reader for the process lifetime, and continuously drains a bounded stderr
+tail. The request-relative observation closes after a refresh response or error; notifications read
+by later non-refresh requests cannot fill a missing TTFE sample for the completed refresh.
 Environment notifications have no request identifier, so request-relative TTFE is not claimed as
 concurrency-safe attribution and post-response notifications cannot be assigned to a request. Each
 measured refresh uses a fresh process to avoid that ambiguity. It must produce every required
-sample; missing data is invalid rather than silently skipped.
+sample; missing data is invalid rather than silently skipped. The standalone full-refresh benchmark
+also rejects missing request-to-first samples.
 
 A metric blocks only when it exceeds both its absolute and relative budget. Schema v3
 preserves all existing discovery/startup-relative gates:
