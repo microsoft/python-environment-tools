@@ -11,7 +11,7 @@ use std::{
 
 type RequestHandler<C> = Arc<dyn Fn(Arc<C>, RequestId, Value)>;
 type NotificationHandler<C> = Arc<dyn Fn(Arc<C>, Value)>;
-type ErrorHandler = Arc<dyn Fn(Option<RequestId>, i32, String)>;
+type ErrorHandler = Arc<dyn Fn(Option<&RequestId>, i32, String)>;
 
 pub struct HandlersKeyedByMethodName<C> {
     context: Arc<C>,
@@ -26,14 +26,14 @@ impl<C> HandlersKeyedByMethodName<C> {
             context,
             requests: HashMap::new(),
             notifications: HashMap::new(),
-            send_error: Arc::new(|id, code, message| send_error(id.as_ref(), code, message)),
+            send_error: Arc::new(send_error),
         }
     }
 
     #[cfg(test)]
     fn new_with_error_handler(
         context: Arc<C>,
-        send_error: impl Fn(Option<RequestId>, i32, String) + 'static,
+        send_error: impl Fn(Option<&RequestId>, i32, String) + 'static,
     ) -> Self {
         HandlersKeyedByMethodName {
             context,
@@ -86,7 +86,7 @@ impl<C> HandlersKeyedByMethodName<C> {
                     } else {
                         eprint!("Failed to find handler for method: {method}");
                         (self.send_error)(
-                            Some(id),
+                            Some(&id),
                             -1,
                             format!("Failed to find handler for request {method}"),
                         );
@@ -100,7 +100,7 @@ impl<C> HandlersKeyedByMethodName<C> {
             None => {
                 eprint!("Failed to get method from message: {message}");
                 (self.send_error)(
-                    id,
+                    id.as_ref(),
                     -3,
                     format!("Failed to extract method from JSONRPC payload {message:?}"),
                 );
@@ -197,7 +197,7 @@ mod tests {
                 .errors
                 .lock()
                 .unwrap()
-                .push((id, code, message));
+                .push((id.cloned(), code, message));
         })
     }
 
@@ -231,6 +231,8 @@ mod tests {
                 Some((id.clone(), json!(42)))
             );
             assert!(context.notification.lock().unwrap().is_none());
+            handlers.handle_request(json!({"method": "method", "params": 7}));
+            assert_eq!(context.notification.lock().unwrap().take(), Some(json!(7)));
             handlers.handle_request(json!({"id": value, "method": "unknown"}));
             handlers.handle_request(json!({"id": value}));
             let errors = context.errors.lock().unwrap();
@@ -266,6 +268,13 @@ mod tests {
                 Some((None, -32600, "Invalid JSONRPC request ID".into()))
             );
         }
+        assert!(context.errors.lock().unwrap().is_empty());
+        handlers.handle_request(json!({"id": "after-invalid", "method": "method", "params": 42}));
+        assert_eq!(
+            context.request.lock().unwrap().take(),
+            Some((RequestId::String("after-invalid".into()), json!(42)))
+        );
+        assert!(context.notification.lock().unwrap().is_none());
         assert!(context.errors.lock().unwrap().is_empty());
     }
 
