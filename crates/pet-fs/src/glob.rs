@@ -1,8 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use glob::glob;
-use std::path::PathBuf;
+use glob::{glob, Pattern};
+use std::{
+    collections::HashSet,
+    ffi::OsString,
+    fmt, io,
+    path::{Component, Path, PathBuf},
+};
 
 /// Characters that indicate a path contains glob pattern metacharacters.
 const GLOB_METACHARACTERS: &[char] = &['*', '?', '[', ']'];
@@ -47,6 +52,58 @@ fn has_brace_pattern(path: &str) -> bool {
 /// Maximum number of patterns produced by brace expansion.
 /// Guards against exponential blowup from deeply nested or many brace groups.
 const MAX_BRACE_EXPANSIONS: usize = 1024;
+const MAX_BRACE_EXPANSION_STEPS: usize = 10_000;
+
+/// Default limits used by JSON-RPC path expansion.
+pub const DEFAULT_GLOB_EXPANSION_LIMITS: GlobExpansionLimits = GlobExpansionLimits {
+    max_patterns: MAX_BRACE_EXPANSIONS,
+    max_candidates: 10_000,
+};
+
+#[derive(Debug, Clone, Copy)]
+pub struct GlobExpansionLimits {
+    pub max_patterns: usize,
+    pub max_candidates: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GlobExpansionError {
+    PatternLimitExceeded { limit: usize },
+    BraceWorkLimitExceeded { limit: usize },
+    CandidateLimitExceeded { limit: usize },
+    InvalidPattern { pattern: String, message: String },
+    Traversal { pattern: String, message: String },
+}
+
+impl fmt::Display for GlobExpansionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PatternLimitExceeded { limit } => write!(
+                formatter,
+                "glob expansion exceeded the limit of {limit} distinct patterns"
+            ),
+            Self::BraceWorkLimitExceeded { limit } => write!(
+                formatter,
+                "brace expansion exceeded the limit of {limit} intermediate patterns"
+            ),
+            Self::CandidateLimitExceeded { limit } => write!(
+                formatter,
+                "glob expansion exceeded the limit of {limit} filesystem candidates"
+            ),
+            Self::InvalidPattern { pattern, message } => {
+                write!(formatter, "invalid glob pattern '{pattern}': {message}")
+            }
+            Self::Traversal { pattern, message } => {
+                write!(
+                    formatter,
+                    "failed to traverse glob pattern '{pattern}': {message}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for GlobExpansionError {}
 
 /// Expands brace expressions in a pattern string.
 ///
@@ -66,38 +123,391 @@ fn expand_braces(pattern: &str) -> Vec<String> {
 }
 
 fn expand_braces_inner(pattern: &str, results: &mut Vec<String>) {
-    if results.len() >= MAX_BRACE_EXPANSIONS {
-        return;
-    }
-    // Find the first '{' and its matching '}'
-    let Some(open) = pattern.find('{') else {
-        results.push(pattern.to_string());
-        return;
-    };
-    let Some(close) = pattern[open..].find('}') else {
-        // Unmatched brace, return as-is
-        results.push(pattern.to_string());
-        return;
-    };
-    let close = open + close;
-
-    let prefix = &pattern[..open];
-    let suffix = &pattern[close + 1..];
-    let alternatives = &pattern[open + 1..close];
-
-    for alt in alternatives.split(',') {
-        if results.len() >= MAX_BRACE_EXPANSIONS {
-            log::warn!(
-                "Brace expansion exceeded {} patterns for '{}', truncating",
-                MAX_BRACE_EXPANSIONS,
-                pattern
-            );
+    let mut pending = vec![pattern.to_string()];
+    let mut steps = 0;
+    while let Some(pattern) = pending.pop() {
+        if results.len() == MAX_BRACE_EXPANSIONS || steps == MAX_BRACE_EXPANSION_STEPS {
+            log::warn!("Brace expansion exceeded its pattern/work limit, truncating '{pattern}'");
             return;
         }
-        let expanded = format!("{prefix}{alt}{suffix}");
-        // Recursively expand any remaining brace groups
-        expand_braces_inner(&expanded, results);
+        steps += 1;
+        let group = pattern
+            .find('{')
+            .and_then(|open| pattern[open..].find('}').map(|close| (open, open + close)));
+        if let Some((open, close)) = group {
+            for alternative in pattern[open + 1..close].split(',').rev() {
+                if steps == MAX_BRACE_EXPANSION_STEPS {
+                    log::warn!("Brace expansion exceeded its work limit, truncating '{pattern}'");
+                    return;
+                }
+                steps += 1;
+                pending.push(format!(
+                    "{}{alternative}{}",
+                    &pattern[..open],
+                    &pattern[close + 1..]
+                ));
+            }
+        } else {
+            results.push(pattern);
+        }
     }
+}
+
+fn expand_braces_bounded(pattern: &str, limit: usize) -> Result<Vec<String>, GlobExpansionError> {
+    let mut pending = vec![pattern.to_string()];
+    let mut steps = 0;
+    loop {
+        let mut next = Vec::new();
+        let mut unique = HashSet::new();
+        let mut expanded = false;
+        for pattern in pending {
+            if steps == MAX_BRACE_EXPANSION_STEPS {
+                return Err(GlobExpansionError::BraceWorkLimitExceeded {
+                    limit: MAX_BRACE_EXPANSION_STEPS,
+                });
+            }
+            steps += 1;
+            let group = pattern
+                .find('{')
+                .and_then(|open| pattern[open..].find('}').map(|close| (open, open + close)));
+            if let Some((open, close)) = group {
+                expanded = true;
+                for alternative in pattern[open + 1..close].split(',') {
+                    if steps == MAX_BRACE_EXPANSION_STEPS {
+                        return Err(GlobExpansionError::BraceWorkLimitExceeded {
+                            limit: MAX_BRACE_EXPANSION_STEPS,
+                        });
+                    }
+                    steps += 1;
+                    let variant =
+                        format!("{}{alternative}{}", &pattern[..open], &pattern[close + 1..]);
+                    if unique.insert(variant.clone()) {
+                        if next.len() == limit {
+                            return Err(GlobExpansionError::PatternLimitExceeded { limit });
+                        }
+                        next.push(variant);
+                    }
+                }
+            } else if unique.insert(pattern.clone()) {
+                if next.len() == limit {
+                    return Err(GlobExpansionError::PatternLimitExceeded { limit });
+                }
+                next.push(pattern);
+            }
+        }
+        if !expanded {
+            return Ok(next);
+        }
+        pending = next;
+    }
+}
+
+#[derive(Debug)]
+enum BoundedGlobComponent {
+    Literal(OsString),
+    Pattern(String, Pattern),
+    Recursive,
+}
+
+fn increment_candidates(
+    candidates_seen: &mut usize,
+    limit: usize,
+) -> Result<(), GlobExpansionError> {
+    *candidates_seen += 1;
+    if *candidates_seen > limit {
+        return Err(GlobExpansionError::CandidateLimitExceeded { limit });
+    }
+    Ok(())
+}
+
+fn traversal_error(pattern: &str, error: io::Error) -> GlobExpansionError {
+    GlobExpansionError::Traversal {
+        pattern: pattern.to_string(),
+        message: error.to_string(),
+    }
+}
+
+fn optional_metadata(
+    result: io::Result<std::fs::Metadata>,
+    pattern: &str,
+) -> Result<Option<std::fs::Metadata>, GlobExpansionError> {
+    match result {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(traversal_error(pattern, error)),
+    }
+}
+
+fn path_is_directory(path: &Path, pattern: &str) -> Result<bool, GlobExpansionError> {
+    Ok(optional_metadata(std::fs::metadata(path), pattern)?
+        .is_some_and(|metadata| metadata.is_dir()))
+}
+
+fn read_directory_bounded(
+    directory: &Path,
+    pattern: &str,
+    candidates_seen: &mut usize,
+    limit: usize,
+) -> Result<Vec<std::fs::DirEntry>, GlobExpansionError> {
+    let filesystem_directory = if directory.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        directory
+    };
+    let entries = match std::fs::read_dir(filesystem_directory) {
+        Ok(entries) => entries,
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Ok(Vec::new());
+        }
+        Err(error) => return Err(traversal_error(pattern, error)),
+    };
+    let mut result = Vec::new();
+    for entry in entries {
+        increment_candidates(candidates_seen, limit)?;
+        result.push(entry.map_err(|error| traversal_error(pattern, error))?);
+    }
+    result.sort_by_key(|entry| entry.file_name());
+    Ok(result)
+}
+
+fn walk_bounded_glob(
+    base: PathBuf,
+    components: &[BoundedGlobComponent],
+    require_directory: bool,
+    pattern: &str,
+    candidates_seen: &mut usize,
+    candidate_limit: usize,
+) -> Result<Vec<PathBuf>, GlobExpansionError> {
+    let mut pending = vec![(base, 0)];
+    let mut visited = HashSet::new();
+    let mut results = Vec::new();
+    while let Some((base, index)) = pending.pop() {
+        if !visited.insert((base.clone(), index)) {
+            continue;
+        }
+        let Some(component) = components.get(index) else {
+            if let Some(metadata) = optional_metadata(std::fs::metadata(&base), pattern)? {
+                if !require_directory || metadata.is_dir() {
+                    results.push(base);
+                }
+            }
+            continue;
+        };
+        let is_last = index + 1 == components.len();
+        match component {
+            BoundedGlobComponent::Literal(component) => {
+                increment_candidates(candidates_seen, candidate_limit)?;
+                let path = base.join(component);
+                let metadata = match std::fs::symlink_metadata(&path) {
+                    Ok(metadata) => metadata,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                        ) =>
+                    {
+                        continue
+                    }
+                    Err(error) => return Err(traversal_error(pattern, error)),
+                };
+                let is_directory = metadata.is_dir()
+                    || (metadata.is_symlink() && path_is_directory(&path, pattern)?);
+                if is_last && (!require_directory || is_directory) {
+                    results.push(path);
+                } else if is_directory {
+                    pending.push((path, index + 1));
+                }
+            }
+            BoundedGlobComponent::Pattern(text, matcher) => {
+                if text.starts_with('.') {
+                    for name in [".", ".."] {
+                        if matcher.matches(name) {
+                            increment_candidates(candidates_seen, candidate_limit)?;
+                            let path = base.join(name);
+                            if is_last && (!require_directory || path_is_directory(&path, pattern)?)
+                            {
+                                results.push(path);
+                            } else if path_is_directory(&path, pattern)? {
+                                pending.push((path, index + 1));
+                            }
+                        }
+                    }
+                }
+                for entry in
+                    read_directory_bounded(&base, pattern, candidates_seen, candidate_limit)?
+                {
+                    let name = entry.file_name();
+                    // The glob crate skips non-UTF-8 names during wildcard matching.
+                    if !name.to_str().is_some_and(|name| matcher.matches(name)) {
+                        continue;
+                    }
+                    let path = base.join(name);
+                    if is_last && (!require_directory || path_is_directory(&path, pattern)?) {
+                        results.push(path);
+                    } else if path_is_directory(&path, pattern)? {
+                        pending.push((path, index + 1));
+                    }
+                }
+            }
+            BoundedGlobComponent::Recursive => {
+                if !is_last {
+                    pending.push((base.clone(), index + 1));
+                }
+                for entry in
+                    read_directory_bounded(&base, pattern, candidates_seen, candidate_limit)?
+                {
+                    let path = base.join(entry.file_name());
+                    if path_is_directory(&path, pattern)? {
+                        if is_last {
+                            results.push(path.clone());
+                        }
+                        pending.push((path, index));
+                    }
+                }
+            }
+        }
+    }
+    results.sort();
+    results.dedup();
+    Ok(results)
+}
+
+fn expand_filesystem_pattern_bounded(
+    pattern: &str,
+    candidates_seen: &mut usize,
+    candidate_limit: usize,
+) -> Result<Vec<PathBuf>, GlobExpansionError> {
+    Pattern::new(pattern).map_err(|error| GlobExpansionError::InvalidPattern {
+        pattern: pattern.to_string(),
+        message: error.to_string(),
+    })?;
+    #[cfg(windows)]
+    if let Some(Component::Prefix(prefix)) = Path::new(pattern).components().next() {
+        // Match glob 0.3.3: only verbatim disk prefixes are eligible for traversal.
+        if prefix.kind().is_verbatim()
+            && !matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_))
+        {
+            return Ok(Vec::new());
+        }
+    }
+    let require_directory = pattern
+        .chars()
+        .next_back()
+        .is_some_and(std::path::is_separator);
+    let mut base = PathBuf::new();
+    let mut components = Vec::new();
+    for component in Path::new(pattern).components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => base.push(component.as_os_str()),
+            Component::CurDir | Component::ParentDir => {
+                components.push(BoundedGlobComponent::Literal(
+                    component.as_os_str().to_owned(),
+                ));
+            }
+            Component::Normal(component) => {
+                let component_text = component.to_string_lossy();
+                if component_text == "**" {
+                    if !matches!(components.last(), Some(BoundedGlobComponent::Recursive)) {
+                        components.push(BoundedGlobComponent::Recursive);
+                    }
+                } else if component_text.contains(['*', '?', '[']) {
+                    let component_pattern = Pattern::new(&component_text).map_err(|error| {
+                        GlobExpansionError::InvalidPattern {
+                            pattern: pattern.to_string(),
+                            message: error.to_string(),
+                        }
+                    })?;
+                    components.push(BoundedGlobComponent::Pattern(
+                        component_text.into_owned(),
+                        component_pattern,
+                    ));
+                } else {
+                    components.push(BoundedGlobComponent::Literal(component.to_owned()));
+                }
+            }
+        }
+    }
+    walk_bounded_glob(
+        base,
+        &components,
+        require_directory,
+        pattern,
+        candidates_seen,
+        candidate_limit,
+    )
+}
+
+/// Expands path patterns with explicit limits and errors.
+///
+/// Input patterns and brace-expanded variants are deduplicated before filesystem
+/// traversal. The candidate limit is checked between directory entries; it cannot
+/// interrupt an operating-system filesystem call already in progress.
+pub fn expand_glob_patterns_bounded(
+    paths: &[PathBuf],
+    limits: GlobExpansionLimits,
+) -> Result<Vec<PathBuf>, GlobExpansionError> {
+    let mut input_patterns = HashSet::new();
+    let mut expanded_patterns = HashSet::new();
+    let mut patterns = Vec::new();
+
+    for path in paths {
+        let pattern = path.to_string_lossy().into_owned();
+        if !input_patterns.insert(pattern.clone()) {
+            continue;
+        }
+        let variants = if is_glob_pattern(&pattern) {
+            expand_braces_bounded(&pattern, limits.max_patterns)?
+        } else {
+            vec![pattern]
+        };
+        for variant in variants {
+            if expanded_patterns.insert(variant.clone()) {
+                if patterns.len() == limits.max_patterns {
+                    return Err(GlobExpansionError::PatternLimitExceeded {
+                        limit: limits.max_patterns,
+                    });
+                }
+                patterns.push(variant);
+            }
+        }
+    }
+
+    let mut candidates_seen = 0usize;
+    let mut unique_results = HashSet::new();
+    let mut results = Vec::new();
+    for pattern in patterns {
+        if !pattern.contains(GLOB_METACHARACTERS) {
+            increment_candidates(&mut candidates_seen, limits.max_candidates)?;
+            let path = PathBuf::from(pattern);
+            if unique_results.insert(path.clone()) {
+                results.push(path);
+            }
+            continue;
+        }
+
+        for path in expand_filesystem_pattern_bounded(
+            &pattern,
+            &mut candidates_seen,
+            limits.max_candidates,
+        )? {
+            if unique_results.insert(path.clone()) {
+                results.push(path);
+            }
+        }
+    }
+    Ok(results)
 }
 
 /// Expands a single glob pattern to matching paths.
@@ -201,6 +611,357 @@ pub fn expand_glob_patterns(paths: &[PathBuf]) -> Vec<PathBuf> {
 mod tests {
     use super::*;
     use std::fs;
+
+    fn bounded_limits(max_patterns: usize, max_candidates: usize) -> GlobExpansionLimits {
+        GlobExpansionLimits {
+            max_patterns,
+            max_candidates,
+        }
+    }
+
+    fn assert_bounded_matches_legacy(root: &Path, suffix: &str) {
+        let pattern = format!("{}{}{}", root.display(), std::path::MAIN_SEPARATOR, suffix);
+        let mut legacy = expand_glob_pattern(&pattern);
+        let mut bounded =
+            expand_glob_patterns_bounded(&[PathBuf::from(&pattern)], bounded_limits(16, 1024))
+                .unwrap();
+        legacy.sort();
+        bounded.sort();
+        assert_eq!(bounded, legacy, "pattern: {pattern}");
+    }
+
+    #[test]
+    fn bounded_metadata_errors_are_not_partial_success() {
+        for kind in [io::ErrorKind::PermissionDenied, io::ErrorKind::Other] {
+            let result = optional_metadata(
+                Err(io::Error::new(kind, "injected metadata failure")),
+                "root/**",
+            );
+            assert!(
+                matches!(result, Err(GlobExpansionError::Traversal { pattern, .. }) if pattern == "root/**")
+            );
+        }
+        for kind in [io::ErrorKind::NotFound, io::ErrorKind::NotADirectory] {
+            assert!(optional_metadata(Err(io::Error::from(kind)), "root/**")
+                .unwrap()
+                .is_none());
+        }
+        let temp = tempfile::tempdir().unwrap();
+        assert!(path_is_directory(temp.path(), "root/**").unwrap());
+        let file = temp.path().join("file");
+        fs::write(&file, "fixture").unwrap();
+        assert!(!path_is_directory(&file, "root/**").unwrap());
+        assert!(!path_is_directory(&temp.path().join("missing"), "root/**").unwrap());
+    }
+
+    #[test]
+    fn bounded_expansion_matches_legacy_patterns() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join("EnvOne/nested")).unwrap();
+        fs::create_dir_all(temp.path().join("Other")).unwrap();
+        fs::create_dir_all(temp.path().join(".hidden")).unwrap();
+        fs::write(temp.path().join("EnvOne/python.exe"), "").unwrap();
+        fs::write(temp.path().join(".hidden/python.exe"), "").unwrap();
+        fs::write(temp.path().join("root-file"), "").unwrap();
+        fs::write(temp.path().join("prefixone"), "").unwrap();
+        fs::write(temp.path().join("prefix"), "").unwrap();
+        fs::write(temp.path().join("prefix{unmatched"), "").unwrap();
+
+        for pattern in [
+            "**",
+            &format!("**{}", std::path::MAIN_SEPARATOR),
+            &format!("*{}", std::path::MAIN_SEPARATOR),
+            "Env*",
+            "env*",
+            "{EnvOne,Other}",
+            "EnvOne",
+            "*/python.exe",
+            "**/python.exe",
+            ".*",
+            ".*/python.exe",
+            "prefix{one}*",
+            "prefix{}*",
+            "prefix{unmatched*",
+            "prefix{one,two}*",
+            "**/**/python.exe",
+            "**/EnvOne/**",
+            "EnvOne/../*",
+        ] {
+            assert_bounded_matches_legacy(temp.path(), pattern);
+        }
+
+        assert!(expand_glob_patterns_bounded(
+            &[temp.path().join("missing*")],
+            bounded_limits(2, 32),
+        )
+        .unwrap()
+        .is_empty());
+        assert_eq!(
+            expand_glob_patterns_bounded(
+                &[
+                    PathBuf::from("literal{brace}"),
+                    PathBuf::from("{one,one,one}")
+                ],
+                bounded_limits(2, 2),
+            )
+            .unwrap(),
+            vec![PathBuf::from("literal{brace}"), PathBuf::from("one")]
+        );
+    }
+
+    #[test]
+    fn bounded_expansion_matches_legacy_combinations() {
+        let temp = tempfile::tempdir().unwrap();
+        for directory in ["alpha", "alpha/nested", "beta", ".hidden"] {
+            fs::create_dir_all(temp.path().join(directory)).unwrap();
+            fs::write(temp.path().join(directory).join("python.exe"), "").unwrap();
+        }
+        for prefix in ["*", "**", "a*", "alpha", "{alpha,beta}", ".hidden", "[ab]*"] {
+            for suffix in [
+                "*",
+                "**",
+                "**/",
+                "*/",
+                "python.exe",
+                "**/python.exe",
+                "missing",
+            ] {
+                assert_bounded_matches_legacy(temp.path(), &format!("{prefix}/{suffix}"));
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_expansion_matches_broken_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("env")).unwrap();
+        std::os::unix::fs::symlink("missing", temp.path().join("env/python")).unwrap();
+        assert_bounded_matches_legacy(temp.path(), "*/python");
+        assert_bounded_matches_legacy(temp.path(), "*/*");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bounded_expansion_matches_legacy_windows_wildcard_case() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("EnvOne")).unwrap();
+
+        assert_bounded_matches_legacy(temp.path(), "Env*");
+        assert_bounded_matches_legacy(temp.path(), "env*");
+        assert_ne!(
+            expand_glob_pattern(&temp.path().join("Env*").to_string_lossy()),
+            expand_glob_pattern(&temp.path().join("env*").to_string_lossy())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bounded_expansion_preserves_windows_verbatim_prefix_rules() {
+        for pattern in [
+            r"\\?\UNC\pet.invalid\share\*",
+            r"\\?\GLOBALROOT\Device\PetTest\*",
+            r"\\?\Volume{pet-test}\*",
+        ] {
+            assert!(glob(pattern).unwrap().next().is_none());
+            let mut candidates = 0;
+            assert!(
+                expand_filesystem_pattern_bounded(pattern, &mut candidates, 0)
+                    .expect("unsupported verbatim prefixes must not traverse the filesystem")
+                    .is_empty()
+            );
+            assert_eq!(candidates, 0);
+            assert!(
+                expand_glob_patterns_bounded(&[PathBuf::from(pattern)], bounded_limits(1, 0),)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        let invalid = r"\\?\UNC\pet.invalid\share\[";
+        assert!(glob(invalid).is_err());
+        assert!(matches!(
+            expand_glob_patterns_bounded(&[PathBuf::from(invalid)], bounded_limits(1, 0)),
+            Err(GlobExpansionError::InvalidPattern { .. }),
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bounded_expansion_preserves_windows_verbatim_disk_matches() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("python.exe"), "fixture").unwrap();
+        let verbatim = fs::canonicalize(temp.path()).unwrap();
+        assert!(matches!(
+            verbatim.components().next(),
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_)),
+        ));
+        assert_bounded_matches_legacy(&verbatim, "*");
+        assert_eq!(
+            expand_glob_patterns_bounded(&[verbatim.join("*")], bounded_limits(1, 64),).unwrap(),
+            vec![verbatim.join("python.exe")]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bounded_expansion_preserves_windows_literal_bracket_lookup() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("file]"), "fixture").unwrap();
+        fs::create_dir(temp.path().join("Folder]")).unwrap();
+        fs::write(temp.path().join("Folder]").join("python.exe"), "fixture").unwrap();
+        for suffix in ["FILE]", "FOLDER]/*"] {
+            assert_bounded_matches_legacy(temp.path(), suffix);
+            assert_eq!(
+                expand_glob_pattern(&temp.path().join(suffix).to_string_lossy()).len(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_braces_deduplicate_before_cartesian_expansion() {
+        assert_eq!(
+            expand_braces_bounded(&"{a,a}".repeat(64), 1).unwrap(),
+            vec!["a".repeat(64)]
+        );
+        assert!(matches!(
+            expand_braces_bounded(&"{a}".repeat(MAX_BRACE_EXPANSION_STEPS), 1),
+            Err(GlobExpansionError::BraceWorkLimitExceeded { .. })
+        ));
+    }
+
+    #[test]
+    fn legacy_brace_expansion_charges_alternatives_before_formatting() {
+        let pattern = format!("{{{}}}", vec!["a"; MAX_BRACE_EXPANSION_STEPS].join(","));
+        assert!(expand_braces(&pattern).is_empty());
+        assert!(expand_glob_pattern(&pattern).is_empty());
+        assert!(!is_recursive_glob_pattern(&pattern));
+    }
+
+    #[test]
+    fn duplicate_brace_alternatives_count_toward_work_limit() {
+        let within_limit = format!("{{{}}}", vec!["a"; MAX_BRACE_EXPANSION_STEPS - 2].join(","));
+        assert_eq!(expand_braces_bounded(&within_limit, 1).unwrap(), vec!["a"]);
+
+        let over_limit = format!("{{{}}}", vec!["a"; MAX_BRACE_EXPANSION_STEPS].join(","));
+        assert_eq!(
+            expand_braces_bounded(&over_limit, 1).unwrap_err(),
+            GlobExpansionError::BraceWorkLimitExceeded {
+                limit: MAX_BRACE_EXPANSION_STEPS
+            },
+        );
+        assert_eq!(
+            expand_glob_patterns_bounded(&[PathBuf::from(over_limit)], bounded_limits(1, 1))
+                .unwrap_err(),
+            GlobExpansionError::BraceWorkLimitExceeded {
+                limit: MAX_BRACE_EXPANSION_STEPS
+            },
+        );
+    }
+
+    #[test]
+    fn bounded_expansion_reports_malformed_and_limited_patterns() {
+        assert!(matches!(
+            expand_glob_patterns_bounded(&[PathBuf::from("malformed[")], bounded_limits(2, 2),),
+            Err(GlobExpansionError::InvalidPattern { .. })
+        ));
+        assert_eq!(
+            expand_glob_patterns_bounded(
+                &[PathBuf::from("{one,two,three}")],
+                bounded_limits(2, 10),
+            )
+            .unwrap_err(),
+            GlobExpansionError::PatternLimitExceeded { limit: 2 }
+        );
+
+        let temp = tempfile::tempdir().unwrap();
+        for name in ["one", "two", "three"] {
+            fs::write(temp.path().join(name), "").unwrap();
+        }
+        assert_eq!(
+            expand_glob_patterns_bounded(&[temp.path().join("*")], bounded_limits(2, 2))
+                .unwrap_err(),
+            GlobExpansionError::CandidateLimitExceeded { limit: 2 }
+        );
+
+        let recursive = tempfile::tempdir().unwrap();
+        fs::create_dir_all(recursive.path().join("alpha/nested")).unwrap();
+        fs::create_dir_all(recursive.path().join("beta/nested")).unwrap();
+        assert_eq!(
+            expand_glob_patterns_bounded(
+                &[recursive.path().join("**/missing")],
+                bounded_limits(2, 2),
+            )
+            .unwrap_err(),
+            GlobExpansionError::CandidateLimitExceeded { limit: 2 }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_expansion_preserves_symlink_spelling() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("target")).unwrap();
+        fs::write(temp.path().join("target/python"), "").unwrap();
+        symlink(temp.path().join("target"), temp.path().join("link")).unwrap();
+        assert_eq!(
+            expand_glob_patterns_bounded(&[temp.path().join("link/*")], bounded_limits(2, 32),)
+                .unwrap(),
+            vec![temp.path().join("link/python")]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_expansion_treats_unix_backslash_as_filename_data() {
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("name\\"), "").unwrap();
+        assert_bounded_matches_legacy(temp.path(), "name*\\");
+    }
+
+    #[test]
+    fn bounded_expansion_enforces_exact_candidate_budget() {
+        let paths = [PathBuf::from("one"), PathBuf::from("two")];
+        assert_eq!(
+            expand_glob_patterns_bounded(&paths, bounded_limits(2, 2)).unwrap(),
+            paths
+        );
+        assert_eq!(
+            expand_glob_patterns_bounded(&paths, bounded_limits(2, 1)).unwrap_err(),
+            GlobExpansionError::CandidateLimitExceeded { limit: 1 },
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bounded_expansion_preserves_junction_spelling() {
+        use std::process::Command;
+
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("target")).unwrap();
+        fs::write(temp.path().join("target/python.exe"), "").unwrap();
+        let link = temp.path().join("link");
+        let target = temp.path().join("target");
+        let status = Command::new("cmd.exe")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &link.to_string_lossy(),
+                &target.to_string_lossy(),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_eq!(
+            expand_glob_patterns_bounded(&[temp.path().join("link/*")], bounded_limits(2, 32),)
+                .unwrap(),
+            vec![temp.path().join("link/python.exe")]
+        );
+        fs::remove_dir(link).unwrap();
+    }
 
     #[test]
     fn test_is_glob_pattern_with_asterisk() {

@@ -39,7 +39,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Post In-Progress Comment
-        if: github.event_name == 'pull_request'
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: ${{ matrix.comment_header }}
@@ -120,14 +123,6 @@ jobs:
           cat metrics.json
         shell: bash
 
-      - name: Upload PR Performance Results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: perf-pr-${{ matrix.os }}
-          path: metrics.json
-          if-no-files-found: ignore
-
       - name: Wait for Exact PR Base Performance
         id: wait_for_base_performance
         if: always() && github.event_name == 'pull_request'
@@ -180,8 +175,21 @@ jobs:
           --summary "$GITHUB_STEP_SUMMARY"
         shell: bash
 
+      - name: Upload PR Performance Results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-pr-${{ matrix.os }}
+          path: |
+            metrics.json
+            performance-report.md
+          if-no-files-found: ignore
+
       - name: Post Performance Comment
-        if: always() && github.event_name == 'pull_request'
+        if: >-
+          always() && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
           header: ${{ matrix.comment_header }}
