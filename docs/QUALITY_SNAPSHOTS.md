@@ -9,6 +9,17 @@ Windows, and macOS, plus 10 untimed cache-cold diagnostic iterations. A comparis
 when every required distribution has at least five samples, inventories match within the same
 inventory schema, and both benchmark execution and JSON extraction succeed.
 
+Within one benchmark invocation, every measured cold/warm refresh and untimed diagnostic refresh
+must report the same environment and manager identities, not merely the same counts. Environments
+are compared by normalized executable/prefix, kind and version; managers by normalized executable,
+tool and version. Notification order is ignored, but duplicate multiplicity is preserved. Entries
+without an environment executable/prefix or a manager executable/tool are invalid. PET path
+normalization plus Windows ASCII case folding preserves symlink/junction identity and Unix case
+distinctions. Normalization and comparison run after the refresh timer stops; mismatch diagnostics
+report only category, iteration and counts, never identity paths. Serialized inventories remain
+counts only: cross-run PR/base comparison and the existing metric/inventory schema versions are
+unchanged.
+
 Schema v3 separates client-observed operation latency from server attribution:
 
 - `refresh_round_trip` measures immediately before request serialization/write through reading

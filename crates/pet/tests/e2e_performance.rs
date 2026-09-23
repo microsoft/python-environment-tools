@@ -9,6 +9,7 @@
 use pet_core::telemetry::refresh_progress::{
     RefreshProgress, RefreshProgressPhase, RefreshProgressStatus,
 };
+use pet_fs::path::norm_case;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -186,18 +187,17 @@ pub struct RefreshResult {
 #[serde(rename_all = "camelCase")]
 pub struct Environment {
     pub executable: Option<String>,
+    pub prefix: Option<String>,
     pub kind: Option<String>,
-    #[allow(dead_code)]
     pub version: Option<String>,
 }
 
 /// Manager notification from server
 #[derive(Debug, Clone, Deserialize)]
 pub struct Manager {
-    #[allow(dead_code)]
     pub tool: Option<String>,
-    #[allow(dead_code)]
     pub executable: Option<String>,
+    pub version: Option<String>,
 }
 
 /// Shared state for handling notifications
@@ -640,21 +640,350 @@ fn reset_cache_dir(cache_dir: &Path) {
         .unwrap_or_else(|error| panic!("Failed to create cache directory {cache_dir:?}: {error}"));
 }
 
+fn inventory_path(path: String) -> PathBuf {
+    let path = norm_case(path);
+    #[cfg(windows)]
+    let path = {
+        let mut path = path;
+        // GetLongPathNameW can preserve ASCII case in some path components.
+        path.as_mut_os_string().make_ascii_lowercase();
+        path
+    };
+    path
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct EnvironmentIdentity {
+    executable: Option<PathBuf>,
+    prefix: Option<PathBuf>,
+    kind: Option<String>,
+    version: Option<String>,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct ManagerIdentity {
+    executable: PathBuf,
+    tool: String,
+    version: Option<String>,
+}
+
+struct Inventory {
+    environments: Vec<EnvironmentIdentity>,
+    managers: Vec<ManagerIdentity>,
+}
+
+impl Inventory {
+    fn from_notifications(environments: Vec<Environment>, managers: Vec<Manager>) -> Self {
+        let mut environments: Vec<_> = environments
+            .into_iter()
+            .map(|environment| {
+                assert!(
+                    environment.executable.is_some() || environment.prefix.is_some(),
+                    "Environment inventory entry has neither an executable nor a prefix"
+                );
+                EnvironmentIdentity {
+                    executable: environment.executable.map(inventory_path),
+                    prefix: environment.prefix.map(inventory_path),
+                    kind: environment.kind,
+                    version: environment.version,
+                }
+            })
+            .collect();
+        let mut managers: Vec<_> = managers
+            .into_iter()
+            .map(|manager| ManagerIdentity {
+                executable: inventory_path(
+                    manager
+                        .executable
+                        .expect("Manager inventory entry has no executable"),
+                ),
+                tool: manager.tool.expect("Manager inventory entry has no tool"),
+                version: manager.version,
+            })
+            .collect();
+        environments.sort_unstable();
+        managers.sort_unstable();
+        Self {
+            environments,
+            managers,
+        }
+    }
+
+    fn assert_matches(&self, actual: &Self, workload: &str, iteration: usize) {
+        // Keep user paths out of assertion output, including same-count replacements.
+        assert!(
+            self.environments == actual.environments,
+            "{workload} environment inventory changed at iteration {} (expected {} notifications, got {})",
+            iteration + 1,
+            self.environments.len(),
+            actual.environments.len(),
+        );
+        assert!(
+            self.managers == actual.managers,
+            "{workload} manager inventory changed at iteration {} (expected {} notifications, got {})",
+            iteration + 1,
+            self.managers.len(),
+            actual.managers.len(),
+        );
+    }
+}
+
 fn assert_stable_inventory(
-    expected: &mut Option<(usize, usize)>,
-    actual: (usize, usize),
+    expected: &mut Option<Inventory>,
+    actual: Inventory,
     workload: &str,
     iteration: usize,
 ) {
     if let Some(expected) = expected {
-        assert_eq!(
-            actual,
-            *expected,
-            "{workload} inventory changed at iteration {}",
-            iteration + 1
-        );
+        expected.assert_matches(&actual, workload, iteration);
     } else {
         *expected = Some(actual);
+    }
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+
+    fn inventory(environments: Value, managers: Value) -> Inventory {
+        Inventory::from_notifications(
+            serde_json::from_value(environments).unwrap(),
+            serde_json::from_value(managers).unwrap(),
+        )
+    }
+
+    fn notifications() -> (Value, Value) {
+        (
+            json!([
+                {"executable": "private-env-a/python", "prefix": "private-env-a", "kind": "Venv", "version": "3.12"},
+                {"executable": "private-env-b/python", "prefix": "private-env-b", "kind": "Conda", "version": "3.13"}
+            ]),
+            json!([
+                {"executable": "private-manager-a", "tool": "Conda", "version": "24.1"},
+                {"executable": "private-manager-b", "tool": "Poetry", "version": "2.0"}
+            ]),
+        )
+    }
+
+    fn assert_mismatch(expected: Inventory, actual: Inventory, category: &str) {
+        let panic = std::panic::catch_unwind(|| {
+            expected.assert_matches(&actual, "Cold diagnostic", 2);
+        })
+        .expect_err("different identities must fail even when counts match");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("inventory assertion must have a diagnostic");
+        assert!(message.contains(&format!(
+            "Cold diagnostic {category} inventory changed at iteration 3"
+        )));
+        assert!(!message.contains("private-env"));
+        assert!(!message.contains("private-manager"));
+        std::panic::catch_unwind(|| {
+            let mut expected = Some(expected);
+            assert_stable_inventory(&mut expected, actual, "Warm refresh", 0);
+        })
+        .expect_err("measured refreshes must reject different identities too");
+    }
+
+    #[test]
+    fn inventory_order_is_ignored_across_measured_and_diagnostic_passes() {
+        let (environments, managers) = notifications();
+        let mut expected = None;
+        assert_stable_inventory(
+            &mut expected,
+            inventory(environments.clone(), managers.clone()),
+            "Cold refresh",
+            0,
+        );
+        let mut reordered_environments = environments.clone();
+        reordered_environments.as_array_mut().unwrap().reverse();
+        let mut reordered_managers = managers.clone();
+        reordered_managers.as_array_mut().unwrap().reverse();
+        assert_stable_inventory(
+            &mut expected,
+            inventory(reordered_environments, reordered_managers),
+            "Warm refresh",
+            0,
+        );
+        expected
+            .unwrap()
+            .assert_matches(&inventory(environments, managers), "Cold diagnostic", 0);
+    }
+
+    #[test]
+    fn inventory_detects_same_count_environment_changes_without_exposing_paths() {
+        for (field, value) in [
+            ("executable", json!("private-env-c/python")),
+            ("prefix", json!("private-env-c")),
+            ("kind", json!("Poetry")),
+            ("version", json!("3.14")),
+            ("version", Value::Null),
+        ] {
+            let (environments, managers) = notifications();
+            let mut changed = environments.clone();
+            changed[0][field] = value;
+            assert_mismatch(
+                inventory(environments, managers.clone()),
+                inventory(changed, managers),
+                "environment",
+            );
+        }
+    }
+
+    #[test]
+    fn inventory_detects_same_count_manager_changes_without_exposing_paths() {
+        for (field, value) in [
+            ("executable", json!("private-manager-c")),
+            ("tool", json!("Mamba")),
+            ("version", json!("25.0")),
+            ("version", Value::Null),
+        ] {
+            let (environments, managers) = notifications();
+            let mut changed = managers.clone();
+            changed[0][field] = value;
+            assert_mismatch(
+                inventory(environments.clone(), managers),
+                inventory(environments, changed),
+                "manager",
+            );
+        }
+    }
+
+    #[test]
+    fn inventory_preserves_duplicate_multiplicity() {
+        let (environments, managers) = notifications();
+        let duplicate_a = json!([environments[0], environments[0], environments[1]]);
+        let reordered = json!([environments[1], environments[0], environments[0]]);
+        inventory(duplicate_a.clone(), managers.clone()).assert_matches(
+            &inventory(reordered, managers.clone()),
+            "Warm refresh",
+            0,
+        );
+        assert_mismatch(
+            inventory(duplicate_a, managers.clone()),
+            inventory(
+                json!([environments[0], environments[1], environments[1]]),
+                managers.clone(),
+            ),
+            "environment",
+        );
+        assert_mismatch(
+            inventory(
+                environments.clone(),
+                json!([managers[0], managers[0], managers[1]]),
+            ),
+            inventory(environments, json!([managers[0], managers[1], managers[1]])),
+            "manager",
+        );
+    }
+
+    #[test]
+    fn inventory_checks_counts_and_accepts_empty_inventories() {
+        let mut expected = None;
+        assert_stable_inventory(
+            &mut expected,
+            inventory(json!([]), json!([])),
+            "Cold refresh",
+            0,
+        );
+        assert_stable_inventory(
+            &mut expected,
+            inventory(json!([]), json!([])),
+            "Warm refresh",
+            0,
+        );
+        let (environments, managers) = notifications();
+        assert_mismatch(
+            expected.unwrap(),
+            inventory(environments, json!([])),
+            "environment",
+        );
+        assert_mismatch(
+            inventory(json!([]), managers),
+            inventory(json!([]), json!([])),
+            "manager",
+        );
+    }
+
+    #[test]
+    fn inventory_supports_prefix_only_and_executable_only_environments() {
+        let environments =
+            json!([{"prefix": "private-env-a"}, {"executable": "private-env-b/python"}]);
+        let expected = inventory(environments.clone(), json!([]));
+        expected.assert_matches(
+            &inventory(environments.clone(), json!([])),
+            "Warm refresh",
+            0,
+        );
+        let mut changed = environments;
+        changed[0]["prefix"] = json!("private-env-c");
+        assert_mismatch(expected, inventory(changed, json!([])), "environment");
+    }
+
+    #[test]
+    #[should_panic(expected = "Environment inventory entry has neither an executable nor a prefix")]
+    fn inventory_rejects_unidentifiable_environments() {
+        inventory(json!([{"kind": "Venv"}]), json!([]));
+    }
+
+    #[test]
+    #[should_panic(expected = "Manager inventory entry has no executable")]
+    fn inventory_rejects_managers_without_executables() {
+        inventory(json!([]), json!([{"tool": "Conda"}]));
+    }
+
+    #[test]
+    #[should_panic(expected = "Manager inventory entry has no tool")]
+    fn inventory_rejects_managers_without_tools() {
+        inventory(json!([]), json!([{"executable": "private-manager-a"}]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn inventory_normalizes_windows_path_aliases() {
+        let root = tempfile::tempdir().unwrap();
+        let prefix = root.path().join("MiXeD-\u{00e9}");
+        std::fs::create_dir(&prefix).unwrap();
+        let executable = prefix.join("Python.exe");
+        std::fs::write(&executable, b"").unwrap();
+        let alias_prefix = format!("{}\\", prefix.to_str().unwrap().to_ascii_uppercase());
+        let alias_executable = executable
+            .to_str()
+            .unwrap()
+            .to_ascii_uppercase()
+            .replace('\\', "/");
+        let original = inventory(
+            json!([{"prefix": prefix, "executable": executable}]),
+            json!([{"executable": executable, "tool": "Conda"}]),
+        );
+        original.assert_matches(
+            &inventory(
+                json!([{"prefix": alias_prefix, "executable": alias_executable}]),
+                json!([{"executable": alias_executable, "tool": "Conda"}]),
+            ),
+            "Warm refresh",
+            0,
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inventory_preserves_unix_case_and_symlink_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("Python");
+        let other_case = root.path().join("python");
+        let alias = root.path().join("python-alias");
+        std::fs::write(&executable, b"").unwrap();
+        std::os::unix::fs::symlink(&executable, &alias).unwrap();
+        for other in [other_case, alias] {
+            assert_mismatch(
+                inventory(json!([{"executable": executable}]), json!([])),
+                inventory(json!([{"executable": other}]), json!([])),
+                "environment",
+            );
+        }
     }
 }
 
@@ -869,7 +1198,7 @@ fn collect_refresh_diagnostics(
     phase_stats: &mut BTreeMap<String, StatisticalMetrics>,
     locator_stats: &mut BTreeMap<String, StatisticalMetrics>,
     probe_timeout_counts: &mut BTreeMap<String, usize>,
-    expected_inventory: (usize, usize),
+    expected_inventory: &Inventory,
 ) {
     let diagnostic_cache_root = cache_dir.join("refresh-progress");
     reset_cache_dir(&diagnostic_cache_root);
@@ -892,19 +1221,15 @@ fn collect_refresh_diagnostics(
             .expect("Failed to run diagnostic refresh");
 
         collect_refresh_progress(&client.get_refresh_progress(), phase_stats, locator_stats);
-        let inventory = (client.get_environments().len(), client.get_managers().len());
-        assert_eq!(
-            inventory,
-            expected_inventory,
-            "Cold diagnostic inventory changed at iteration {}",
-            iteration + 1,
-        );
+        let inventory =
+            Inventory::from_notifications(client.get_environments(), client.get_managers());
+        expected_inventory.assert_matches(&inventory, "Cold diagnostic", iteration);
         record_interpreter_probe_timeouts(&client, probe_timeout_counts);
         println!(
             "  Cold diagnostic iteration {}: refresh={}ms, envs={}",
             iteration + 1,
             result.duration,
-            inventory.0,
+            inventory.environments.len(),
         );
     }
 }
@@ -1812,10 +2137,11 @@ fn test_performance_summary() {
             .expect("Failed to run cold refresh");
         cold_refresh_round_trip_stats.add(cold_round_trip.as_millis());
         cold_discovery_duration_stats.add(cold_result.duration);
-        let cold_inventory = (
-            cold_client.get_environments().len(),
-            cold_client.get_managers().len(),
+        let cold_inventory = Inventory::from_notifications(
+            cold_client.get_environments(),
+            cold_client.get_managers(),
         );
+        let cold_env_count = cold_inventory.environments.len();
         assert_stable_inventory(
             &mut expected_inventory,
             cold_inventory,
@@ -1840,7 +2166,7 @@ fn test_performance_summary() {
             cold_round_trip.as_millis(),
             cold_result.duration,
             cold_request_ttfe.as_millis(),
-            cold_inventory.0,
+            cold_env_count,
         );
         drop(cold_client);
 
@@ -1856,10 +2182,11 @@ fn test_performance_summary() {
             .expect("Failed to run warm refresh");
         warm_refresh_round_trip_stats.add(warm_round_trip.as_millis());
         warm_discovery_duration_stats.add(warm_result.duration);
-        let warm_inventory = (
-            warm_client.get_environments().len(),
-            warm_client.get_managers().len(),
+        let warm_inventory = Inventory::from_notifications(
+            warm_client.get_environments(),
+            warm_client.get_managers(),
         );
+        let warm_env_count = warm_inventory.environments.len();
         assert_stable_inventory(
             &mut expected_inventory,
             warm_inventory,
@@ -1883,12 +2210,14 @@ fn test_performance_summary() {
             warm_round_trip.as_millis(),
             warm_result.duration,
             warm_request_ttfe.as_millis(),
-            warm_inventory.0,
+            warm_env_count,
         );
     }
 
-    let (env_count, manager_count) =
+    let expected_inventory =
         expected_inventory.expect("Performance summary must run at least one iteration");
+    let env_count = expected_inventory.environments.len();
+    let manager_count = expected_inventory.managers.len();
     for (label, count) in [
         ("startup", startup_stats.count()),
         (
@@ -1935,7 +2264,7 @@ fn test_performance_summary() {
         &mut phase_stats,
         &mut locator_stats,
         &mut probe_timeout_counts,
-        (env_count, manager_count),
+        &expected_inventory,
     );
 
     for phase in ["locators", "path", "globalVirtualEnvs", "workspaces"] {
