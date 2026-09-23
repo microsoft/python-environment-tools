@@ -11,6 +11,19 @@ For samples using JSONRPC, please have a look at the [sample.js](./sample.js) fi
 
 Any requests/notifications not documented here are not supported.
 
+## Request identifiers
+
+Requests include an `id` that is a string, JSON number, or explicit `null`. PET preserves
+the parsed value in successful replies and errors, including every waiter joining a refresh.
+Signed 64-bit and unsigned 64-bit integer IDs are preserved without narrowing to 32 bits.
+Fractional numbers are accepted using the JSON parser's floating-point representation; numeric
+spelling is not preserved. Prefer string IDs when exact values exceed the 64-bit integer ranges
+or the precision of a client's numeric type. JSONRPC recommends avoiding fractional and null IDs.
+
+Only an absent `id` denotes a notification. Boolean, array, and object IDs produce an Invalid
+Request error (`-32600`) with `id: null` and do not invoke a handler. Other existing method and
+parameter error codes are unchanged. Notifications do not receive request replies.
+
 # Info Request
 
 Returns metadata about the running PET binary. This request does not require a prior

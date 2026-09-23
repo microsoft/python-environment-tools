@@ -2,16 +2,157 @@
 // Licensed under the MIT License.
 
 use pet_fs::path::norm_case;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fs;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
+use std::thread::JoinHandle;
 use std::time::Duration;
 use tempfile::TempDir;
 
 mod jsonrpc_client;
 
 use jsonrpc_client::{EnvironmentNotification, PetJsonRpcClient};
+
+struct RawRpcClient {
+    child: Child,
+    responses: mpsc::Receiver<std::io::Result<Value>>,
+    reader: Option<JoinHandle<()>>,
+}
+
+impl RawRpcClient {
+    fn spawn() -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pet"));
+        command
+            .arg("server")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .env_clear()
+            .env("PATH", "");
+        #[cfg(windows)]
+        if let Some(system_root) = std::env::var_os("SYSTEMROOT") {
+            command.env("SYSTEMROOT", system_root);
+        }
+        let mut child = command.spawn().expect("raw fixture must spawn PET");
+        let stdout = child.stdout.take().expect("PET stdout must be piped");
+        let (sender, responses) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            let mut stdout = BufReader::new(stdout);
+            loop {
+                match jsonrpc_client::read_message(&mut stdout) {
+                    Ok(Some(message)) => {
+                        if sender.send(Ok(message)).is_err() {
+                            return;
+                        }
+                    }
+                    Ok(None) => return,
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        return;
+                    }
+                }
+            }
+        });
+        Self {
+            child,
+            responses,
+            reader: Some(reader),
+        }
+    }
+
+    fn send(&mut self, message: Value) {
+        let body = serde_json::to_vec(&message).unwrap();
+        let stdin = self.child.stdin.as_mut().expect("PET stdin must be piped");
+        write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
+        stdin.write_all(&body).unwrap();
+        stdin.flush().unwrap();
+    }
+
+    fn receive(&self) -> Value {
+        self.responses
+            .recv_timeout(Duration::from_secs(10))
+            .expect("PET must respond within ten seconds")
+            .expect("PET must emit valid JSONRPC")
+    }
+}
+
+impl Drop for RawRpcClient {
+    fn drop(&mut self) {
+        // EOF shutdown is tracked separately; kill only this fixture's child before closing stdin.
+        if let Err(error) = self.child.kill() {
+            eprintln!("Failed to stop raw RPC fixture: {error}");
+        }
+        if let Err(error) = self.child.wait() {
+            eprintln!("Failed to reap raw RPC fixture: {error}");
+        }
+        self.child.stdin.take();
+        if let Some(reader) = self.reader.take() {
+            if reader.join().is_err() {
+                eprintln!("Raw RPC fixture reader panicked");
+            }
+        }
+    }
+}
+
+#[test]
+fn request_ids_round_trip_through_success_and_error_responses() {
+    let mut client = RawRpcClient::spawn();
+    for id in [
+        json!("request-1"),
+        json!("\u{03c0}-request"),
+        json!(""),
+        json!(0),
+        json!(u64::from(u32::MAX) + 1),
+        json!(u64::MAX),
+        json!(i64::MIN),
+        json!(-7),
+        json!(1.5),
+        Value::Null,
+    ] {
+        for (method, params, error_code) in [
+            ("info", json!({}), None),
+            ("unknown", json!({}), Some(-1)),
+            ("resolve", json!({"executable": 42}), Some(-4)),
+        ] {
+            client.send(json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}));
+            let response = client.receive();
+            assert_eq!(response["jsonrpc"], "2.0");
+            assert_eq!(response.get("id"), Some(&id));
+            if let Some(code) = error_code {
+                assert_eq!(response["error"]["code"], code);
+                assert!(response.get("result").is_none());
+            } else {
+                assert!(response["result"]["petVersion"].is_string());
+                assert!(response.get("error").is_none());
+            }
+        }
+        client.send(json!({"jsonrpc": "2.0", "id": id}));
+        let response = client.receive();
+        assert_eq!(response.get("id"), Some(&id));
+        assert_eq!(response["error"]["code"], -3);
+    }
+}
+
+#[test]
+fn missing_and_invalid_request_ids_have_distinct_wire_behavior() {
+    let mut client = RawRpcClient::spawn();
+    client.send(json!({"jsonrpc": "2.0", "method": "info", "params": {}}));
+    client.send(json!({"jsonrpc": "2.0", "id": "sentinel", "method": "info", "params": {}}));
+    assert_eq!(client.receive()["id"], "sentinel");
+    for id in [json!(true), json!(false), json!([]), json!({"id": 7})] {
+        client.send(json!({"jsonrpc": "2.0", "id": id, "method": "info", "params": {}}));
+        let response = client.receive();
+        assert_eq!(response.get("id"), Some(&Value::Null));
+        assert_eq!(response["error"]["code"], -32600);
+        assert!(response.get("result").is_none());
+    }
+    client.send(json!({"jsonrpc": "2.0", "id": "after-invalid", "method": "info", "params": {}}));
+    assert_eq!(client.receive()["id"], "after-invalid");
+}
 
 fn create_fake_workspace(prompt: &str) -> (TempDir, PathBuf, PathBuf) {
     let temp_dir = tempfile::tempdir().expect("failed to create temp directory");
