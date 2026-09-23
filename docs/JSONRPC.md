@@ -167,8 +167,10 @@ interface RefreshParams {
 
 interface RefreshResult {
   /**
-   * Total time taken to refresh the list of Python environments.
-   * Duration is in milliseconds.
+   * Discovery-engine duration in milliseconds. This is the server's find-and-report interval.
+   * It excludes request parsing and glob expansion, coordinator queueing, locator
+   * preparation, reply delivery, and post-discovery synchronization. Clients needing
+   * operation latency must measure through receipt of this response.
    */
   duration: number;
   /**
@@ -204,6 +206,28 @@ PET admits at most two configure/refresh glob or brace expansions concurrently.
 Requests containing only literal paths do not consume these slots. Additional expansion
 requests receive JSON-RPC error `-4` instead of creating an unbounded traversal queue.
 Input deduplication preserves the first occurrence order of configured paths.
+
+### Refresh timing boundaries
+
+The quality benchmark records separate clocks. **Refresh round-trip** starts immediately
+before the client serializes and writes `refresh` and ends after its matching response is
+read. It includes parsing and glob expansion, coordinator waiting, discovery, synchronization
+before the reply, and transport. Inventory/progress clearing and diagnostics are outside it.
+
+**Request-to-first environment** uses the same request boundary and ends at the first
+`environment` notification read before the matching response; its client-side observation resets
+for every refresh and closes on its response or error. Notifications processed by a later
+non-refresh request cannot populate the completed refresh's missing observation.
+**Startup-to-first environment** starts immediately before PET is spawned, ends at the first
+`environment` notification in that process, and never resets.
+
+Environment notifications do not carry a request or `refreshId`, so clients cannot attribute
+concurrent or post-response environment notifications to a particular refresh. A queued request
+includes coordinator waiting, and identical concurrent requests can coalesce and share a
+`refreshId`, but request-to-first remains a sequential client observation rather than a protocol
+correlation guarantee. The quality workload avoids that ambiguity by using a fresh process for each
+single measured refresh, requires one sample per operation, and never silently omits a missing
+sample.
 
 ## Refresh Progress Telemetry
 

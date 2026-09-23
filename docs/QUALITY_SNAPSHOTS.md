@@ -4,39 +4,99 @@ PET uses pull-request snapshots to prevent performance and coverage drift. Each 
 
 ## Performance gate
 
-The performance workflow runs 10 paired cache-cold/cache-warm JSON-RPC iterations on Linux, Windows, and macOS, plus 10 untimed cache-cold diagnostic iterations. A comparison is valid only when:
+The performance workflow runs 10 paired cache-cold/cache-warm JSON-RPC iterations on Linux,
+Windows, and macOS, plus 10 untimed cache-cold diagnostic iterations. A comparison is valid only
+when every required distribution has at least five samples, inventories match within the same
+inventory schema, and both benchmark execution and JSON extraction succeed.
 
-- current and baseline metrics contain at least five samples for every required distribution;
-- environment and manager counts match exactly within the same inventory schema; and
-- the benchmark command and JSON extraction both succeed.
+Schema v3 separates client-observed operation latency from server attribution:
 
-A metric blocks when it exceeds both its absolute and relative budget:
+- `refresh_round_trip` measures immediately before request serialization/write through reading
+  the matching response. It includes parsing, glob expansion, queueing, discovery, pre-reply
+  synchronization, and transport.
+- `request_time_to_first_env` uses that operation boundary and records the first environment
+  notification read before the matching response. The observation resets before every refresh.
+- `startup_time_to_first_env` remains process-spawn-relative and never resets.
+- `discovery_duration` retains the server's discovery-only `RefreshResult.duration` for attribution.
+- cold distributions use the same boundaries; phase, locator, and timeout data remain diagnostics.
 
-| Metric | Linux | Windows | macOS |
+The benchmark clears collected inventories and progress before starting the operation clock,
+keeps one buffered stdout reader for the process lifetime, and continuously drains a bounded stderr
+tail. The request-relative observation closes after a refresh response or error; notifications read
+by later non-refresh requests cannot fill a missing TTFE sample for the completed refresh.
+Environment notifications have no request identifier, so request-relative TTFE is not claimed as
+concurrency-safe attribution and post-response notifications cannot be assigned to a request. Each
+measured refresh uses a fresh process to avoid that ambiguity. It must produce every required
+sample; missing data is invalid rather than silently skipped. The standalone full-refresh benchmark
+also rejects missing request-to-first samples.
+
+A metric blocks only when it exceeds both its absolute and relative budget. Schema v3
+preserves all existing discovery/startup-relative gates:
+
+| Existing metric | Linux | Windows | macOS |
 | --- | ---: | ---: | ---: |
 | Server startup P50 | 5 ms / 100% | 10 ms / 50% | 100 ms / 50% |
 | Server startup P95 | 50 ms / 200% | 50 ms / 100% | 750 ms / 100% |
-| Full refresh P50 | 25 ms / 30% | 150 ms / 50% | 100 ms / 50% |
-| Full refresh P95 | 50 ms / 50% | 250 ms / 100% | 300 ms / 100% |
-| Time to first environment P50 | 20 ms / 100% | 25 ms / 50% | 150 ms / 50% |
-| Time to first environment P95 | 25 ms / 100% | 100 ms / 100% | 250 ms / 100% |
-| Cold refresh P50 | 100 ms / 50% | 150 ms / 50% | 250 ms / 50% |
+| Discovery duration P50 | 25 ms / 30% | 150 ms / 50% | 100 ms / 50% |
+| Discovery duration P95 | 50 ms / 50% | 250 ms / 100% | 300 ms / 100% |
+| Startup-to-first environment P50 | 20 ms / 100% | 25 ms / 50% | 150 ms / 50% |
+| Startup-to-first environment P95 | 25 ms / 100% | 100 ms / 100% | 250 ms / 100% |
+| Cold discovery duration P50 | 100 ms / 50% | 150 ms / 50% | 250 ms / 50% |
 
-Each cell is `absolute / relative`. The Linux/macOS warm P50 and all server-startup budgets reflect observed GitHub-hosted runner variance from 11 consecutive main-branch baselines. Tighten them when a noisy path is fixed rather than normalizing a known regression into the baseline.
+Client gates use their own calibration, active only when both exact-base snapshots are v3:
 
-The macOS server-startup P95 budget recalibration is tracked by issue #507 and follows PR #506's fix for issue #504. It uses three unchanged-content pull-request runs and the exact merged baseline at `f0c62d9`; the resulting absolute headroom is four to six times the observed post-fix run-to-run range.
+| New client metric | Linux | Windows | macOS |
+| --- | ---: | ---: | ---: |
+| Refresh round-trip P50 | 25 ms / 30% | 150 ms / 50% | 250 ms / 50% |
+| Refresh round-trip P95 | 50 ms / 50% | 250 ms / 100% | 300 ms / 100% |
+| Request-to-first environment P50 | 20 ms / 100% | 25 ms / 50% | 50 ms / 50% |
+| Request-to-first environment P95 | 25 ms / 100% | 100 ms / 100% | 100 ms / 100% |
+| Cold refresh round-trip P50 | 100 ms / 50% | 150 ms / 50% | 600 ms / 50% |
 
-The warm refresh and warm time-to-first P95 budgets were recalibrated in issue #511 after PR #510 separated cold and warm samples. Three unchanged-code PR runs plus the exact schema-v2 baseline at `ad7ca14` retain at least 2.5 times the observed absolute run-to-run range.
+Each cell is `absolute / relative`. Initial client calibration in #531 uses four runs of
+unchanged benchmark source at `9c1b003`: [baseline 1](https://github.com/microsoft/python-environment-tools/actions/runs/35669490808),
+[baseline 2](https://github.com/microsoft/python-environment-tools/actions/runs/35669544096),
+[baseline 3](https://github.com/microsoft/python-environment-tools/actions/runs/35669544153), and
+[PR measurement](https://github.com/microsoft/python-environment-tools/actions/runs/35669495406).
+Each platform has 40 cold/warm pairs; inventories were stable at 5/8/10 environments on
+Linux/Windows/macOS respectively, with one manager. The PR Windows artifact upload hit HTTP 403;
+its successful benchmark/comparison JSON was recovered from the job log instead of discarded.
 
-The Windows warm full-refresh P50 budget was recalibrated in issue #513 from five unchanged-code pull-request measurements plus the exact schema-v2 baseline at `ad7ca14` (six measurements total). It retains nearly twice the observed absolute range while blocking a sustained median above 255ms against that baseline.
+Observed run-to-run ranges (maximum minus minimum statistic, not individual-sample spread):
 
-Schema v2 records `full_refresh` and `time_to_first_env` from the warm member of each pair and adds cold refresh/time-to-first distributions. During its one-time rollout, comparisons against a schema-v1 base checked cold P50 against explicit absolute ceilings of 500ms on Linux, 750ms on Windows, and 1,000ms on macOS. Schema-v2-to-v2 comparisons use the table's dual budgets.
+| Client statistic range | Linux | Windows | macOS |
+| --- | ---: | ---: | ---: |
+| Round-trip P50 / P95 | 11 / 10 ms | 56 / 63 ms | 105 / 105 ms |
+| Request-to-first P50 / P95 | 3 / 4 ms | 7 / 17 ms | 19 / 41 ms |
+| Cold round-trip P50 | 41 ms | 59 ms | 256 ms |
 
-Inventory schema v2 treats Windows Conda installation paths that differ only by on-disk casing as one logical workload entry. During the one-time v1-to-v2 transition, the report explicitly identifies the schema change and permits the expected count mismatch. Once the v2 baseline is published, exact environment and manager count matching resumes automatically.
+Client absolute budgets retain at least twice those observed ranges, rounded up; existing
+larger Linux/Windows tolerances were retained. Relative tolerances remain unchanged. macOS
+request-relative TTFE tolerances are tighter than the unrelated startup-relative ones. Directly
+reusing discovery tolerances for macOS client P50/cold P50 falsely rejected unchanged source.
+No existing discovery, startup, or coverage gate is relaxed: they can still block independently.
+These are initial hosted-runner noise budgets, not user latency SLOs. Cold P95 stays diagnostic
+because individual host events dominate it; recalibrate only with new comparable evidence.
 
-The cold P50 budgets were calibrated in issue #509 using two unchanged-head all-platform runs and the final pull-request validation.
+### Exact-base schema transition
 
-The dual budget avoids failing on tiny percentage changes while still blocking material latency regressions. Warm tail metrics remain mandatory; cold P95 remains diagnostic because a single host event can dominate it, while cold P50 blocks delays that affect the independent cold iterations consistently.
+Schema v2's `full_refresh` is discovery-only and `time_to_first_env` is startup-relative. During an
+exact-base v2 to current v3 comparison, the comparator maps only those semantically identical values
+to `discovery_duration` and `startup_time_to_first_env`, preserving every existing gate. All new v3
+distributions are still mandatory, but client metrics are explicitly reported as transition
+diagnostics because a v2 artifact has no comparable samples. They are never relabeled or compared
+to discovery duration. As soon as the exact base publishes v3, round-trip and request-relative gates
+activate automatically. A v2 current snapshot against a v3 base, unknown versions, missing metrics,
+and insufficient samples fail closed.
+
+Schema v2's earlier v1 transition still checks cold discovery P50 against explicit ceilings of 500ms
+on Linux, 750ms on Windows, and 1,000ms on macOS. Inventory schema v2 likewise permits count changes
+only during its one-time v1-to-v2 transition; equal inventory schemas require exact counts.
+
+The macOS startup P95 calibration remains tracked by #507. Warm discovery/startup-to-first P95 was
+recalibrated in #511, Windows warm discovery P50 in #513, and cold discovery P50 in #509. These
+historical calibrations apply only to their unchanged semantic metrics, not as fabricated evidence
+for the new client clocks.
 
 ## Coverage gate
 

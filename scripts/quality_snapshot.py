@@ -71,47 +71,81 @@ class AbsoluteLimitComparison:
 PerformanceComparison = MetricComparison | AbsoluteLimitComparison
 
 
-PERFORMANCE_METRICS = (
+LEGACY_PERFORMANCE_METRICS = (
     MetricSpec('Server startup P50', 'server_startup', 'p50'),
     MetricSpec('Server startup P95', 'server_startup', 'p95'),
-    MetricSpec('Full refresh P50', 'full_refresh', 'p50'),
-    MetricSpec('Full refresh P95', 'full_refresh', 'p95'),
-    MetricSpec('Time to first environment P50', 'time_to_first_env', 'p50'),
-    MetricSpec('Time to first environment P95', 'time_to_first_env', 'p95'),
+    MetricSpec('Discovery duration P50', 'full_refresh', 'p50'),
+    MetricSpec('Discovery duration P95', 'full_refresh', 'p95'),
+    MetricSpec('Startup-to-first environment P50', 'time_to_first_env', 'p50'),
+    MetricSpec('Startup-to-first environment P95', 'time_to_first_env', 'p95'),
+)
+SCHEMA_V3_DIAGNOSTIC_METRICS = (
+    MetricSpec('Server startup P50', 'server_startup', 'p50'),
+    MetricSpec('Server startup P95', 'server_startup', 'p95'),
+    MetricSpec('Discovery duration P50', 'discovery_duration', 'p50'),
+    MetricSpec('Discovery duration P95', 'discovery_duration', 'p95'),
+    MetricSpec('Startup-to-first environment P50', 'startup_time_to_first_env', 'p50'),
+    MetricSpec('Startup-to-first environment P95', 'startup_time_to_first_env', 'p95'),
+)
+CLIENT_PERFORMANCE_METRICS = (
+    MetricSpec('Refresh round-trip P50', 'refresh_round_trip', 'p50'),
+    MetricSpec('Refresh round-trip P95', 'refresh_round_trip', 'p95'),
+    MetricSpec('Request-to-first environment P50', 'request_time_to_first_env', 'p50'),
+    MetricSpec('Request-to-first environment P95', 'request_time_to_first_env', 'p95'),
 )
 PERFORMANCE_BUDGETS = {
     'linux': (
-        RegressionBudget(5, 100),
-        RegressionBudget(50, 200),
-        RegressionBudget(25, 30),
-        RegressionBudget(50, 50),
-        RegressionBudget(20, 100),
-        RegressionBudget(25, 100),
+        RegressionBudget(5, 100), RegressionBudget(50, 200),
+        RegressionBudget(25, 30), RegressionBudget(50, 50),
+        RegressionBudget(20, 100), RegressionBudget(25, 100),
     ),
     'windows': (
-        RegressionBudget(10, 50),
-        RegressionBudget(50, 100),
-        RegressionBudget(150, 50),
-        RegressionBudget(250, 100),
-        RegressionBudget(25, 50),
-        RegressionBudget(100, 100),
+        RegressionBudget(10, 50), RegressionBudget(50, 100),
+        RegressionBudget(150, 50), RegressionBudget(250, 100),
+        RegressionBudget(25, 50), RegressionBudget(100, 100),
     ),
     'macos': (
-        RegressionBudget(100, 50),
-        RegressionBudget(750, 100),
-        RegressionBudget(100, 50),
-        RegressionBudget(300, 100),
-        RegressionBudget(150, 50),
-        RegressionBudget(250, 100),
+        RegressionBudget(100, 50), RegressionBudget(750, 100),
+        RegressionBudget(100, 50), RegressionBudget(300, 100),
+        RegressionBudget(150, 50), RegressionBudget(250, 100),
     ),
 }
-PERFORMANCE_METRICS_SCHEMA_VERSION = 2
+CLIENT_PERFORMANCE_BUDGETS = {
+    'linux': (
+        RegressionBudget(25, 30), RegressionBudget(50, 50),
+        RegressionBudget(20, 100), RegressionBudget(25, 100),
+    ),
+    'windows': (
+        RegressionBudget(150, 50), RegressionBudget(250, 100),
+        RegressionBudget(25, 50), RegressionBudget(100, 100),
+    ),
+    'macos': (
+        RegressionBudget(250, 50), RegressionBudget(300, 100),
+        RegressionBudget(50, 50), RegressionBudget(100, 100),
+    ),
+}
+CLIENT_COLD_REFRESH_BUDGETS = {
+    'linux': RegressionBudget(100, 50),
+    'windows': RegressionBudget(150, 50),
+    'macos': RegressionBudget(600, 50),
+}
+PERFORMANCE_METRICS_SCHEMA_VERSION = 3
 PERFORMANCE_INVENTORY_SCHEMA_VERSION = 2
-COLD_REFRESH_SPEC = MetricSpec('Cold refresh P50', 'cold_refresh', 'p50')
-COLD_DIAGNOSTIC_SPECS = (
-    MetricSpec('Cold refresh P95', 'cold_refresh', 'p95'),
-    MetricSpec('Cold time to first environment P50', 'cold_time_to_first_env', 'p50'),
-    MetricSpec('Cold time to first environment P95', 'cold_time_to_first_env', 'p95'),
+LEGACY_COLD_DISCOVERY_SPEC = MetricSpec('Cold discovery duration P50', 'cold_refresh', 'p50')
+SCHEMA_V3_COLD_DISCOVERY_SPEC = MetricSpec('Cold discovery duration P50', 'cold_discovery_duration', 'p50')
+COLD_REFRESH_ROUND_TRIP_SPEC = MetricSpec('Cold refresh round-trip P50', 'cold_refresh_round_trip', 'p50')
+SCHEMA_V3_REQUIRED_DIAGNOSTICS = (
+    MetricSpec('Cold refresh round-trip P95', 'cold_refresh_round_trip', 'p95'),
+    MetricSpec('Cold discovery duration P95', 'cold_discovery_duration', 'p95'),
+    MetricSpec('Cold request-to-first environment P50', 'cold_request_time_to_first_env', 'p50'),
+    MetricSpec('Cold request-to-first environment P95', 'cold_request_time_to_first_env', 'p95'),
+    MetricSpec('Cold startup-to-first environment P50', 'cold_startup_time_to_first_env', 'p50'),
+    MetricSpec('Cold startup-to-first environment P95', 'cold_startup_time_to_first_env', 'p95'),
+)
+LEGACY_COLD_DIAGNOSTIC_SPECS = (
+    MetricSpec('Cold discovery duration P95', 'cold_refresh', 'p95'),
+    MetricSpec('Cold startup-to-first environment P50', 'cold_time_to_first_env', 'p50'),
+    MetricSpec('Cold startup-to-first environment P95', 'cold_time_to_first_env', 'p95'),
 )
 COLD_REFRESH_BUDGETS = {
     'linux': RegressionBudget(100, 50),
@@ -136,12 +170,20 @@ def platform_key(platform: str) -> str:
 def performance_specs(platform: str) -> list[tuple[MetricSpec, RegressionBudget]]:
     key = platform_key(platform)
     budgets = PERFORMANCE_BUDGETS[key]
-    if len(budgets) != len(PERFORMANCE_METRICS):
+    if len(budgets) != len(LEGACY_PERFORMANCE_METRICS):
         raise SnapshotError(
             f'Performance budget count for {key} does not match metric count: '
-            f'{len(budgets)} != {len(PERFORMANCE_METRICS)}'
+            f'{len(budgets)} != {len(LEGACY_PERFORMANCE_METRICS)}'
         )
-    return list(zip(PERFORMANCE_METRICS, budgets))
+    return list(zip(LEGACY_PERFORMANCE_METRICS, budgets))
+
+
+def client_performance_specs(platform: str) -> list[tuple[MetricSpec, RegressionBudget]]:
+    key = platform_key(platform)
+    budgets = CLIENT_PERFORMANCE_BUDGETS[key]
+    if len(budgets) != len(CLIENT_PERFORMANCE_METRICS):
+        raise SnapshotError(f'Client performance budget count for {key} does not match metric count')
+    return list(zip(CLIENT_PERFORMANCE_METRICS, budgets))
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -227,10 +269,19 @@ def cold_refresh_legacy_limit(platform: str) -> float:
         raise SnapshotError(f'Missing legacy cold-refresh ceiling for {key}') from error
 
 
-def cold_refresh_value(snapshot: dict[str, Any], source: str) -> float:
-    value = performance_value(snapshot, COLD_REFRESH_SPEC, source)
-    for spec in COLD_DIAGNOSTIC_SPECS:
+def validate_v3_metrics(snapshot: dict[str, Any], source: str) -> None:
+    for spec in (*SCHEMA_V3_DIAGNOSTIC_METRICS, *CLIENT_PERFORMANCE_METRICS,
+                 SCHEMA_V3_COLD_DISCOVERY_SPEC, COLD_REFRESH_ROUND_TRIP_SPEC,
+                 *SCHEMA_V3_REQUIRED_DIAGNOSTICS):
         performance_value(snapshot, spec, source)
+
+
+def cold_discovery_value(snapshot: dict[str, Any], source: str, version: int) -> float:
+    spec = SCHEMA_V3_COLD_DISCOVERY_SPEC if version >= 3 else LEGACY_COLD_DISCOVERY_SPEC
+    value = performance_value(snapshot, spec, source)
+    if version < 3:
+        for diagnostic in LEGACY_COLD_DIAGNOSTIC_SPECS:
+            performance_value(snapshot, diagnostic, source)
     return value
 
 
@@ -244,6 +295,10 @@ def compare_performance(
             f'Current performance schema {current_version} is older than baseline schema '
             f'{baseline_version}'
         )
+    if current_version >= 3:
+        validate_v3_metrics(current, 'current')
+    if baseline_version >= 3:
+        validate_v3_metrics(baseline, 'baseline')
 
     current_inventory_version = inventory_schema_version(current, 'current')
     baseline_inventory_version = inventory_schema_version(baseline, 'baseline')
@@ -265,34 +320,61 @@ def compare_performance(
         if current_managers != baseline_managers:
             failures.append(f'Manager inventory changed: current={current_managers}, baseline={baseline_managers}')
 
+    current_specs = SCHEMA_V3_DIAGNOSTIC_METRICS if current_version >= 3 else LEGACY_PERFORMANCE_METRICS
+    baseline_specs = SCHEMA_V3_DIAGNOSTIC_METRICS if baseline_version >= 3 else LEGACY_PERFORMANCE_METRICS
+    budgets = PERFORMANCE_BUDGETS[platform_key(platform)]
+    if len(budgets) != len(current_specs):
+        raise SnapshotError(
+            f'Performance budget count for {platform_key(platform)} does not match metric count: '
+            f'{len(budgets)} != {len(current_specs)}'
+        )
+    if len(current_specs) != len(baseline_specs):
+        raise SnapshotError(
+            'Current and baseline performance metric counts do not match: '
+            f'{len(current_specs)} != {len(baseline_specs)}'
+        )
     comparisons: list[PerformanceComparison] = [
         MetricComparison(
-            spec.label,
-            performance_value(current, spec, 'current'),
-            performance_value(baseline, spec, 'baseline'),
+            current_spec.label,
+            performance_value(current, current_spec, 'current'),
+            performance_value(baseline, baseline_spec, 'baseline'),
             budget,
         )
-        for spec, budget in performance_specs(platform)
+        for current_spec, baseline_spec, budget in zip(current_specs, baseline_specs, budgets)
     ]
+
     if current_version >= 2:
-        current_cold = cold_refresh_value(current, 'current')
+        current_cold = cold_discovery_value(current, 'current', current_version)
         if baseline_version >= 2:
-            comparisons.append(
-                MetricComparison(
-                    COLD_REFRESH_SPEC.label,
-                    current_cold,
-                    cold_refresh_value(baseline, 'baseline'),
-                    cold_refresh_budget(platform),
-                )
-            )
+            comparisons.append(MetricComparison(
+                SCHEMA_V3_COLD_DISCOVERY_SPEC.label,
+                current_cold,
+                cold_discovery_value(baseline, 'baseline', baseline_version),
+                cold_refresh_budget(platform),
+            ))
         else:
-            comparisons.append(
-                AbsoluteLimitComparison(
-                    COLD_REFRESH_SPEC.label,
-                    current_cold,
-                    cold_refresh_legacy_limit(platform),
-                )
+            comparisons.append(AbsoluteLimitComparison(
+                SCHEMA_V3_COLD_DISCOVERY_SPEC.label,
+                current_cold,
+                cold_refresh_legacy_limit(platform),
+            ))
+
+    if current_version >= 3 and baseline_version >= 3:
+        comparisons.extend(
+            MetricComparison(
+                spec.label,
+                performance_value(current, spec, 'current'),
+                performance_value(baseline, spec, 'baseline'),
+                budget,
             )
+            for spec, budget in client_performance_specs(platform)
+        )
+        comparisons.append(MetricComparison(
+            COLD_REFRESH_ROUND_TRIP_SPEC.label,
+            performance_value(current, COLD_REFRESH_ROUND_TRIP_SPEC, 'current'),
+            performance_value(baseline, COLD_REFRESH_ROUND_TRIP_SPEC, 'baseline'),
+            CLIENT_COLD_REFRESH_BUDGETS[platform_key(platform)],
+        ))
 
     for comparison in comparisons:
         if not comparison.regressed:
@@ -308,7 +390,6 @@ def compare_performance(
                 f'{comparison.delta:.0f}ms'
             )
     return comparisons, failures
-
 
 def parse_lcov(path: Path) -> tuple[int, int, int, int]:
     try:
@@ -377,6 +458,8 @@ def performance_report(
     current: dict[str, Any],
     baseline: dict[str, Any],
 ) -> str:
+    current_version = performance_schema_version(current, 'current')
+    baseline_version = performance_schema_version(baseline, 'baseline')
     current_inventory_version = inventory_schema_version(current, 'current')
     baseline_inventory_version = inventory_schema_version(baseline, 'baseline')
     rows = []
@@ -417,6 +500,22 @@ def performance_report(
         report.extend([
             '',
             '> Cold refresh uses a platform absolute ceiling while the exact base has legacy metrics.',
+        ])
+    if current_version >= 3 and baseline_version < 3:
+        report.extend([
+            '',
+            '### Performance schema transition',
+            f'- Performance schema transitioned from v{baseline_version} to v{current_version}.',
+            '- Discovery duration and startup-relative TTFE remain compared to the exact base.',
+            '- Client round-trip and request-relative TTFE are required but cannot be compared '
+            'with discovery-only legacy samples. Their gates activate when the exact base publishes v3.',
+            '',
+            '| New client diagnostic | Current |',
+            '|-----------------------|--------:|',
+            *[
+                f'| {spec.label} | {performance_value(current, spec, "current"):.0f}ms |'
+                for spec in (*CLIENT_PERFORMANCE_METRICS, COLD_REFRESH_ROUND_TRIP_SPEC)
+            ],
         ])
     if current_inventory_version > baseline_inventory_version:
         report.extend([
