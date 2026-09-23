@@ -4,6 +4,12 @@ Refresh requests run on a transient locator graph. The server configures that gr
 
 The `Locator::refresh_state()` classification is the contract for that boundary. It keeps configured inputs, self-hydrating caches, and correctness-critical discovery state distinct.
 
+## Find Configuration Lock Scope
+
+A directory `find` request copies `environmentDirectories` into an owned local snapshot before workspace discovery. The configuration read lock is released before filesystem traversal or locator identification, so a slow find does not keep configuration publication waiting on that lock. The active search continues using its captured directory list if configuration changes while discovery is running. Executable-only find requests do not read this list.
+
+This is a lock-scope guarantee, not full locator snapshot isolation: find and resolve still use the shared locator graph. Coherent configuration across that graph remains tracked in [#536](https://github.com/microsoft/python-environment-tools/issues/536).
+
 ## Classifications
 
 | Classification         | Meaning                                                                                           | Sync behavior                                                                                                          |
