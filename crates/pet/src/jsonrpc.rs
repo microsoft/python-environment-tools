@@ -29,6 +29,7 @@ use pet_fs::path::norm_case;
 use pet_jsonrpc::{
     send_error, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
+    RequestId,
 };
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
@@ -143,7 +144,7 @@ impl Drop for GlobExpansionPermit {
 #[derive(Debug)]
 struct ActiveRefresh {
     key: RefreshKey,
-    request_ids: Vec<u32>,
+    request_ids: Vec<RequestId>,
 }
 
 #[derive(Debug, Default)]
@@ -167,7 +168,7 @@ enum RefreshRegistration {
 }
 
 impl RefreshCoordinator {
-    fn register_request(&self, request_id: u32, key: RefreshKey) -> RefreshRegistration {
+    fn register_request(&self, request_id: &RequestId, key: RefreshKey) -> RefreshRegistration {
         let mut state = self
             .state
             .lock()
@@ -176,16 +177,16 @@ impl RefreshCoordinator {
             RefreshCoordinatorState::Idle => {
                 *state = RefreshCoordinatorState::Running(ActiveRefresh {
                     key,
-                    request_ids: vec![request_id],
+                    request_ids: vec![request_id.clone()],
                 });
                 RefreshRegistration::Start
             }
             RefreshCoordinatorState::Running(active) if active.key == key => {
-                active.request_ids.push(request_id);
+                active.request_ids.push(request_id.clone());
                 RefreshRegistration::Joined
             }
             RefreshCoordinatorState::Completing(active) if active.key == key => {
-                active.request_ids.push(request_id);
+                active.request_ids.push(request_id.clone());
                 RefreshRegistration::Joined
             }
             RefreshCoordinatorState::Running(_) | RefreshCoordinatorState::Completing(_) => {
@@ -230,7 +231,7 @@ impl RefreshCoordinator {
         }
     }
 
-    fn drain_completing_request_ids(&self, key: &RefreshKey) -> Vec<u32> {
+    fn drain_completing_request_ids(&self, key: &RefreshKey) -> Vec<RequestId> {
         let mut state = self
             .state
             .lock()
@@ -385,7 +386,7 @@ impl<'a> RefreshCompletionGuard<'a> {
         }
     }
 
-    fn drain_request_ids(&self) -> Vec<u32> {
+    fn drain_request_ids(&self) -> Vec<RequestId> {
         self.coordinator.drain_completing_request_ids(&self.key)
     }
 
@@ -411,13 +412,13 @@ fn send_refresh_replies_for_waiters(
     result: &RefreshResult,
 ) {
     for request_id in completion_guard.drain_request_ids() {
-        send_reply(request_id, Some(result.clone()));
+        send_reply(&request_id, Some(result.clone()));
     }
 }
 
 fn send_refresh_errors_for_waiters(completion_guard: &RefreshCompletionGuard<'_>, message: &str) {
     for request_id in completion_guard.drain_request_ids() {
-        send_error(Some(request_id), -4, message.to_string());
+        send_error(Some(&request_id), -4, message.to_string());
     }
 }
 
@@ -613,8 +614,8 @@ impl InfoResponse {
     }
 }
 
-pub fn handle_info(_context: Arc<Context>, id: u32, _params: Value) {
-    send_reply(id, Some(InfoResponse::current()));
+pub fn handle_info(_context: Arc<Context>, id: RequestId, _params: Value) {
+    send_reply(&id, Some(InfoResponse::current()));
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -685,7 +686,7 @@ fn warn_for_recursive_environment_patterns(patterns: &[PathBuf]) {
         );
     }
 }
-pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
+pub fn handle_configure(context: Arc<Context>, id: RequestId, params: Value) {
     match serde_json::from_value::<ConfigureOptions>(params.clone()) {
         Ok(mut configure_options) => {
             info!("Received configure request");
@@ -698,7 +699,7 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
             ) {
                 Ok(permit) => permit,
                 Err(message) => {
-                    send_error(Some(id), -4, message);
+                    send_error(Some(&id), -4, message);
                     return;
                 }
             };
@@ -740,7 +741,7 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                     Ok(directories) => directories,
                     Err(error) => {
                         send_error(
-                            Some(id),
+                            Some(&id),
                             -4,
                             format!("Configure glob expansion failed: {error}"),
                         );
@@ -766,17 +767,17 @@ pub fn handle_configure(context: Arc<Context>, id: u32, params: Value) {
                     environment_directories,
                 ) {
                     error!("Configure failed: {message}");
-                    send_error(Some(id), -4, message);
+                    send_error(Some(&id), -4, message);
                     return;
                 }
                 info!("Configure completed in {:?}", now.elapsed());
-                send_reply(id, None::<()>);
+                send_reply(&id, None::<()>);
             });
         }
         Err(e) => {
             error!("Failed to parse configure options {:?}: {}", params, e);
             send_error(
-                Some(id),
+                Some(&id),
                 -4,
                 format!("Failed to parse configure options {params:?}: {e}"),
             );
@@ -1289,7 +1290,7 @@ fn report_refresh_follow_up(execution: RefreshExecution) {
     }
 }
 
-pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
+pub fn handle_refresh(context: Arc<Context>, id: RequestId, params: Value) {
     match parse_refresh_options(params.clone()) {
         Ok(refresh_options) => {
             spawn_refresh_worker(context, id, refresh_options, expand_refresh_options)
@@ -1297,7 +1298,7 @@ pub fn handle_refresh(context: Arc<Context>, id: u32, params: Value) {
         Err(e) => {
             error!("Failed to parse refresh {params:?}: {e}");
             send_error(
-                Some(id),
+                Some(&id),
                 -4,
                 format!("Failed to parse refresh {params:?}: {e}"),
             );
@@ -1310,7 +1311,7 @@ pub struct ResolveOptions {
     pub executable: PathBuf,
 }
 
-pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
+pub fn handle_resolve(context: Arc<Context>, id: RequestId, params: Value) {
     match serde_json::from_value::<ResolveOptions>(params.clone()) {
         Ok(request_options) => {
             let executable = request_options.executable.clone();
@@ -1335,18 +1336,18 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
                             "Resolved env ({:?}) {executable:?} as {resolved:?}",
                             now.elapsed()
                         );
-                        send_reply(id, resolved.into());
+                        send_reply(&id, resolved.into());
                     } else {
                         error!(
                             "Failed to resolve env {executable:?}, returning discovered env {:?}",
                             result.discovered
                         );
-                        send_reply(id, result.discovered.into());
+                        send_reply(&id, result.discovered.into());
                     }
                 } else {
                     error!("Failed to resolve env {executable:?}");
                     send_error(
-                        Some(id),
+                        Some(&id),
                         -4,
                         format!("Failed to resolve env {executable:?}"),
                     );
@@ -1356,7 +1357,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
         Err(e) => {
             error!("Failed to parse resolve {params:?}: {e}");
             send_error(
-                Some(id),
+                Some(&id),
                 -4,
                 format!("Failed to parse resolve {params:?}: {e}"),
             );
@@ -1366,7 +1367,7 @@ pub fn handle_resolve(context: Arc<Context>, id: u32, params: Value) {
 
 fn spawn_refresh_worker<F>(
     context: Arc<Context>,
-    id: u32,
+    id: RequestId,
     refresh_options: RefreshOptions,
     expand: F,
 ) where
@@ -1378,7 +1379,7 @@ fn spawn_refresh_worker<F>(
     {
         Ok(permit) => permit,
         Err(message) => {
-            send_error(Some(id), -4, message);
+            send_error(Some(&id), -4, message);
             return;
         }
     };
@@ -1393,7 +1394,7 @@ fn spawn_refresh_worker<F>(
             Ok(options) => options,
             Err(error) => {
                 send_error(
-                    Some(id),
+                    Some(&id),
                     -4,
                     format!("Refresh glob expansion failed: {error}"),
                 );
@@ -1409,7 +1410,7 @@ fn spawn_refresh_worker<F>(
 
             match context
                 .refresh_coordinator
-                .register_request(id, refresh_key.clone())
+                .register_request(&id, refresh_key.clone())
             {
                 RefreshRegistration::Joined => return,
                 RefreshRegistration::Wait => context.refresh_coordinator.wait_until_idle(),
@@ -1509,21 +1510,21 @@ fn execute_find(context: &Context, find_options: &FindOptions) -> Vec<PythonEnvi
     envs
 }
 
-pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
+pub fn handle_find(context: Arc<Context>, id: RequestId, params: Value) {
     thread::spawn(
         move || match serde_json::from_value::<FindOptions>(params.clone()) {
             Ok(find_options) => {
                 let envs = execute_find(&context, &find_options);
                 if envs.is_empty() {
-                    send_reply(id, None::<Vec<PythonEnvironment>>);
+                    send_reply(&id, None::<Vec<PythonEnvironment>>);
                 } else {
-                    send_reply(id, envs.into());
+                    send_reply(&id, envs.into());
                 }
             }
             Err(e) => {
                 error!("Failed to parse find {params:?}: {e}");
                 send_error(
-                    Some(id),
+                    Some(&id),
                     -4,
                     format!("Failed to parse find {params:?}: {e}"),
                 );
@@ -1532,7 +1533,7 @@ pub fn handle_find(context: Arc<Context>, id: u32, params: Value) {
     );
 }
 
-pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
+pub fn handle_conda_telemetry(context: Arc<Context>, id: RequestId, _params: Value) {
     thread::spawn(move || {
         trace!("Gathering conda telemetry");
         let conda_locator = context.conda_locator.clone();
@@ -1545,18 +1546,18 @@ pub fn handle_conda_telemetry(context: Arc<Context>, id: u32, _params: Value) {
             .clone();
         let info = conda_locator.get_info_for_telemetry(conda_executable);
         trace!("Conda telemetry complete");
-        send_reply(id, info.into());
+        send_reply(&id, info.into());
     });
 }
 
-pub fn handle_clear_cache(_context: Arc<Context>, id: u32, _params: Value) {
+pub fn handle_clear_cache(_context: Arc<Context>, id: RequestId, _params: Value) {
     thread::spawn(move || {
         if let Err(e) = clear_cache() {
             error!("Failed to clear cache {:?}", e);
-            send_error(Some(id), -4, format!("Failed to clear cache {e:?}"));
+            send_error(Some(&id), -4, format!("Failed to clear cache {e:?}"));
         } else {
             info!("Cleared cache");
-            send_reply(id, None::<()>);
+            send_reply(&id, None::<()>);
         }
     });
 }
@@ -1607,6 +1608,43 @@ pub(crate) fn build_refresh_config(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn refresh_coordinator_preserves_heterogeneous_request_ids() {
+        let coordinator = RefreshCoordinator::default();
+        let key = RefreshKey::from_expanded(&RefreshOptions::default(), 0);
+        let ids = [
+            json!("refresh-1"),
+            json!(u64::MAX),
+            json!(-7),
+            json!(1.5),
+            Value::Null,
+        ]
+        .into_iter()
+        .map(|value| serde_json::from_value::<RequestId>(value).unwrap())
+        .collect::<Vec<_>>();
+        assert!(matches!(
+            coordinator.register_request(&ids[0], key.clone()),
+            RefreshRegistration::Start
+        ));
+        for id in &ids[1..3] {
+            assert!(matches!(
+                coordinator.register_request(id, key.clone()),
+                RefreshRegistration::Joined
+            ));
+        }
+        let mut completion = RefreshCompletionGuard::begin(&coordinator, &key);
+        assert_eq!(completion.drain_request_ids(), ids[..3]);
+        for id in &ids[3..] {
+            assert!(matches!(
+                coordinator.register_request(id, key.clone()),
+                RefreshRegistration::Joined
+            ));
+        }
+        assert!(!completion.finish_if_no_pending());
+        assert_eq!(completion.drain_request_ids(), ids[3..]);
+        assert!(completion.finish_if_no_pending());
+    }
+
     use super::*;
     use pet_conda::manager::CondaManager;
     use pet_core::manager::EnvManager;
@@ -1962,7 +2000,7 @@ mod tests {
         let (release_tx, release_rx) = mpsc::channel();
         spawn_refresh_worker(
             context.clone(),
-            100,
+            100.into(),
             RefreshOptions {
                 search_paths: Some(vec![PathBuf::from("blocked*")]),
                 ..RefreshOptions::default()
@@ -1981,7 +2019,7 @@ mod tests {
         let (info_done_tx, info_done_rx) = mpsc::channel();
         let info_context = context.clone();
         thread::spawn(move || {
-            handle_info(info_context, 101, json!({}));
+            handle_info(info_context, 101.into(), json!({}));
             info_done_tx.send(()).unwrap();
         });
         info_done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -2048,13 +2086,13 @@ mod tests {
             })]);
         let _first = context.glob_expansion_admission.try_acquire().unwrap();
         let _second = context.glob_expansion_admission.try_acquire().unwrap();
-        handle_configure(context.clone(), 200, json!({}));
+        handle_configure(context.clone(), 200.into(), json!({}));
         let configured = configure_started_rx.recv_timeout(Duration::from_secs(2));
         release_tx.send(()).unwrap();
         configured.expect("configure without patterns must bypass glob admission");
 
         let (refresh_started_tx, refresh_started_rx) = mpsc::channel();
-        spawn_refresh_worker(context, 201, RefreshOptions::default(), move |_| {
+        spawn_refresh_worker(context, 201.into(), RefreshOptions::default(), move |_| {
             refresh_started_tx.send(()).unwrap();
             Err(GlobExpansionError::InvalidPattern {
                 pattern: "injected".into(),
@@ -2103,11 +2141,11 @@ mod tests {
         let first_key = make_refresh_key(7, first);
         let second_key = make_refresh_key(7, second);
         assert!(matches!(
-            coordinator.register_request(1, first_key),
+            coordinator.register_request(&1.into(), first_key),
             RefreshRegistration::Start
         ));
         assert!(matches!(
-            coordinator.register_request(2, second_key),
+            coordinator.register_request(&2.into(), second_key),
             RefreshRegistration::Joined
         ));
     }
@@ -2138,11 +2176,11 @@ mod tests {
 
         let coordinator = RefreshCoordinator::default();
         assert!(matches!(
-            coordinator.register_request(1, make_refresh_key(7, first)),
+            coordinator.register_request(&1.into(), make_refresh_key(7, first)),
             RefreshRegistration::Start
         ));
         assert!(matches!(
-            coordinator.register_request(2, make_refresh_key(7, second)),
+            coordinator.register_request(&2.into(), make_refresh_key(7, second)),
             RefreshRegistration::Wait
         ));
     }
@@ -2533,15 +2571,18 @@ mod tests {
         let key = make_refresh_key(3, RefreshOptions::default());
 
         assert!(matches!(
-            coordinator.register_request(1, key.clone()),
+            coordinator.register_request(&1.into(), key.clone()),
             RefreshRegistration::Start
         ));
         assert!(matches!(
-            coordinator.register_request(2, key.clone()),
+            coordinator.register_request(&2.into(), key.clone()),
             RefreshRegistration::Joined
         ));
         let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &key);
-        assert_eq!(completion_guard.drain_request_ids(), vec![1, 2]);
+        assert_eq!(
+            completion_guard.drain_request_ids(),
+            vec![1.into(), 2.into()]
+        );
         assert!(completion_guard.finish_if_no_pending());
     }
 
@@ -2558,7 +2599,7 @@ mod tests {
         );
 
         assert!(matches!(
-            coordinator.register_request(1, first_key.clone()),
+            coordinator.register_request(&1.into(), first_key.clone()),
             RefreshRegistration::Start
         ));
 
@@ -2567,13 +2608,13 @@ mod tests {
             let coordinator = coordinator.clone();
             let second_key = second_key.clone();
             thread::spawn(move || {
-                let action = coordinator.register_request(2, second_key.clone());
+                let action = coordinator.register_request(&2.into(), second_key.clone());
                 waiting_tx.send(()).unwrap();
                 assert!(matches!(action, RefreshRegistration::Wait));
 
                 coordinator.wait_until_idle();
                 assert!(matches!(
-                    coordinator.register_request(2, second_key.clone()),
+                    coordinator.register_request(&2.into(), second_key.clone()),
                     RefreshRegistration::Start
                 ));
                 let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &second_key);
@@ -2585,9 +2626,9 @@ mod tests {
 
         waiting_rx.recv().unwrap();
         let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &first_key);
-        assert_eq!(completion_guard.drain_request_ids(), vec![1]);
+        assert_eq!(completion_guard.drain_request_ids(), vec![1.into()]);
         assert!(completion_guard.finish_if_no_pending());
-        assert_eq!(worker.join().unwrap(), vec![2]);
+        assert_eq!(worker.join().unwrap(), vec![2.into()]);
     }
 
     #[test]
@@ -2861,22 +2902,22 @@ mod tests {
         let second_key = make_refresh_key(2, options);
 
         assert!(matches!(
-            coordinator.register_request(10, first_key.clone()),
+            coordinator.register_request(&10.into(), first_key.clone()),
             RefreshRegistration::Start
         ));
         assert!(matches!(
-            coordinator.register_request(11, second_key.clone()),
+            coordinator.register_request(&11.into(), second_key.clone()),
             RefreshRegistration::Wait
         ));
         let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &first_key);
-        assert_eq!(completion_guard.drain_request_ids(), vec![10]);
+        assert_eq!(completion_guard.drain_request_ids(), vec![10.into()]);
         assert!(completion_guard.finish_if_no_pending());
         assert!(matches!(
-            coordinator.register_request(11, second_key.clone()),
+            coordinator.register_request(&11.into(), second_key.clone()),
             RefreshRegistration::Start
         ));
         let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &second_key);
-        assert_eq!(completion_guard.drain_request_ids(), vec![11]);
+        assert_eq!(completion_guard.drain_request_ids(), vec![11.into()]);
         assert!(completion_guard.finish_if_no_pending());
     }
 
@@ -2886,18 +2927,18 @@ mod tests {
         let key = make_refresh_key(1, RefreshOptions::default());
 
         assert!(matches!(
-            coordinator.register_request(1, key.clone()),
+            coordinator.register_request(&1.into(), key.clone()),
             RefreshRegistration::Start
         ));
 
         let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &key);
-        assert_eq!(completion_guard.drain_request_ids(), vec![1]);
+        assert_eq!(completion_guard.drain_request_ids(), vec![1.into()]);
 
         assert!(matches!(
-            coordinator.register_request(2, key.clone()),
+            coordinator.register_request(&2.into(), key.clone()),
             RefreshRegistration::Joined
         ));
-        assert_eq!(completion_guard.drain_request_ids(), vec![2]);
+        assert_eq!(completion_guard.drain_request_ids(), vec![2.into()]);
         assert!(completion_guard.finish_if_no_pending());
     }
 
@@ -2914,11 +2955,11 @@ mod tests {
         );
 
         assert!(matches!(
-            coordinator.register_request(1, first_key.clone()),
+            coordinator.register_request(&1.into(), first_key.clone()),
             RefreshRegistration::Start
         ));
         let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &first_key);
-        assert_eq!(completion_guard.drain_request_ids(), vec![1]);
+        assert_eq!(completion_guard.drain_request_ids(), vec![1.into()]);
 
         let (state_tx, state_rx) = mpsc::channel();
         let worker = {
@@ -2926,14 +2967,14 @@ mod tests {
             let second_key = second_key.clone();
             thread::spawn(move || {
                 assert!(matches!(
-                    coordinator.register_request(2, second_key.clone()),
+                    coordinator.register_request(&2.into(), second_key.clone()),
                     RefreshRegistration::Wait
                 ));
                 state_tx.send("waiting").unwrap();
                 coordinator.wait_until_idle();
                 state_tx.send("idle").unwrap();
                 assert!(matches!(
-                    coordinator.register_request(2, second_key.clone()),
+                    coordinator.register_request(&2.into(), second_key.clone()),
                     RefreshRegistration::Start
                 ));
                 let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &second_key);
@@ -2949,7 +2990,7 @@ mod tests {
         assert!(completion_guard.finish_if_no_pending());
 
         assert_eq!(state_rx.recv().unwrap(), "idle");
-        assert_eq!(worker.join().unwrap(), vec![2]);
+        assert_eq!(worker.join().unwrap(), vec![2.into()]);
     }
 
     #[test]
@@ -2965,7 +3006,7 @@ mod tests {
         );
 
         assert!(matches!(
-            coordinator.register_request(1, first_key.clone()),
+            coordinator.register_request(&1.into(), first_key.clone()),
             RefreshRegistration::Start
         ));
 
@@ -2975,14 +3016,14 @@ mod tests {
             let second_key = second_key.clone();
             thread::spawn(move || {
                 assert!(matches!(
-                    coordinator.register_request(2, second_key.clone()),
+                    coordinator.register_request(&2.into(), second_key.clone()),
                     RefreshRegistration::Wait
                 ));
                 state_tx.send("waiting").unwrap();
                 coordinator.wait_until_idle();
                 state_tx.send("idle").unwrap();
                 assert!(matches!(
-                    coordinator.register_request(2, second_key.clone()),
+                    coordinator.register_request(&2.into(), second_key.clone()),
                     RefreshRegistration::Start
                 ));
                 let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &second_key);
@@ -2995,13 +3036,13 @@ mod tests {
         assert_eq!(state_rx.recv().unwrap(), "waiting");
         let panic_result = panic::catch_unwind(AssertUnwindSafe(|| {
             let completion_guard = RefreshCompletionGuard::begin(coordinator.as_ref(), &first_key);
-            assert_eq!(completion_guard.drain_request_ids(), vec![1]);
+            assert_eq!(completion_guard.drain_request_ids(), vec![1.into()]);
             panic!("forced completion panic");
         }));
         assert!(panic_result.is_err());
 
         assert_eq!(state_rx.recv().unwrap(), "idle");
-        assert_eq!(waiter.join().unwrap(), vec![2]);
+        assert_eq!(waiter.join().unwrap(), vec![2.into()]);
     }
 
     /// Test for https://github.com/microsoft/python-environment-tools/issues/151
@@ -3139,7 +3180,7 @@ mod tests {
 
         // State → Running(key)
         assert!(matches!(
-            coordinator.register_request(1, key.clone()),
+            coordinator.register_request(&1.into(), key.clone()),
             RefreshRegistration::Start
         ));
 
@@ -3148,7 +3189,7 @@ mod tests {
 
         // Verify we're back to Idle and can start a new refresh.
         assert!(matches!(
-            coordinator.register_request(2, key.clone()),
+            coordinator.register_request(&2.into(), key.clone()),
             RefreshRegistration::Start
         ));
     }
@@ -3168,7 +3209,7 @@ mod tests {
         );
 
         assert!(matches!(
-            coordinator.register_request(1, key.clone()),
+            coordinator.register_request(&1.into(), key.clone()),
             RefreshRegistration::Start
         ));
 
@@ -3179,7 +3220,7 @@ mod tests {
             thread::spawn(move || {
                 // Different key → returns Wait (not Joined).
                 assert!(matches!(
-                    coordinator.register_request(2, other_key.clone()),
+                    coordinator.register_request(&2.into(), other_key.clone()),
                     RefreshRegistration::Wait
                 ));
                 state_tx.send("waiting").unwrap();
@@ -3209,7 +3250,7 @@ mod tests {
         let key = make_refresh_key(1, RefreshOptions::default());
 
         assert!(matches!(
-            coordinator.register_request(1, key.clone()),
+            coordinator.register_request(&1.into(), key.clone()),
             RefreshRegistration::Start
         ));
 
@@ -3218,13 +3259,13 @@ mod tests {
             let mut completion_guard = RefreshCompletionGuard::begin(&coordinator, &key);
             safety_guard.disarm();
             let ids = completion_guard.drain_request_ids();
-            assert_eq!(ids, vec![1]);
+            assert_eq!(ids, vec![1.into()]);
             assert!(completion_guard.finish_if_no_pending());
         }
 
         // Should be Idle — can start a new refresh.
         assert!(matches!(
-            coordinator.register_request(2, key.clone()),
+            coordinator.register_request(&2.into(), key.clone()),
             RefreshRegistration::Start
         ));
     }

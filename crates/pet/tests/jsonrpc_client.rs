@@ -412,7 +412,7 @@ fn spawn_stderr_reader(
     })
 }
 
-fn read_message(reader: &mut BufReader<ChildStdout>) -> io::Result<Option<Value>> {
+pub(crate) fn read_message(reader: &mut BufReader<ChildStdout>) -> io::Result<Option<Value>> {
     let mut content_length: Option<usize> = None;
     loop {
         let mut header = String::new();

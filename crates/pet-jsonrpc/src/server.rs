@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::send_error;
+use crate::{send_error, RequestId};
 use serde_json::{self, Value};
 use std::{
     collections::HashMap,
@@ -9,9 +9,9 @@ use std::{
     sync::Arc,
 };
 
-type RequestHandler<C> = Arc<dyn Fn(Arc<C>, u32, Value)>;
+type RequestHandler<C> = Arc<dyn Fn(Arc<C>, RequestId, Value)>;
 type NotificationHandler<C> = Arc<dyn Fn(Arc<C>, Value)>;
-type ErrorHandler = Arc<dyn Fn(Option<u32>, i32, String)>;
+type ErrorHandler = Arc<dyn Fn(Option<RequestId>, i32, String)>;
 
 pub struct HandlersKeyedByMethodName<C> {
     context: Arc<C>,
@@ -26,14 +26,14 @@ impl<C> HandlersKeyedByMethodName<C> {
             context,
             requests: HashMap::new(),
             notifications: HashMap::new(),
-            send_error: Arc::new(send_error),
+            send_error: Arc::new(|id, code, message| send_error(id.as_ref(), code, message)),
         }
     }
 
     #[cfg(test)]
     fn new_with_error_handler(
         context: Arc<C>,
-        send_error: impl Fn(Option<u32>, i32, String) + 'static,
+        send_error: impl Fn(Option<RequestId>, i32, String) + 'static,
     ) -> Self {
         HandlersKeyedByMethodName {
             context,
@@ -45,7 +45,7 @@ impl<C> HandlersKeyedByMethodName<C> {
 
     pub fn add_request_handler<F>(&mut self, method: &'static str, handler: F)
     where
-        F: Fn(Arc<C>, u32, Value) + Send + Sync + 'static,
+        F: Fn(Arc<C>, RequestId, Value) + Send + Sync + 'static,
     {
         self.requests.insert(
             method,
@@ -68,32 +68,39 @@ impl<C> HandlersKeyedByMethodName<C> {
     }
 
     fn handle_request(&self, message: Value) {
+        let id = match message.get("id") {
+            None => None,
+            Some(Value::String(id)) => Some(RequestId::String(id.clone())),
+            Some(Value::Number(id)) => Some(RequestId::Number(id.clone())),
+            Some(Value::Null) => Some(RequestId::Null),
+            Some(_) => {
+                (self.send_error)(None, -32600, "Invalid JSONRPC request ID".to_string());
+                return;
+            }
+        };
         match message["method"].as_str() {
             Some(method) => {
-                if let Some(id) = message["id"].as_u64() {
+                if let Some(id) = id {
                     if let Some(handler) = self.requests.get(method) {
-                        handler(self.context.clone(), id as u32, message["params"].clone());
+                        handler(self.context.clone(), id, message["params"].clone());
                     } else {
                         eprint!("Failed to find handler for method: {method}");
                         (self.send_error)(
-                            Some(id as u32),
+                            Some(id),
                             -1,
                             format!("Failed to find handler for request {method}"),
                         );
                     }
+                } else if let Some(handler) = self.notifications.get(method) {
+                    handler(self.context.clone(), message["params"].clone());
                 } else {
-                    // No id, so this is a notification
-                    if let Some(handler) = self.notifications.get(method) {
-                        handler(self.context.clone(), message["params"].clone());
-                    } else {
-                        eprint!("Failed to find handler for method: {method}");
-                    }
+                    eprint!("Failed to find handler for method: {method}");
                 }
             }
             None => {
                 eprint!("Failed to get method from message: {message}");
                 (self.send_error)(
-                    message["id"].as_u64().map(|id| id as u32),
+                    id,
                     -3,
                     format!("Failed to extract method from JSONRPC payload {message:?}"),
                 );
@@ -176,9 +183,9 @@ mod tests {
 
     #[derive(Default)]
     struct TestContext {
-        request: Mutex<Option<(u32, Value)>>,
+        request: Mutex<Option<(RequestId, Value)>>,
         notification: Mutex<Option<Value>>,
-        errors: Mutex<Vec<(Option<u32>, i32, String)>>,
+        errors: Mutex<Vec<(Option<RequestId>, i32, String)>>,
     }
 
     fn create_handlers_with_recorded_errors(
@@ -192,6 +199,74 @@ mod tests {
                 .unwrap()
                 .push((id, code, message));
         })
+    }
+
+    #[test]
+    fn request_ids_preserve_values_for_dispatch_and_errors() {
+        for value in [
+            json!("request-1"),
+            json!(""),
+            json!("\u{03c0}-request"),
+            json!(-7),
+            json!(0),
+            json!(u64::from(u32::MAX) + 1),
+            json!(u64::MAX),
+            json!(i64::MIN),
+            json!(1.5),
+            Value::Null,
+        ] {
+            let id = serde_json::from_value::<RequestId>(value.clone()).unwrap();
+            assert_eq!(serde_json::to_value(&id).unwrap(), value);
+            let context = Arc::new(TestContext::default());
+            let mut handlers = create_handlers_with_recorded_errors(context.clone());
+            handlers.add_request_handler("method", |context, id, params| {
+                *context.request.lock().unwrap() = Some((id, params));
+            });
+            handlers.add_notification_handler("method", |context, params| {
+                *context.notification.lock().unwrap() = Some(params);
+            });
+            handlers.handle_request(json!({"id": value, "method": "method", "params": 42}));
+            assert_eq!(
+                *context.request.lock().unwrap(),
+                Some((id.clone(), json!(42)))
+            );
+            assert!(context.notification.lock().unwrap().is_none());
+            handlers.handle_request(json!({"id": value, "method": "unknown"}));
+            handlers.handle_request(json!({"id": value}));
+            let errors = context.errors.lock().unwrap();
+            assert_eq!(errors.len(), 2);
+            assert_eq!(errors[0].0, Some(id.clone()));
+            assert_eq!(errors[0].1, -1);
+            assert_eq!(errors[1].0, Some(id));
+            assert_eq!(errors[1].1, -3);
+        }
+    }
+
+    #[test]
+    fn missing_id_is_a_notification_but_invalid_ids_are_rejected() {
+        let context = Arc::new(TestContext::default());
+        let mut handlers = create_handlers_with_recorded_errors(context.clone());
+        handlers.add_request_handler("method", |context, id, params| {
+            *context.request.lock().unwrap() = Some((id, params));
+        });
+        handlers.add_notification_handler("method", |context, params| {
+            *context.notification.lock().unwrap() = Some(params);
+        });
+        handlers.handle_request(json!({"method": "method", "params": 7}));
+        assert_eq!(context.notification.lock().unwrap().take(), Some(json!(7)));
+        assert!(context.request.lock().unwrap().is_none());
+        assert!(context.errors.lock().unwrap().is_empty());
+        for value in [json!(true), json!(false), json!([]), json!({"id": 1})] {
+            assert!(serde_json::from_value::<RequestId>(value.clone()).is_err());
+            handlers.handle_request(json!({"id": value, "method": "method"}));
+            assert!(context.notification.lock().unwrap().is_none());
+            assert!(context.request.lock().unwrap().is_none());
+            assert_eq!(
+                context.errors.lock().unwrap().pop(),
+                Some((None, -32600, "Invalid JSONRPC request ID".into()))
+            );
+        }
+        assert!(context.errors.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -238,7 +313,7 @@ mod tests {
 
         assert_eq!(
             *context.request.lock().unwrap(),
-            Some((7, json!({ "value": 42 })))
+            Some((7.into(), json!({ "value": 42 })))
         );
         assert_eq!(*context.notification.lock().unwrap(), Some(json!(["item"])));
     }
@@ -259,7 +334,7 @@ mod tests {
 
         assert_eq!(
             *context.request.lock().unwrap(),
-            Some((9, json!({ "ok": true })))
+            Some((9.into(), json!({ "ok": true })))
         );
     }
 
@@ -309,7 +384,7 @@ mod tests {
         assert_eq!(
             context.errors.lock().unwrap().as_slice(),
             &[(
-                Some(1),
+                Some(1.into()),
                 -1,
                 "Failed to find handler for request unknown/request".to_string()
             )]
@@ -332,7 +407,7 @@ mod tests {
         assert_eq!(
             context.errors.lock().unwrap().as_slice(),
             &[(
-                Some(1),
+                Some(1.into()),
                 -3,
                 format!("Failed to extract method from JSONRPC payload {message:?}")
             )]

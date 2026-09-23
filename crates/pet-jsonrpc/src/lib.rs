@@ -6,6 +6,20 @@ use std::io::{self, Write};
 
 pub mod server;
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RequestId {
+    String(String),
+    Number(serde_json::Number),
+    Null,
+}
+
+impl From<u32> for RequestId {
+    fn from(id: u32) -> Self {
+        Self::Number(id.into())
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[derive(Debug)]
@@ -29,7 +43,7 @@ pub fn send_message<T: serde::Serialize>(method: &'static str, params: Option<T>
     );
     let _ = io::stdout().flush();
 }
-pub fn send_reply<T: serde::Serialize>(id: u32, payload: Option<T>) {
+pub fn send_reply<T: serde::Serialize>(id: &RequestId, payload: Option<T>) {
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "result": payload,
@@ -44,7 +58,7 @@ pub fn send_reply<T: serde::Serialize>(id: u32, payload: Option<T>) {
     let _ = io::stdout().flush();
 }
 
-pub fn send_error(id: Option<u32>, code: i32, message: String) {
+pub fn send_error(id: Option<&RequestId>, code: i32, message: String) {
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "error": { "code": code, "message": message },
