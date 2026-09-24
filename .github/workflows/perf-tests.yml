@@ -1,196 +1,153 @@
-name: Performance Tests
+name: Manager Probe Matched Control
 
 on:
-  pull_request:
-    branches:
-      - main
-      - release*
-      - release/*
-      - release-*
   workflow_dispatch:
 
 permissions:
-  actions: read
   contents: read
-  pull-requests: write
 
 jobs:
-  performance:
-    name: E2E Performance Tests
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            platform: Windows
-            comment_header: perf-windows
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            platform: Linux
-            comment_header: perf-linux
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            platform: macOS
-            comment_header: perf-macos
+  matched-control:
+    runs-on: macos-latest
+    timeout-minutes: 35
     steps:
-      - name: Checkout
+      - name: Checkout exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Post In-Progress Comment
-        if: >-
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
-        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
-          header: ${{ matrix.comment_header }}
-          message: |
-            ## Performance Report (${{ matrix.platform }}) :hourglass_flowing_sand:
+          ref: 2f0ba2b07d8a0632f3f39d2116fb702240539bbb
 
-            Running performance tests against baseline `${{ github.event.pull_request.base.sha }}`.
+      - name: Initialize evidence
+        shell: bash
+        run: mkdir "$RUNNER_TEMP/manager-matched-control"
 
       - name: Set Python to PATH
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - name: Validate Snapshot Comparator
-        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+      - name: Install Conda and create the standard workload
         shell: bash
-
-      - name: Add Conda to PATH (Windows)
-        if: startsWith(matrix.os, 'windows')
         run: |
-          $path = $env:PATH + ";" + $env:CONDA + "\condabin"
-          echo "PATH=$path" >> $env:GITHUB_ENV
+          curl --fail --location -o "$RUNNER_TEMP/miniconda.sh" https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
+          shasum -a 256 "$RUNNER_TEMP/miniconda.sh" > "$RUNNER_TEMP/manager-matched-control/installer-sha256.txt"
+          bash "$RUNNER_TEMP/miniconda.sh" -b -p "$HOME/miniconda"
+          echo "PATH=$PATH:$HOME/miniconda/bin" >> "$GITHUB_ENV"
+          echo "CONDA=$HOME/miniconda" >> "$GITHUB_ENV"
+          "$HOME/miniconda/bin/conda" create -n perf-test-env python=3.12 -y
+          python -m venv .venv
 
-      - name: Add Conda to PATH (Ubuntu)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Install Conda + add to PATH (macOS)
-        if: startsWith(matrix.os, 'macos')
-        run: |
-          curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-          bash ~/miniconda.sh -b -p ~/miniconda
-          echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
-          echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Create test Conda environment
-        run: conda create -n perf-test-env python=3.12 -y
-
-      - name: Create test venv
-        run: python -m venv .venv
-        shell: bash
-
-      - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@stable
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
+          toolchain: 1.98.1
+          targets: x86_64-apple-darwin
 
-      - name: Cargo Fetch
-        run: cargo fetch
+      - name: Instrument only the shared test harness after its measured passes
         shell: bash
-
-      - name: Build Release
-        run: cargo build --release --target ${{ matrix.target }}
-        shell: bash
-
-      - name: Run Performance Tests
-        id: benchmark
         run: |
-          set -o pipefail
-          cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("crates/pet/tests/e2e_performance.rs")
+          source = path.read_text()
+          for name in ["EnvironmentIdentity", "ManagerIdentity", "Inventory"]:
+              marker = f"struct {name} {{"
+              assert source.count(marker) == 1
+              source = source.replace(marker, "#[derive(serde::Serialize)]\n" + marker)
+          marker = 'expected_inventory.expect("Performance summary must run at least one iteration");'
+          assert source.count(marker) == 1
+          source = source.replace(marker, marker + '\n'
+              '    if let Some(path) = std::env::var_os("PET_DIAGNOSTIC_INVENTORY") {\n'
+              '        std::fs::write(path, serde_json::to_vec(&expected_inventory).unwrap()).unwrap();\n'
+              '    }\n')
+          path.write_text(source)
+          PY
+
+      - name: Build exact base and head
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin 39c67104c4193fca0c14067ff0fb69d24fc92396
+          git worktree add --detach "$RUNNER_TEMP/pet-base" 39c67104c4193fca0c14067ff0fb69d24fc92396
+          cargo build --locked --release --target x86_64-apple-darwin --bin pet             --manifest-path "$RUNNER_TEMP/pet-base/Cargo.toml" --target-dir "$RUNNER_TEMP/pet-base-target"
+          cp "$RUNNER_TEMP/pet-base-target/x86_64-apple-darwin/release/pet" "$RUNNER_TEMP/pet-base-exe"
+          cargo build --locked --release --target x86_64-apple-darwin --bin pet
+          cp target/x86_64-apple-darwin/release/pet "$RUNNER_TEMP/pet-head-exe"
+          cargo test --locked --release --features ci-perf --target x86_64-apple-darwin             --test e2e_performance --no-run --message-format=json > "$RUNNER_TEMP/pet-test-build.jsonl"
+          test "$(git rev-parse HEAD)" = 2f0ba2b07d8a0632f3f39d2116fb702240539bbb
+          test "$(git -C "$RUNNER_TEMP/pet-base" rev-parse HEAD)" = 39c67104c4193fca0c14067ff0fb69d24fc92396
+          {
+            git rev-parse HEAD
+            git -C "$RUNNER_TEMP/pet-base" rev-parse HEAD
+            shasum -a 256 "$RUNNER_TEMP/pet-base-exe" "$RUNNER_TEMP/pet-head-exe"
+            shasum -a 256 crates/pet/tests/e2e_performance.rs
+            rustc -Vv
+            uname -a
+            sysctl -n machdep.cpu.brand_string
+          } > "$RUNNER_TEMP/manager-matched-control/provenance.txt"
+
+      - name: Counterbalanced same-host measurements
+        shell: bash
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: warn
-        shell: bash
-
-      - name: Extract Performance Metrics
-        if: steps.benchmark.outcome == 'success'
         run: |
-          if ! grep -q "JSON metrics:" perf-output.txt; then
-            echo "Performance test produced no JSON metrics" >&2
-            exit 1
-          fi
-          sed -n '/JSON metrics:/,/^}/p' perf-output.txt | tail -n +2 > metrics.json
-          python -m json.tool metrics.json > /dev/null
-          cat metrics.json
-        shell: bash
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
 
-      - name: Wait for Exact PR Base Performance
-        id: wait_for_base_performance
-        if: always() && github.event_name == 'pull_request'
-        run: >-
-          python scripts/wait_for_baseline.py
-          --repository "${{ github.repository }}"
-          --workflow perf-baseline.yml
-          --commit "${{ github.event.pull_request.base.sha }}"
-          --artifact "perf-baseline-${{ matrix.os }}"
-          --timeout-seconds 1200
-          --poll-seconds 20
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        shell: bash
+          temp = Path(os.environ["RUNNER_TEMP"])
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          artifacts = temp / "manager-matched-control"
+          artifacts.mkdir(exist_ok=True)
+          messages = [json.loads(line) for line in (temp / "pet-test-build.jsonl").read_text().splitlines()]
+          tests = [m["executable"] for m in messages if m.get("reason") == "compiler-artifact"
+                   and m["target"]["name"] == "e2e_performance" and m.get("executable")]
+          if len(tests) != 1:
+              raise RuntimeError(f"Expected one benchmark executable, got {tests!r}")
+          executable = workspace / "target/x86_64-apple-darwin/release/pet"
+          revisions = {"base": "39c67104c4193fca0c14067ff0fb69d24fc92396",
+                       "head": "2f0ba2b07d8a0632f3f39d2116fb702240539bbb"}
+          order = ["base", "head", "head", "base", "head", "base", "base", "head"]
+          summary = []
+          for index, label in enumerate(order, 1):
+              source = temp / f"pet-{label}-exe"
+              shutil.copy2(source, executable)
+              digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+              if digest != hashlib.sha256(source.read_bytes()).hexdigest():
+                  raise RuntimeError("Benchmark executable copy did not match source")
+              inventory = temp / f"pet-inventory-{index}.json"
+              environment = dict(os.environ, PET_DIAGNOSTIC_INVENTORY=str(inventory))
+              log = artifacts / f"{index}-{label}.log"
+              with log.open("w") as output:
+                  subprocess.run([tests[0], "test_performance_summary", "--exact", "--nocapture"],
+                                 cwd=workspace, stdout=output, stderr=subprocess.STDOUT,
+                                 check=True, timeout=180, env=environment)
+              inventory_digest = hashlib.sha256(inventory.read_bytes()).hexdigest()
+              inventory.unlink()
+              text = log.read_text()
+              metrics, _ = json.JSONDecoder().raw_decode(text.split("JSON metrics:\n", 1)[1])
+              (artifacts / f"{index}-{label}.json").write_text(json.dumps(metrics, indent=2) + "\n")
+              result = {"iteration": index, "label": label, "revision": revisions[label], "sha256": digest,
+                        "inventory_sha256": inventory_digest,
+                        "environments_count": metrics["environments_count"],
+                        "managers_count": metrics["managers_count"],
+                        "stats": metrics["stats"], "locators": metrics["locators"], "phases": metrics["phases"]}
+              summary.append(result)
+              (artifacts / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+              print(json.dumps({"iteration": index, "label": label, "revision": revisions[label],
+                                "sha256": digest, "refresh": metrics["stats"]["refresh_round_trip"],
+                                "startup": metrics["stats"]["server_startup"]}), flush=True)
+          if len({v["inventory_sha256"] for v in summary}) != 1:
+              raise RuntimeError("Exact inventory identities differ between base and head workloads")
+          PY
 
-      - name: Download Exact PR Base Performance
-        if: >-
-          always() && github.event_name == 'pull_request' &&
-          steps.wait_for_base_performance.outcome == 'success'
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: perf-baseline.yml
-          commit: ${{ github.event.pull_request.base.sha }}
-          workflow_conclusion: success
-          name: perf-baseline-${{ matrix.os }}
-          path: baseline-perf
-          check_artifacts: true
-          search_artifacts: true
-
-      - name: Download Main Performance for Manual Run
-        if: always() && github.event_name == 'workflow_dispatch'
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
-        with:
-          workflow: perf-baseline.yml
-          branch: main
-          workflow_conclusion: success
-          name: perf-baseline-${{ matrix.os }}
-          path: baseline-perf
-          check_artifacts: true
-          search_artifacts: true
-
-      - name: Compare Performance Snapshot
-        if: always()
-        run: >-
-          python scripts/quality_snapshot.py performance
-          --current metrics.json
-          --baseline baseline-perf/metrics.json
-          --platform "${{ matrix.platform }}"
-          --report performance-report.md
-          --summary "$GITHUB_STEP_SUMMARY"
-        shell: bash
-
-      - name: Upload PR Performance Results
+      - name: Preserve matched control evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: perf-pr-${{ matrix.os }}
-          path: |
-            metrics.json
-            performance-report.md
-          if-no-files-found: ignore
-
-      - name: Post Performance Comment
-        if: >-
-          always() && github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
-        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
-        with:
-          header: ${{ matrix.comment_header }}
-          path: performance-report.md
+          name: manager-530-matched-macos
+          path: ${{ runner.temp }}/manager-matched-control
+          if-no-files-found: error
