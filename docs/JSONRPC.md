@@ -270,6 +270,24 @@ interface RefreshProgressTelemetry {
 phase and include `locatorName`; completed locator events also include
 `locatorElapsedMs`.
 
+# Subprocess Probe Lifecycle
+
+Interpreter probes used for resolution and manager probes used during refresh/discovery
+(Conda info, Poetry environment lists and Poetry configuration) share these limits:
+
+- Both stdout and stderr are drained while the direct child runs. At most 4 MiB combined is retained (a captured-byte limit, not a total memory limit). Excess output, a nonzero exit, and I/O failures are logged and treated as failed probes.
+- Each execution deadline is 15 seconds after synchronous OS process creation returns. Failed probes terminate and reap the direct child, allowing up to 2 additional seconds for cleanup. Exceptional OS cleanup failures retain the primary error and attempt background reaping. If resource exhaustion also prevents starting that waiter, the failure and child PID are logged; reaping cannot be guaranteed in that exceptional case.
+- After the direct child exits, draining continues within the same deadline. If output has not reached EOF (for example, a descendant retains a write handle), the probe fails explicitly with incomplete output rather than waiting indefinitely.
+- These are per-subprocess limits, not a total request/workspace budget. They do not bound synchronous OS process creation or supervise descendant trees. Server active-request shutdown remains a separate lifecycle concern.
+
+Missing default Conda executables are quietly ignored; installed/custom manager failures and all
+timeouts/output failures are logged. Interpreter and Conda JSON is parsed strictly. Poetry stdout
+must be UTF-8, and boolean configuration accepts only `true`, `false`, or unset `null`. Invalid
+JSON, encoding or boolean values fail explicitly. Poetry path parsing retains its existing textual
+contract: each nonempty environment-list line is treated as a path after trimming an activated
+suffix; configuration paths use trimmed output. This does not claim structural/path-existence
+validation of arbitrary UTF-8 prose or configuration path text.
+
 # Resolve Request
 
 Use this request to resolve a Python environment from a given Python path.
@@ -277,10 +295,8 @@ Use this request to resolve a Python environment from a given Python path.
 **Notes:**
 
 - This request will generally end up spawning the Python process to get the environment information.
-- Spawned interpreter probes drain stdout and stderr while running and retain at most 4 MiB combined (a captured-byte limit, not a total memory limit). Excess output, a nonzero exit, unreadable output, or invalid interpreter JSON is logged and treated as a failed probe.
-- The interpreter execution deadline is 15 seconds after synchronous OS process creation returns. Failed probes terminate and reap the direct child, allowing up to 2 additional seconds for cleanup; exceptional OS cleanup failures are logged, retain the primary error, and attempt background reaping. If OS resource exhaustion also prevents starting that waiter, the failure and child PID are logged; reaping cannot be guaranteed in that exceptional case. This does not bound OS process creation or supervise descendant process trees.
-- After the direct interpreter exits, PET continues draining within the same execution deadline. If output has not reached EOF by that deadline (for example, because a descendant retains a write handle), the probe fails explicitly with incomplete output instead of waiting indefinitely. Conda/Poetry subprocesses and server shutdown have separate lifecycle behavior; these interpreter limits do not apply to them.
   Hence it is advisable to use this request sparingly and rely on Python environments being discovered or relying on the information returned by the `refresh` request.
+- Interpreter probes follow the [shared subprocess limits](#subprocess-probe-lifecycle) above.
 - If the `cacheDirectory` has been provided and the same python executable was previously spanwed (resolved), then the tool will return the cached information.
 
 _Why use this over the `refresh` request?_
