@@ -63,6 +63,18 @@ impl ProcessTree {
         // SAFETY: this is the dedicated group of our still-unreaped child.
         if unsafe { libc::kill(-group, libc::SIGKILL) } == -1 {
             let error = io::Error::last_os_error();
+            #[cfg(target_os = "macos")]
+            if error.raw_os_error() == Some(libc::EPERM) {
+                // Darwin excludes zombies from group signalling and returns
+                // EPERM when none remain signalable. Do not hide a live member
+                // whose credentials actually prevent us from terminating it.
+                match super::macos::zombie_only_group(group) {
+                    Ok(()) => return Ok(()),
+                    Err(query_error) => {
+                        log::warn!("Cannot verify exited probe group: {query_error}")
+                    }
+                }
+            }
             if error.raw_os_error() != Some(libc::ESRCH) {
                 return Err(error);
             }
