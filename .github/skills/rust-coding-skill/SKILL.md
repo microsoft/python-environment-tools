@@ -68,6 +68,12 @@ Use contextual `expect` for poisoned locks in production code, matching the surr
 - Prefer raw string literals for regexes and backslash-heavy path examples to avoid malformed escapes.
 - Before documenting or logging a recommended config value, trace how the consumer uses it. For example, `environmentDirectories` contains directories that hold environments, not environment folders themselves.
 
+## Subprocess Ownership
+
+Keep Windows probe children suspended until job assignment succeeds, and fail closed if the primary thread cannot be identified. On stable Rust, a per-process `PssCaptureSnapshot(PSS_CAPTURE_THREADS)` can supply thread metadata without a system-wide Toolhelp scan or address-space clone; benchmark the launch boundary against the exact base on the same host rather than assuming enumeration is cheap. `CommandExt::creation_flags` replaces existing flags, so any runner-controlled flag contract must be explicit and tested. On Unix, signal the owned process group before reaping its leader (`waitid` with `WNOWAIT` preserves the PID until then), never after the numeric group ID could be reused.
+
+For descendant-lifetime tests, use a readiness handshake and an OS-owned resource such as a file lock that is released on exit. Do not equate Unix PID disappearance with termination: grandchildren can be dead but still awaiting reaping by their parent or the OS reaper.
+
 ## Tests Must Prove the Change
 
 Tests should demonstrate the behavior or performance invariant, not merely execute new lines.
