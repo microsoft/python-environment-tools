@@ -11,12 +11,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) const CAPTURE_LIMIT: usize = 4 * 1024 * 1024;
+const CAPTURE_LIMIT: usize = 4 * 1024 * 1024;
+/// Shared execution budget after synchronous OS process creation returns.
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
-pub(crate) enum ProcessError {
+pub enum ProcessError {
+    Spawn(io::Error),
     Io(io::Error),
     Timeout(Duration),
     OutputLimit(usize),
@@ -42,6 +45,7 @@ impl ProcessError {
 impl fmt::Display for ProcessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Spawn(error) => write!(f, "failed to spawn subprocess: {error}"),
             Self::Io(error) => write!(f, "subprocess I/O failed: {error}"),
             Self::Timeout(timeout) => write!(f, "subprocess timed out after {timeout:?}"),
             Self::OutputLimit(limit) => {
@@ -58,6 +62,16 @@ impl fmt::Display for ProcessError {
     }
 }
 
+impl std::error::Error for ProcessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Spawn(error) | Self::Io(error) => Some(error),
+            Self::Cleanup { primary, .. } => Some(primary.as_ref()),
+            Self::Timeout(_) | Self::OutputLimit(_) | Self::IncompleteOutput(_) => None,
+        }
+    }
+}
+
 impl From<io::Error> for ProcessError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
@@ -70,7 +84,7 @@ impl From<io::Error> for ProcessError {
 /// exit we continue draining within the same deadline, including when another
 /// process temporarily retains a write handle. Descendants cannot extend it.
 /// Retained bytes are bounded; an extra byte detects overflow and is not retained.
-pub(crate) fn output(command: &mut Command, timeout: Duration) -> Result<Output, ProcessError> {
+pub fn output(command: &mut Command, timeout: Duration) -> Result<Output, ProcessError> {
     output_with_limit(command, timeout, CAPTURE_LIMIT)
 }
 
@@ -83,7 +97,8 @@ fn output_with_limit(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?;
+        .spawn()
+        .map_err(ProcessError::Spawn)?;
     let started = Instant::now();
     let mut stdout = child
         .stdout
@@ -309,7 +324,7 @@ fn terminate_and_reap(mut child: Child) -> io::Result<()> {
         Ok(None) => {}
         Err(error) => {
             if let Err(kill_error) = child.kill() {
-                log::error!("Failed to kill interpreter child after wait failure: {kill_error}");
+                log::error!("Failed to kill probe child after wait failure: {kill_error}");
             }
             reap_later(child);
             return Err(error);
@@ -346,11 +361,11 @@ fn reap_later(mut child: Child) {
         .name("pet-child-reaper".into())
         .spawn(move || {
             if let Err(error) = child.wait() {
-                log::error!("Failed to reap interpreter child: {error}");
+                log::error!("Failed to reap probe child: {error}");
             }
         })
     {
-        log::error!("Failed to start interpreter child reaper for PID {pid}; reaping cannot be guaranteed: {error}");
+        log::error!("Failed to start probe child reaper for PID {pid}; reaping cannot be guaranteed: {error}");
     }
 }
 
@@ -679,8 +694,9 @@ mod tests {
             Duration::from_secs(1),
         )
         .unwrap_err();
-        assert!(matches!(error, ProcessError::Io(_)));
-        assert!(error.to_string().contains("I/O failed"));
+        assert!(matches!(error, ProcessError::Spawn(_)));
+        assert!(error.to_string().contains("failed to spawn"));
+        assert!(std::error::Error::source(&error).unwrap().is::<io::Error>());
         let error = drain(
             &mut FailingPipe,
             &mut Vec::new(),
@@ -703,5 +719,11 @@ mod tests {
         ));
         assert!(error.to_string().contains("timed out"));
         assert!(error.to_string().contains("kill failure"));
+        let source = std::error::Error::source(&error)
+            .unwrap()
+            .downcast_ref::<ProcessError>()
+            .unwrap();
+        assert!(matches!(source, ProcessError::Timeout(_)));
+        assert!(std::error::Error::source(source).is_none());
     }
 }

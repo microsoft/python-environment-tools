@@ -12,14 +12,14 @@ use std::{
 use crate::{
     cache::create_cache,
     executable::new_silent_command,
-    process::{output, ProcessError},
+    process::{output, ProcessError, DEFAULT_TIMEOUT},
 };
 
 const PYTHON_INFO_JSON_SEPARATOR: &str = "093385e9-59f7-4a16-a604-14bf206256fe";
 const PYTHON_INFO_CMD:&str = "import json, sys; print('093385e9-59f7-4a16-a604-14bf206256fe');print(json.dumps({'version': '.'.join(str(n) for n in sys.version_info), 'sys_prefix': sys.prefix, 'executable': sys.executable, 'is64_bit': sys.maxsize > 2**32}))";
 
 /// Maximum execution time after synchronous interpreter spawn returns.
-const RESOLVE_SPAWN_TIMEOUT: Duration = Duration::from_secs(15);
+const RESOLVE_SPAWN_TIMEOUT: Duration = DEFAULT_TIMEOUT;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct InterpreterInfo {
