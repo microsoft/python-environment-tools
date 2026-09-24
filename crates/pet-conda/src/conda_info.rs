@@ -52,6 +52,7 @@ impl CondaInfo {
         executable: Option<PathBuf>,
         run: impl FnOnce(&mut Command, Duration) -> Result<Output, ProcessError>,
     ) -> Option<Self> {
+        let using_default = executable.is_none();
         // Possible we got a symlink to the conda exe, first try to resolve that.
         let executable = if cfg!(windows) {
             executable.clone().unwrap_or("conda".into())
@@ -107,7 +108,7 @@ impl CondaInfo {
                 }
             }
             Err(err) => {
-                if !is_missing_default_conda(&executable, &err) {
+                if !is_missing_default_conda(using_default, &err) {
                     warn!(
                         "Failed to execute conda info using {:?}: {}",
                         executable, err
@@ -119,8 +120,8 @@ impl CondaInfo {
     }
 }
 
-fn is_missing_default_conda(executable: &std::path::Path, error: &ProcessError) -> bool {
-    executable == std::path::Path::new("conda")
+fn is_missing_default_conda(using_default: bool, error: &ProcessError) -> bool {
+    using_default
         && matches!(error, ProcessError::Spawn(source) if source.kind() == io::ErrorKind::NotFound)
 }
 
@@ -203,24 +204,15 @@ mod tests {
     #[test]
     fn only_missing_default_conda_is_quiet() {
         let missing = ProcessError::Spawn(io::Error::from(io::ErrorKind::NotFound));
-        assert!(is_missing_default_conda(
-            std::path::Path::new("conda"),
-            &missing
-        ));
-        assert!(!is_missing_default_conda(
-            std::path::Path::new("custom-conda"),
-            &missing
-        ));
+        assert!(is_missing_default_conda(true, &missing));
+        assert!(!is_missing_default_conda(false, &missing));
         for error in [
             ProcessError::Spawn(io::Error::from(io::ErrorKind::PermissionDenied)),
             ProcessError::Io(io::Error::from(io::ErrorKind::NotFound)),
             ProcessError::Timeout(Duration::from_secs(15)),
             ProcessError::OutputLimit(1),
         ] {
-            assert!(!is_missing_default_conda(
-                std::path::Path::new("conda"),
-                &error
-            ));
+            assert!(!is_missing_default_conda(true, &error));
         }
     }
 
@@ -269,5 +261,43 @@ mod tests {
         })
         .is_none());
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn configured_conda_name_logs_not_found_while_implicit_default_is_quiet() {
+        thread_local! {
+            static WARNINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        struct ProbeLogger;
+        impl log::Log for ProbeLogger {
+            fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+                metadata.level() == log::Level::Warn
+            }
+            fn log(&self, record: &log::Record<'_>) {
+                if record.level() == log::Level::Warn && record.target() == "pet_conda::conda_info"
+                {
+                    WARNINGS.with(|count| count.set(count.get() + 1));
+                }
+            }
+            fn flush(&self) {}
+        }
+        log::set_logger(&ProbeLogger).expect("Conda unit tests must have one logger");
+        log::set_max_level(log::LevelFilter::Warn);
+        assert!(log::log_enabled!(target: "pet_conda::conda_info", log::Level::Warn));
+        for (executable, warnings) in [
+            (None, 0),
+            (Some("conda".into()), 1),
+            (Some("custom-conda".into()), 1),
+        ] {
+            WARNINGS.with(|count| count.set(0));
+            assert!(CondaInfo::from_with_runner(executable, |_, _| {
+                Err(ProcessError::Spawn(io::Error::from(
+                    io::ErrorKind::NotFound,
+                )))
+            })
+            .is_none());
+            log::logger().flush();
+            WARNINGS.with(|count| assert_eq!(count.get(), warnings));
+        }
     }
 }
