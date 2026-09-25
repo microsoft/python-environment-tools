@@ -584,6 +584,29 @@ fn truncated_input_exits_unsuccessfully_without_an_error_flood() {
 
 #[test]
 fn closed_output_exits_without_waiting_for_stdin_eof() {
+    // Concurrent fork/exec can temporarily inherit a pipe reader despite CLOEXEC.
+    // Isolate this scenario so its dropped handle really is the final reader.
+    if std::env::var_os("PET_TEST_CLOSED_OUTPUT_CHILD").is_none() {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "closed_output_exits_without_waiting_for_stdin_eof",
+                "--nocapture",
+            ])
+            .env("PET_TEST_CLOSED_OUTPUT_CHILD", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("isolated closed-output fixture must spawn");
+        let status = jsonrpc_client::shutdown_fixture(&mut child, Duration::from_secs(20)).unwrap();
+        assert!(
+            status.success(),
+            "isolated closed-output fixture failed: {status}"
+        );
+        return;
+    }
+
     let mut fixture = ShutdownFixture::spawn();
     let mut stdout = BufReader::new(fixture.child.stdout.take().unwrap());
     let (sender, receiver) = mpsc::sync_channel(1);
