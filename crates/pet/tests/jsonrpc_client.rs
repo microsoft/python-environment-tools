@@ -6,15 +6,34 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+#[path = "process_utils.rs"]
+mod process_utils;
+pub(crate) use process_utils::{join_reader, shutdown_fixture, wait_for_exit};
+
 static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub(crate) fn configure_isolated_pet_environment(command: &mut Command) {
+    command.env_clear().env("PATH", "");
+
+    if let Some(value) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", value);
+    }
+
+    #[cfg(windows)]
+    for name in ["SYSTEMROOT", "SYSTEMDRIVE"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -81,19 +100,21 @@ impl Drop for ClientInner {
     fn drop(&mut self) {
         let _ = self.stdin.lock().unwrap().take();
 
+        if let Err(error) =
+            shutdown_fixture(&mut self.child.lock().unwrap(), Duration::from_secs(4))
         {
-            let mut child = self.child.lock().unwrap();
-            if child.try_wait().ok().flatten().is_none() {
-                let _ = child.kill();
-                let _ = child.wait();
+            eprintln!("Failed to stop PET fixture; detaching its readers: {error}");
+            return;
+        }
+        if let Some(handle) = self.reader_handle.lock().unwrap().take() {
+            if let Err(error) = join_reader(handle, Duration::from_secs(4)) {
+                eprintln!("Failed to finish PET stdout reader: {error}");
             }
         }
-
-        if let Some(handle) = self.reader_handle.lock().unwrap().take() {
-            let _ = handle.join();
-        }
         if let Some(handle) = self.stderr_handle.lock().unwrap().take() {
-            let _ = handle.join();
+            if let Err(error) = join_reader(handle, Duration::from_secs(4)) {
+                eprintln!("Failed to finish PET stderr reader: {error}");
+            }
         }
     }
 }
@@ -105,22 +126,21 @@ pub struct PetJsonRpcClient {
 
 impl PetJsonRpcClient {
     pub fn spawn() -> Result<Self, String> {
+        Self::spawn_with_environment(&[])
+    }
+
+    pub fn spawn_with_environment(
+        environment: &[(&str, &std::ffi::OsStr)],
+    ) -> Result<Self, String> {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_pet"));
         cmd.arg("server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Clear all inherited env vars to prevent host-specific tool
-            // configuration from leaking into the test environment, then
-            // restore only the minimum required for the OS to function.
-            .env_clear()
-            .env("PATH", "");
-        // On Windows, SYSTEMROOT is required for basic OS functionality
-        // (crypto, networking, etc.). Only set it when present.
-        #[cfg(windows)]
-        if let Ok(val) = std::env::var("SYSTEMROOT") {
-            cmd.env("SYSTEMROOT", val);
-        }
+            .stderr(Stdio::piped());
+        configure_isolated_pet_environment(&mut cmd);
+        // Explicit fixture variables take precedence over the runner values
+        // retained by the isolated environment.
+        cmd.envs(environment.iter().copied());
         let mut process = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn pet server: {e}"))?;
@@ -151,6 +171,22 @@ impl PetJsonRpcClient {
                 stderr_handle: Mutex::new(Some(stderr_handle)),
             }),
         })
+    }
+
+    pub fn shutdown(&self, timeout: Duration) -> Result<ExitStatus, String> {
+        let started = Instant::now();
+        self.inner.stdin.lock().unwrap().take();
+        let status = wait_for_exit(&mut self.inner.child.lock().unwrap(), timeout)
+            .map_err(|error| format!("PET did not shut down normally: {error}"))?;
+        if let Some(reader) = self.inner.reader_handle.lock().unwrap().take() {
+            join_reader(reader, timeout.saturating_sub(started.elapsed()))
+                .map_err(|error| format!("PET stdout reader did not finish: {error}"))?;
+        }
+        if let Some(reader) = self.inner.stderr_handle.lock().unwrap().take() {
+            join_reader(reader, timeout.saturating_sub(started.elapsed()))
+                .map_err(|error| format!("PET stderr reader did not finish: {error}"))?;
+        }
+        Ok(status)
     }
 
     pub fn configure(&self, config: Value) -> Result<(), String> {
@@ -311,13 +347,15 @@ impl PetJsonRpcClient {
 
         let write_result = {
             let mut stdin_guard = self.inner.stdin.lock().unwrap();
-            let stdin = stdin_guard
+            stdin_guard
                 .as_mut()
-                .ok_or_else(|| "PET stdin is no longer available".to_string())?;
-            stdin
-                .write_all(wire_message.as_bytes())
-                .and_then(|_| stdin.flush())
-                .map_err(|e| format!("Failed to send {method} request: {e}"))
+                .ok_or_else(|| "PET stdin is no longer available".to_string())
+                .and_then(|stdin| {
+                    stdin
+                        .write_all(wire_message.as_bytes())
+                        .and_then(|_| stdin.flush())
+                        .map_err(|error| format!("Failed to send {method} request: {error}"))
+                })
         };
 
         if let Err(err) = write_result {

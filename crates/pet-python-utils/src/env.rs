@@ -121,6 +121,13 @@ fn get_interpreter_details_with_runner(
     );
     match result {
         Ok(output) => parse_interpreter_result(executable, &output, start),
+        Err(ProcessError::Cancelled) => {
+            trace!(
+                "Cancelled interpreter probe during process shutdown: {:?}",
+                executable
+            );
+            None
+        }
         Err(ProcessError::Timeout(timeout)) => {
             warn!("Timed out after {:?} resolving Python via spawn for {:?}; terminated direct child.", timeout, executable);
             None
@@ -320,6 +327,21 @@ exit {exit_code}
 #[cfg(test)]
 mod parser_tests {
     use super::*;
+
+    #[test]
+    fn cancelled_interpreter_has_no_result() {
+        let mut called = false;
+        let result = get_interpreter_details_with_runner(
+            Path::new("python"),
+            Duration::from_secs(5),
+            |_, _| {
+                called = true;
+                Err(ProcessError::Cancelled)
+            },
+        );
+        assert!(called);
+        assert!(result.is_none());
+    }
 
     #[test]
     fn preserves_non_utf8_preamble_and_unicode_json() {

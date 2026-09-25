@@ -11,6 +11,58 @@ For samples using JSONRPC, please have a look at the [sample.js](./sample.js) fi
 
 Any requests/notifications not documented here are not supported.
 
+## Transport lifetime and limits
+
+Close the server process's stdin after receiving all responses you need. EOF at a
+frame boundary is a normal shutdown, not an empty request. PET stops accepting
+requests and output, discards pending notifications/replies, cancels admitted
+interpreter and manager probes, and exits successfully once their ownership
+cleanup finishes. Closing stdin is cancellation, not a request to drain unfinished
+requests. Test clients wait for normal exit and forcibly terminate only their own
+child as a bounded failure fallback.
+
+EOF inside a header or payload, malformed framing, and read/write/flush failures
+are terminal errors: PET reports the failure on stderr and exits unsuccessfully.
+Malformed JSON in a complete frame instead receives a Parse Error (`-32700`,
+`id: null`), after which subsequent frames can still be processed. Protocol stdout
+contains framed JSONRPC only.
+
+Each input frame contains ASCII headers through a blank line, followed by exactly
+`Content-Length` UTF-8 payload **bytes** (not characters). Both CRLF and LF line
+endings are accepted. Header names are ASCII-case-insensitive; optional
+`Content-Type` and other well-formed headers may precede or follow `Content-Length`.
+PET always decodes payloads as UTF-8; it does not negotiate another encoding from
+`Content-Type`. Fragmented reads and consecutive frames preserve byte boundaries.
+
+Exactly one `Content-Length` is required. Its value is decimal digits, optionally
+surrounded by spaces or tabs; signs, fractions, duplicate/missing lengths, overflow,
+and malformed header names or values are rejected. Total raw headers (including
+line endings and the blank separator) are limited to 8 KiB, and payloads to 16 MiB,
+before payload allocation. Both exact limits are accepted. Invalid framing closes
+the connection unsuccessfully rather than attempting to guess the next boundary.
+A complete frame containing invalid UTF-8 or invalid JSON gets the recoverable
+Parse Error described above.
+
+One process-lifetime writer emits accepted frames in FIFO order, so a refresh reply
+cannot overtake notifications already admitted before it. Each serialized output
+payload is limited to 16 MiB; the queue holds at most 1,024 frames and 32 MiB of
+retained frame capacity. The queue limit excludes one in-flight frame and the
+single producer's serialization/frame-building buffers, whose payloads are also
+limited to 16 MiB each. Queue saturation is a terminal connection error rather
+than an unbounded allocation or a wait on a slow consumer. These are output bounds,
+not a bound on total request/discovery memory or worker concurrency.
+
+The writer owns a duplicate OS stdout handle and does not hold Rust's global stdout
+lock. Shutdown drops queued output and abandons in-flight output without joining
+an OS-blocked writer or stdin reader; those process-lifetime threads end when the
+standalone server exits. The first output failure recorded before closure remains
+fatal; errors arriving after normal closure are discarded with the cancelled work.
+Admitted probes are tracked separately through ownership cleanup, with a shared
+three-second server shutdown wait. Cleanup failures or an expired wait are reported
+as errors, never as clean shutdown. Synchronous OS process creation and individual
+OS I/O calls cannot be interrupted by this mechanism; nor does it extend the Unix
+ownership boundary to descendants that deliberately escape their process group.
+
 ## Request identifiers
 
 Requests include an `id` that is a string, JSON number, or explicit `null`. PET preserves
@@ -21,8 +73,27 @@ spelling is not preserved. Prefer string IDs when exact values exceed the 64-bit
 or the precision of a client's numeric type. JSONRPC recommends avoiding fractional and null IDs.
 
 Only an absent `id` denotes a notification. Boolean, array, and object IDs produce an Invalid
-Request error (`-32600`) with `id: null` and do not invoke a handler. Other existing method and
-parameter error codes are unchanged. Notifications do not receive request replies.
+Request error (`-32600`) with `id: null` and do not invoke a handler. Valid notifications
+do not receive request replies.
+
+## Request envelopes and errors
+
+Each payload must be a JSON object with `"jsonrpc": "2.0"`; batches are not supported.
+Non-object payloads and missing/invalid versions produce Invalid Request (`-32600`)
+without invoking a handler. Errors preserve a valid parsed ID where available, or
+use `id: null` otherwise. An invalid envelope with no ID is still an error, not a
+valid notification.
+
+If present, `params` must be an object or array. Absent params and explicit `null`
+remain supported for compatibility; method-specific schemas still apply. Other
+parameter containers produce Invalid Params (`-32602`) for requests. Otherwise-valid
+notifications with invalid params are logged and not dispatched or replied to.
+Existing PET method-level codes are retained: missing/nonstring method (`-3`),
+unknown request method (`-1`), and handler-specific parameter errors (`-4`). Unknown
+notification methods are logged without a reply. These legacy codes are not the
+standard JSONRPC equivalents and clients should retain their existing handling.
+Complete-frame envelope/parameter errors do not prevent subsequent frames from
+being processed.
 
 # Info Request
 
@@ -280,7 +351,7 @@ Interpreter probes used for resolution and manager probes used during refresh/di
 - Unix probes start in a new process group. PET signals that group before reaping its leader, avoiding process-ID reuse. On macOS, an otherwise ambiguous permission error is accepted only when bounded, unchanged membership and process-birth identities confirm that all group members are already zombies; incomplete or failed inspection remains an error. Descendants that deliberately start another group/session escape this boundary; PET does not act as a system-wide descendant reaper.
 - Windows probes start suspended and without a console window. PET assigns an unnamed, non-breakaway, kill-on-close job before resuming the child's sole thread. Stable Rust does not expose the primary-thread handle, so PET uses a per-process thread-metadata snapshot (`PssCaptureSnapshot`, Windows 8.1+) and verifies the selected thread's process identity. It does not enumerate system-wide threads or clone the child's address space. Ambiguous/missing thread ownership or failed job assignment fails the probe rather than running it unsupervised. Command arguments, environment, working directory, and batch-file launch still use Rust's standard process implementation; the discovery-only runner replaces any caller-supplied Windows creation flags with `CREATE_NO_WINDOW | CREATE_SUSPENDED`. All current interpreter/manager callers previously supplied only `CREATE_NO_WINDOW`.
 - After the direct child exits, draining continues within the same deadline. If output has not reached EOF (for example, an escaped Unix descendant retains a write handle), the probe fails explicitly with incomplete output rather than waiting indefinitely. Output produced only by background helpers after their parent exits is not guaranteed: remaining owned helpers are terminated, including on successful parent exit.
-- These are per-subprocess limits, not a total request/workspace budget. They do not bound synchronous OS process creation. Server active-request cancellation and shutdown remain a separate lifecycle concern.
+- These are per-subprocess limits, not a total request/workspace budget. They do not bound synchronous OS process creation. During server shutdown, new probes are refused and active probes are cancelled through the same ownership cleanup. Cancellation alone is traced rather than logged as a probe failure; cleanup failures remain errors.
 
 Missing default Conda executables are quietly ignored; installed/custom manager failures and all
 timeouts/output failures are logged. Interpreter and Conda JSON is parsed strictly. Poetry stdout
