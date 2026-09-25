@@ -868,8 +868,56 @@ fn truncated_input_exits_unsuccessfully_without_an_error_flood() {
 
 #[test]
 fn closed_output_exits_without_waiting_for_stdin_eof() {
+    // Concurrent fork/exec can temporarily inherit a pipe reader despite CLOEXEC.
+    // Isolate this scenario so its dropped handle really is the final reader.
+    if std::env::var_os("PET_TEST_CLOSED_OUTPUT_CHILD").is_none() {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "closed_output_exits_without_waiting_for_stdin_eof",
+                "--nocapture",
+            ])
+            .env("PET_TEST_CLOSED_OUTPUT_CHILD", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("isolated closed-output fixture must spawn");
+        // Cover readiness, both forced-shutdown waits, reader joining, and Drop cleanup.
+        let status = jsonrpc_client::shutdown_fixture(&mut child, Duration::from_secs(40)).unwrap();
+        assert!(
+            status.success(),
+            "isolated closed-output fixture failed: {status}"
+        );
+        return;
+    }
+
     let mut fixture = ShutdownFixture::spawn();
-    drop(fixture.child.stdout.take());
+    let mut stdout = BufReader::new(fixture.child.stdout.take().unwrap());
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let reader = thread::spawn(move || {
+        let response = jsonrpc_client::read_message(&mut stdout);
+        let _ = sender.send((stdout, response));
+    });
+    fixture.send(br#"{"jsonrpc":"2.0","id":"ready","method":"info"}"#);
+    let (stdout, response) = match receiver.recv_timeout(Duration::from_secs(10)) {
+        Ok(result) => result,
+        Err(error) => {
+            drop(receiver);
+            fixture.child.stdin.take();
+            let shutdown =
+                jsonrpc_client::shutdown_fixture(&mut fixture.child, Duration::from_secs(4));
+            let joined = jsonrpc_client::join_reader(reader, Duration::from_secs(4));
+            panic!("server readiness failed: {error}; shutdown: {shutdown:?}; reader: {joined:?}");
+        }
+    };
+    jsonrpc_client::join_reader(reader, Duration::from_secs(1)).unwrap();
+    let response = response
+        .unwrap()
+        .expect("ready server must respond to info");
+    assert_eq!(response["id"], "ready");
+    drop(stdout);
+
     let started = Instant::now();
     fixture.send(br#"{"jsonrpc":"2.0","id":1,"method":"info"}"#);
     let status = jsonrpc_client::wait_for_exit(&mut fixture.child, Duration::from_secs(1)).unwrap();
