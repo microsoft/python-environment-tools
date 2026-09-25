@@ -1,4 +1,4 @@
-name: Shutdown macOS Matched Control
+name: Protocol macOS Matched Control
 
 on:
   workflow_dispatch: {}
@@ -14,7 +14,7 @@ jobs:
       - name: Checkout exact PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: d9ee6aa49b68d23a161f97be0002925f8202af3a
+          ref: f668ed59d95381bbccb2afad2d6783660d578cae
           persist-credentials: false
 
       - name: Initialize evidence
@@ -87,7 +87,7 @@ jobs:
           cargo test --locked --release --features ci-perf \
             --target x86_64-apple-darwin --test e2e_performance \
             --no-run --message-format=json > "$RUNNER_TEMP/pet-test-build.jsonl"
-          test "$(git rev-parse HEAD)" = "d9ee6aa49b68d23a161f97be0002925f8202af3a"
+          test "$(git rev-parse HEAD)" = "f668ed59d95381bbccb2afad2d6783660d578cae"
           test "$(git -C "$RUNNER_TEMP/pet-base" rev-parse HEAD)" = \
             "094217e69880dabf4a38d166c63a9639e0493de5"
           BASE_SHA256="$(shasum -a 256 "$RUNNER_TEMP/pet-base-exe" | awk '{print $1}')"
@@ -103,7 +103,7 @@ jobs:
 
           provenance = {
               "base": "094217e69880dabf4a38d166c63a9639e0493de5",
-              "head": "d9ee6aa49b68d23a161f97be0002925f8202af3a",
+              "head": "f668ed59d95381bbccb2afad2d6783660d578cae",
               "baseBinarySha256": os.environ["BASE_SHA256"],
               "headBinarySha256": os.environ["HEAD_SHA256"],
               "harnessSha256": os.environ["HARNESS_SHA256"],
@@ -159,7 +159,7 @@ jobs:
           )
           revisions = {
               "base": "094217e69880dabf4a38d166c63a9639e0493de5",
-              "head": "d9ee6aa49b68d23a161f97be0002925f8202af3a",
+              "head": "f668ed59d95381bbccb2afad2d6783660d578cae",
           }
           order = ["base", "head", "head", "base", "head", "base", "base", "head"]
           summary = []
@@ -288,6 +288,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: shutdown-529-matched-macos
+          name: protocol-532-matched-macos
           path: ${{ runner.temp }}/shutdown-matched-control
           if-no-files-found: error
