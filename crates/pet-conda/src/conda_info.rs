@@ -107,6 +107,13 @@ impl CondaInfo {
                     None
                 }
             }
+            Err(ProcessError::Cancelled) => {
+                trace!(
+                    "Cancelled Conda probe during process shutdown: {:?}",
+                    executable
+                );
+                None
+            }
             Err(err) => {
                 if !is_missing_default_conda(using_default, &err) {
                     warn!(
@@ -191,6 +198,7 @@ mod tests {
             );
         }
         for error in [
+            ProcessError::Cancelled,
             ProcessError::Spawn(io::Error::from(io::ErrorKind::NotFound)),
             ProcessError::Io(io::Error::from(io::ErrorKind::BrokenPipe)),
             ProcessError::Timeout(Duration::from_secs(15)),

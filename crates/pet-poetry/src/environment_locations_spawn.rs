@@ -159,6 +159,13 @@ fn run_poetry(
             );
             None
         }
+        Err(ProcessError::Cancelled) => {
+            trace!(
+                "Cancelled Poetry probe during process shutdown: {:?}",
+                executable
+            );
+            None
+        }
         Err(error) => {
             error!(
                 "Failed to execute Poetry {:?} using {:?} in {:?}: {}",
@@ -227,6 +234,7 @@ mod tests {
                 Err(ProcessError::Spawn(io::Error::from(
                     io::ErrorKind::NotFound,
                 ))),
+                Err(ProcessError::Cancelled),
                 Err(ProcessError::Io(io::Error::from(io::ErrorKind::BrokenPipe))),
                 Err(ProcessError::Timeout(Duration::from_secs(15))),
                 Err(ProcessError::OutputLimit(4 * 1024 * 1024)),

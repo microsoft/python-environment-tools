@@ -5,8 +5,10 @@ use crate::{send_error, RequestId};
 use serde_json::{self, Value};
 use std::{
     collections::HashMap,
-    io::{self, Read},
-    sync::Arc,
+    io::{self, BufRead, BufReader, Read},
+    sync::{mpsc, Arc},
+    thread,
+    time::Duration,
 };
 
 type RequestHandler<C> = Arc<dyn Fn(Arc<C>, RequestId, Value)>;
@@ -109,47 +111,136 @@ impl<C> HandlersKeyedByMethodName<C> {
     }
 }
 
-/// Starts the jsonrpc server that listens for requests on stdin.
-/// This function will block forever.
-pub fn start_server<C>(handlers: &HandlersKeyedByMethodName<C>) -> ! {
-    let mut stdin = io::stdin();
-    loop {
-        let mut input = String::new();
-        match stdin.read_line(&mut input) {
-            Ok(_) => {
-                let mut empty_line = String::new();
-                match get_content_length(&input) {
-                    Ok(content_length) => {
-                        let _ = stdin.read_line(&mut empty_line);
-                        let mut buffer = vec![0; content_length];
+const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const MAX_HEADER_BYTES: usize = 8 * 1024;
+const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 
-                        match stdin.read_exact(&mut buffer) {
-                            Ok(_) => {
-                                let request =
-                                    String::from_utf8_lossy(&buffer[..content_length]).to_string();
-                                if let Err(err) = handle_payload(handlers, &request) {
-                                    eprint!("Failed to parse LINE: {request}, {err:?}")
-                                }
-                                continue;
-                            }
-                            Err(err) => {
-                                eprint!("Failed to read exactly {content_length} bytes, {err:?}")
-                            }
-                        }
-                    }
-                    Err(err) => eprint!("Failed to get content length from {input}, {err:?}"),
-                };
-            }
-            Err(error) => eprint!("Error in reading a line from stdin: {error}"),
+/// Runs the standalone process transport until EOF or a fatal I/O error.
+/// Pending output is discarded at shutdown; callers must finish subprocess cleanup
+/// and exit the process rather than join workers blocked in external I/O.
+pub fn start_server<C>(handlers: &HandlersKeyedByMethodName<C>) -> io::Result<()> {
+    crate::initialize_output()?;
+    let result = (|| {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name("pet-jsonrpc-input".to_string())
+            .spawn(move || read_input(BufReader::new(io::stdin()), sender))?;
+        dispatch_input(handlers, &receiver, crate::output_error)
+    })();
+    close_transport(result, crate::shutdown_output, crate::output_error)
+}
+
+fn close_transport(
+    result: io::Result<()>,
+    shutdown_output: impl FnOnce(),
+    output_error: impl FnOnce() -> Option<io::Error>,
+) -> io::Result<()> {
+    shutdown_output();
+    result.and(output_error().map_or(Ok(()), Err))
+}
+
+fn read_input(mut reader: impl BufRead, sender: mpsc::SyncSender<io::Result<Option<Vec<u8>>>>) {
+    loop {
+        let frame = read_payload(&mut reader);
+        let terminal = !matches!(&frame, Ok(Some(_)));
+        if sender.send(frame).is_err() || terminal {
+            return;
         }
     }
 }
 
+fn dispatch_input<C>(
+    handlers: &HandlersKeyedByMethodName<C>,
+    receiver: &mpsc::Receiver<io::Result<Option<Vec<u8>>>>,
+    output_error: impl Fn() -> Option<io::Error>,
+) -> io::Result<()> {
+    loop {
+        if let Some(error) = output_error() {
+            return Err(error);
+        }
+        match receiver.recv_timeout(INPUT_POLL_INTERVAL) {
+            Ok(Ok(Some(payload))) => {
+                if handle_payload(handlers, &payload).is_err() {
+                    (handlers.send_error)(None, -32700, "Invalid JSONRPC JSON payload".to_string());
+                }
+            }
+            Ok(Ok(None)) => return Ok(()),
+            Ok(Err(error)) => return Err(error),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "JSONRPC input reader stopped without a terminal result",
+                ));
+            }
+        }
+    }
+}
+
+fn read_payload(reader: &mut impl BufRead) -> io::Result<Option<Vec<u8>>> {
+    let mut header = String::new();
+    let count = (&mut *reader)
+        .take(MAX_HEADER_BYTES as u64 + 1)
+        .read_line(&mut header)?;
+    if count == 0 {
+        return Ok(None);
+    }
+    if count > MAX_HEADER_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "JSONRPC header exceeds limit",
+        ));
+    }
+    if !header.ends_with('\n') {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "Truncated JSONRPC header",
+        ));
+    }
+    let length = get_content_length(&header)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if length > MAX_PAYLOAD_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "JSONRPC payload exceeds limit",
+        ));
+    }
+    let mut separator = String::new();
+    (&mut *reader)
+        .take((MAX_HEADER_BYTES - count) as u64 + 1)
+        .read_line(&mut separator)?;
+    if count + separator.len() > MAX_HEADER_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "JSONRPC header exceeds limit",
+        ));
+    }
+    if !separator.ends_with('\n') {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "Truncated JSONRPC header separator",
+        ));
+    }
+    if separator != "\r\n" && separator != "\n" {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Expected a blank JSONRPC header separator",
+        ));
+    }
+    let mut payload = Vec::new();
+    payload
+        .try_reserve_exact(length)
+        .map_err(io::Error::other)?;
+    payload.resize(length, 0);
+    reader.read_exact(&mut payload)?;
+    Ok(Some(payload))
+}
+
 fn handle_payload<C>(
     handlers: &HandlersKeyedByMethodName<C>,
-    payload: &str,
+    payload: impl AsRef<[u8]>,
 ) -> Result<(), serde_json::Error> {
-    let request = serde_json::from_str(payload)?;
+    let request = serde_json::from_slice(payload.as_ref())?;
     handlers.handle_request(request);
     Ok(())
 }
@@ -180,6 +271,36 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::sync::Mutex;
+
+    #[test]
+    fn output_failure_between_eof_and_close_is_not_reported_as_success() {
+        let closed = std::cell::Cell::new(false);
+        let result = close_transport(
+            Ok(()),
+            || closed.set(true),
+            || {
+                assert!(
+                    closed.get(),
+                    "output must be closed before its final error is read"
+                );
+                Some(io::Error::from(io::ErrorKind::BrokenPipe))
+            },
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn transport_error_remains_primary_and_still_closes_output() {
+        let closed = std::cell::Cell::new(false);
+        let result = close_transport(
+            Err(io::Error::from(io::ErrorKind::InvalidData)),
+            || closed.set(true),
+            || Some(io::Error::from(io::ErrorKind::BrokenPipe)),
+        );
+        assert!(closed.get());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert!(close_transport(Ok(()), || {}, || None).is_ok());
+    }
 
     #[derive(Default)]
     struct TestContext {
@@ -443,5 +564,126 @@ mod tests {
                 format!("Failed to extract method from JSONRPC payload {message:?}")
             )]
         );
+    }
+    #[test]
+    fn input_distinguishes_clean_eof_from_truncated_frames() {
+        assert!(read_payload(&mut io::Cursor::new(b"")).unwrap().is_none());
+        for bytes in [
+            b"Content-Length: 2".as_slice(),
+            b"Content-Length: 2\r\n".as_slice(),
+            b"Content-Length: 2\r\n\r".as_slice(),
+            b"Content-Length: 2\r\n\r\n{".as_slice(),
+        ] {
+            let error = read_payload(&mut io::Cursor::new(bytes)).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        }
+    }
+
+    #[test]
+    fn input_preserves_fragmented_consecutive_payload_bytes() {
+        let first = "{\"text\":\"\u{03c0}\"}".as_bytes();
+        let second = b"{}";
+        let mut bytes = format!("Content-Length: {}\r\n\r\n", first.len()).into_bytes();
+        bytes.extend_from_slice(first);
+        bytes.extend_from_slice(b"Content-Length: 2\n\n");
+        bytes.extend_from_slice(second);
+        let mut reader = BufReader::with_capacity(1, io::Cursor::new(bytes));
+        assert_eq!(read_payload(&mut reader).unwrap().unwrap(), first);
+        assert_eq!(read_payload(&mut reader).unwrap().unwrap(), second);
+        assert!(read_payload(&mut reader).unwrap().is_none());
+    }
+
+    #[test]
+    fn input_rejects_oversized_headers_and_payloads_before_body_reads() {
+        let bytes = vec![b'x'; MAX_HEADER_BYTES + 1];
+        assert_eq!(
+            read_payload(&mut io::Cursor::new(bytes))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        let bytes = format!("Content-Length: {}\r\n\r\n", MAX_PAYLOAD_BYTES + 1);
+        assert_eq!(
+            read_payload(&mut io::Cursor::new(bytes))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn input_reader_reports_terminal_error_once() {
+        struct FailedReader;
+        impl Read for FailedReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "injected read failure",
+                ))
+            }
+        }
+        impl BufRead for FailedReader {
+            fn fill_buf(&mut self) -> io::Result<&[u8]> {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "injected read failure",
+                ))
+            }
+            fn consume(&mut self, _: usize) {}
+        }
+        let (sender, receiver) = mpsc::sync_channel(1);
+        read_input(FailedReader, sender);
+        assert_eq!(
+            receiver.recv().unwrap().unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+        let (sender, receiver) = mpsc::sync_channel(1);
+        read_input(io::Cursor::new(b""), sender);
+        assert!(receiver.recv().unwrap().unwrap().is_none());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn dispatch_recovers_after_malformed_json_and_stops_on_eof() {
+        let context = Arc::new(TestContext::default());
+        let mut handlers = create_handlers_with_recorded_errors(context.clone());
+        handlers.add_request_handler("info", |context, id, params| {
+            *context.request.lock().unwrap() = Some((id, params));
+        });
+        let (sender, receiver) = mpsc::sync_channel(3);
+        sender.send(Ok(Some(b"{invalid".to_vec()))).unwrap();
+        sender
+            .send(Ok(Some(
+                br#"{"jsonrpc":"2.0","id":"next","method":"info","params":{}}"#.to_vec(),
+            )))
+            .unwrap();
+        sender.send(Ok(None)).unwrap();
+        dispatch_input(&handlers, &receiver, || None).unwrap();
+        assert_eq!(context.errors.lock().unwrap()[0].1, -32700);
+        assert_eq!(
+            context.request.lock().unwrap().as_ref().unwrap().0,
+            RequestId::String("next".to_string())
+        );
+    }
+
+    #[test]
+    fn dispatch_surfaces_output_failure_without_waiting_for_stdin() {
+        let handlers = create_handlers_with_recorded_errors(Arc::new(TestContext::default()));
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let error = dispatch_input(&handlers, &receiver, || {
+            Some(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "injected output failure",
+            ))
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
 }

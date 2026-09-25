@@ -559,7 +559,7 @@ const MISSING_ENVS_COMPLETED: u64 = u64::MAX - 1;
 static MISSING_ENVS_REPORTING_STATE: AtomicU64 = AtomicU64::new(MISSING_ENVS_AVAILABLE);
 static NEXT_REFRESH_ID: AtomicU64 = AtomicU64::new(1);
 
-pub fn start_jsonrpc_server() {
+pub fn start_jsonrpc_server() -> std::io::Result<()> {
     // Initialize tracing for performance profiling (controlled by RUST_LOG env var)
     // Note: This includes log compatibility, so we don't call jsonrpc::initialize_logger
     initialize_tracing(false);
@@ -587,7 +587,16 @@ pub fn start_jsonrpc_server() {
     handlers.add_request_handler("find", handle_find);
     handlers.add_request_handler("condaInfo", handle_conda_telemetry);
     handlers.add_request_handler("clear", handle_clear_cache);
-    start_server(&handlers)
+    let transport_result = start_server(&handlers);
+    let cleanup_result = pet_python_utils::process::shutdown(Duration::from_secs(3));
+    match (transport_result, cleanup_result) {
+        (Ok(()), cleanup) => cleanup,
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(cleanup)) => Err(std::io::Error::new(
+            error.kind(),
+            format!("{error}; subprocess shutdown failed: {cleanup}"),
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

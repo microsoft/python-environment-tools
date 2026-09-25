@@ -557,14 +557,25 @@ impl PetClient {
     }
 }
 
+#[path = "process_utils.rs"]
+mod process_utils;
+
 impl Drop for PetClient {
     fn drop(&mut self) {
+        drop(std::mem::replace(
+            &mut self.stdin,
+            Box::new(std::io::sink()),
+        ));
         if let Some(process) = self.process.as_mut() {
-            let _ = process.kill();
-            let _ = process.wait();
+            if let Err(error) = process_utils::shutdown_fixture(process, Duration::from_secs(4)) {
+                eprintln!("Failed to stop performance fixture; detaching its reader: {error}");
+                return;
+            }
         }
         if let Some(stderr_handle) = self.stderr_handle.take() {
-            let _ = stderr_handle.join();
+            if let Err(error) = process_utils::join_reader(stderr_handle, Duration::from_secs(4)) {
+                eprintln!("Failed to finish performance fixture stderr reader: {error}");
+            }
         }
     }
 }
