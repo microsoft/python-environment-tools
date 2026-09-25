@@ -94,3 +94,7 @@ assert_eq!(reads.load(Ordering::Relaxed), 1);
 For parser helpers, include malformed input, non-ASCII surrounding data, and case variations. For diagnostics, test pattern classification and expansion filtering separately. Keep temp paths unique with `tempfile` or process/counter-based names.
 
 Before every Rust commit, run targeted tests and invoke the `rust-precommit` skill. Keep that skill as the single source of truth for required format and Clippy commands.
+
+## Learnings
+
+Do not execute freshly written scripts as concurrent Unix subprocess fixtures: spawning can fail with `ETXTBSY` (Text file busy). Prefer an existing interpreter such as `/bin/sh -c` with an inline script, or the existing test executable. Assert the typed runner outcome before checking an optional parsed result, so a spawn failure cannot masquerade as a successful negative parsing or timeout test.
