@@ -676,6 +676,48 @@ fn stdin_eof_exits_while_output_is_not_drained() {
     reader.join().unwrap();
 }
 
+fn wait_for_descendant_lease(lease: &fs::File, timeout: Duration) -> std::io::Result<()> {
+    let started = Instant::now();
+    loop {
+        match lease.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(fs::TryLockError::Error(error)) => return Err(error),
+            Err(fs::TryLockError::WouldBlock) => {}
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "descendant still holds its lease at the shutdown deadline",
+            ));
+        }
+        thread::sleep(Duration::from_millis(10).min(remaining));
+    }
+}
+
+#[test]
+fn descendant_lease_wait_is_bounded_and_requires_release() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("lease");
+    let holder = fs::File::create(&path).unwrap();
+    holder.try_lock().unwrap();
+    let lease = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    let started = Instant::now();
+    assert_eq!(
+        wait_for_descendant_lease(&lease, Duration::from_millis(20))
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::TimedOut
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    drop(holder);
+    wait_for_descendant_lease(&lease, Duration::ZERO).unwrap();
+}
+
 #[cfg(feature = "ci")]
 #[test]
 fn stdin_eof_cancels_an_active_interpreter_and_its_descendant() {
@@ -741,10 +783,13 @@ fn stdin_eof_cancels_an_active_interpreter_and_its_descendant() {
         "active-probe shutdown failed: {status}; stderr: {}",
         client.stderr_output()
     );
+    // Observe OS lease release within the same budget as server shutdown.
+    wait_for_descendant_lease(
+        &lease,
+        Duration::from_secs(4).saturating_sub(started.elapsed()),
+    )
+    .expect("shutdown must release the actual descendant's lease");
     assert!(started.elapsed() < Duration::from_secs(4));
-    lease
-        .try_lock()
-        .expect("shutdown must release the actual descendant's lease");
     assert!(
         request.join().unwrap().is_err(),
         "an active request must be cancelled, not reported as successful"
