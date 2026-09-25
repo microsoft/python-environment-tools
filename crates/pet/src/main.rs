@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 use jsonrpc::start_jsonrpc_server;
@@ -95,7 +95,7 @@ enum Commands {
     Server,
 }
 
-fn main() {
+fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command.unwrap_or(Commands::Find {
@@ -159,6 +159,12 @@ fn main() {
             cache_directory,
             json,
         } => resolve_report_stdio(executable, verbose, cache_directory, json),
-        Commands::Server => start_jsonrpc_server(),
+        Commands::Server => {
+            if let Err(error) = start_jsonrpc_server() {
+                eprintln!("PET server stopped with an error: {error}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
+    ExitCode::SUCCESS
 }

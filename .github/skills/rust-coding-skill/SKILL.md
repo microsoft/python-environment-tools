@@ -98,3 +98,7 @@ Before every Rust commit, run targeted tests and invoke the `rust-precommit` ski
 ## Learnings
 
 Do not execute freshly written scripts as concurrent Unix subprocess fixtures: spawning can fail with `ETXTBSY` (Text file busy). Prefer an existing interpreter such as `/bin/sh -c` with an inline script, or the existing test executable. Assert the typed runner outcome before checking an optional parsed result, so a spawn failure cannot masquerade as a successful negative parsing or timeout test.
+
+For real-pipe EOF/EPIPE tests, create the pipe inside an isolated test subprocess when other test threads spawn children. Unix `CLOEXEC` closes descriptors at exec, not fork: a concurrent child can temporarily retain a reader, allowing the only write to succeed before the final reader disappears. A readiness handshake alone does not prevent this race. Keep the operation's measured deadline separate from setup, and make an outer fixture deadline cover readiness, waits both before and after forced termination, reader joins, and fallback `Drop` cleanup.
+
+Use a per-worktree Cargo target directory when validating stacked changes so native fixtures cannot execute another worktree's stale binary. On WSL, run timing-sensitive Linux binaries from the native Linux filesystem rather than a Windows mount, where page faults can stall in filesystem RPC. When launching instrumented PET with `env_clear()`, retain `LLVM_PROFILE_FILE` exactly so child coverage reaches the collector instead of an uncollected default profile.

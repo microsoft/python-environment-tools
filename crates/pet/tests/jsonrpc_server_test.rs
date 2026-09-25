@@ -4,13 +4,13 @@
 use pet_fs::path::norm_case;
 use serde_json::{json, Value};
 use std::fs;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 mod jsonrpc_client;
@@ -30,13 +30,8 @@ impl RawRpcClient {
             .arg("server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .env_clear()
-            .env("PATH", "");
-        #[cfg(windows)]
-        if let Some(system_root) = std::env::var_os("SYSTEMROOT") {
-            command.env("SYSTEMROOT", system_root);
-        }
+            .stderr(Stdio::inherit());
+        jsonrpc_client::configure_isolated_pet_environment(&mut command);
         let mut child = command.spawn().expect("raw fixture must spawn PET");
         let stdout = child.stdout.take().expect("PET stdout must be piped");
         let (sender, responses) = mpsc::channel();
@@ -82,17 +77,16 @@ impl RawRpcClient {
 
 impl Drop for RawRpcClient {
     fn drop(&mut self) {
-        // EOF shutdown is tracked separately; kill only this fixture's child before closing stdin.
-        if let Err(error) = self.child.kill() {
-            eprintln!("Failed to stop raw RPC fixture: {error}");
-        }
-        if let Err(error) = self.child.wait() {
-            eprintln!("Failed to reap raw RPC fixture: {error}");
-        }
         self.child.stdin.take();
+        if let Err(error) =
+            jsonrpc_client::shutdown_fixture(&mut self.child, Duration::from_secs(4))
+        {
+            eprintln!("Failed to stop raw RPC fixture: {error}");
+            return;
+        }
         if let Some(reader) = self.reader.take() {
-            if reader.join().is_err() {
-                eprintln!("Raw RPC fixture reader panicked");
+            if let Err(error) = jsonrpc_client::join_reader(reader, Duration::from_secs(4)) {
+                eprintln!("Failed to finish raw RPC fixture reader: {error}");
             }
         }
     }
@@ -501,5 +495,320 @@ fn concurrent_distinct_refresh_requests_run_separately() {
         client.telemetry_event_count("RefreshPerformance"),
         2,
         "distinct refresh requests should emit separate performance events"
+    );
+}
+
+struct ShutdownFixture {
+    child: Child,
+}
+
+impl ShutdownFixture {
+    fn spawn() -> Self {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_pet"));
+        command
+            .arg("server")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        jsonrpc_client::configure_isolated_pet_environment(&mut command);
+        Self {
+            child: command.spawn().expect("shutdown fixture must spawn PET"),
+        }
+    }
+
+    fn send(&mut self, body: &[u8]) {
+        let stdin = self.child.stdin.as_mut().unwrap();
+        write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
+        stdin.write_all(body).unwrap();
+        stdin.flush().unwrap();
+    }
+}
+
+impl Drop for ShutdownFixture {
+    fn drop(&mut self) {
+        self.child.stdin.take();
+        if let Err(error) =
+            jsonrpc_client::shutdown_fixture(&mut self.child, Duration::from_secs(4))
+        {
+            eprintln!("Failed to stop shutdown fixture: {error}");
+        }
+    }
+}
+
+#[test]
+fn stdin_eof_after_exchange_exits_cleanly_within_one_second() {
+    let client = PetJsonRpcClient::spawn().unwrap();
+    client.info().unwrap();
+    let started = Instant::now();
+    let status = client.shutdown(Duration::from_secs(1)).unwrap();
+    assert!(status.success(), "normal EOF shutdown failed: {status}");
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(
+        client.stderr_output().len() < 4096,
+        "EOF must not produce an error flood"
+    );
+}
+
+#[test]
+fn truncated_input_exits_unsuccessfully_without_an_error_flood() {
+    for bytes in [
+        b"Content-Length: 2".as_slice(),
+        b"Content-Length: 2\r\n\r\n{".as_slice(),
+    ] {
+        let mut fixture = ShutdownFixture::spawn();
+        fixture
+            .child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(bytes)
+            .unwrap();
+        let started = Instant::now();
+        fixture.child.stdin.take();
+        let status =
+            jsonrpc_client::wait_for_exit(&mut fixture.child, Duration::from_secs(1)).unwrap();
+        assert!(!status.success());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let mut stderr = Vec::new();
+        fixture
+            .child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_end(&mut stderr)
+            .unwrap();
+        assert!(!stderr.is_empty());
+        assert!(stderr.len() < 4096, "truncated input must be reported once");
+    }
+}
+
+#[test]
+fn closed_output_exits_without_waiting_for_stdin_eof() {
+    // Concurrent fork/exec can temporarily inherit a pipe reader despite CLOEXEC.
+    // Isolate this scenario so its dropped handle really is the final reader.
+    if std::env::var_os("PET_TEST_CLOSED_OUTPUT_CHILD").is_none() {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "closed_output_exits_without_waiting_for_stdin_eof",
+                "--nocapture",
+            ])
+            .env("PET_TEST_CLOSED_OUTPUT_CHILD", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("isolated closed-output fixture must spawn");
+        // Cover readiness, both forced-shutdown waits, reader joining, and Drop cleanup.
+        let status = jsonrpc_client::shutdown_fixture(&mut child, Duration::from_secs(40)).unwrap();
+        assert!(
+            status.success(),
+            "isolated closed-output fixture failed: {status}"
+        );
+        return;
+    }
+
+    let mut fixture = ShutdownFixture::spawn();
+    let mut stdout = BufReader::new(fixture.child.stdout.take().unwrap());
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let reader = thread::spawn(move || {
+        let response = jsonrpc_client::read_message(&mut stdout);
+        let _ = sender.send((stdout, response));
+    });
+    fixture.send(br#"{"jsonrpc":"2.0","id":"ready","method":"info"}"#);
+    let (stdout, response) = match receiver.recv_timeout(Duration::from_secs(10)) {
+        Ok(result) => result,
+        Err(error) => {
+            drop(receiver);
+            fixture.child.stdin.take();
+            let shutdown =
+                jsonrpc_client::shutdown_fixture(&mut fixture.child, Duration::from_secs(4));
+            let joined = jsonrpc_client::join_reader(reader, Duration::from_secs(4));
+            panic!("server readiness failed: {error}; shutdown: {shutdown:?}; reader: {joined:?}");
+        }
+    };
+    jsonrpc_client::join_reader(reader, Duration::from_secs(1)).unwrap();
+    let response = response
+        .unwrap()
+        .expect("ready server must respond to info");
+    assert_eq!(response["id"], "ready");
+    drop(stdout);
+
+    let started = Instant::now();
+    fixture.send(br#"{"jsonrpc":"2.0","id":1,"method":"info"}"#);
+    let status = jsonrpc_client::wait_for_exit(&mut fixture.child, Duration::from_secs(1)).unwrap();
+    assert!(
+        !status.success(),
+        "broken output must produce a nonzero exit"
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(
+        fixture.child.stdin.is_some(),
+        "input remains open throughout this check"
+    );
+}
+
+#[test]
+fn stdin_eof_exits_while_output_is_not_drained() {
+    let mut fixture = ShutdownFixture::spawn();
+    let mut stdout = fixture.child.stdout.take().unwrap();
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let reader = thread::spawn(move || {
+        let mut byte = [0];
+        let result = stdout.read_exact(&mut byte);
+        sender
+            .send((stdout, result, byte))
+            .expect("fixture must wait for output to start");
+    });
+    let body =
+        serde_json::to_vec(&json!({"jsonrpc":"2.0","id":"x".repeat(128 * 1024),"method":"info"}))
+            .unwrap();
+    fixture.send(&body);
+    let (_unread_output, result, first_byte) =
+        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+    result.unwrap();
+    assert_eq!(first_byte, [b'C']);
+    let started = Instant::now();
+    fixture.child.stdin.take();
+    let status = jsonrpc_client::wait_for_exit(&mut fixture.child, Duration::from_secs(1)).unwrap();
+    assert!(status.success());
+    assert!(started.elapsed() < Duration::from_secs(1));
+    reader.join().unwrap();
+}
+
+fn wait_for_descendant_lease(
+    mut try_lock: impl FnMut() -> Result<(), fs::TryLockError>,
+    timeout: Duration,
+) -> std::io::Result<()> {
+    let started = Instant::now();
+    loop {
+        match try_lock() {
+            Ok(()) => return Ok(()),
+            Err(fs::TryLockError::Error(error)) => return Err(error),
+            Err(fs::TryLockError::WouldBlock) => {}
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "descendant still holds its lease at the shutdown deadline",
+            ));
+        }
+        thread::sleep(Duration::from_millis(10).min(remaining));
+    }
+}
+
+#[test]
+fn descendant_lease_wait_is_bounded_and_requires_release() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("lease");
+    let holder = fs::File::create(&path).unwrap();
+    holder.try_lock().unwrap();
+    let lease = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .unwrap();
+    let started = Instant::now();
+    assert_eq!(
+        wait_for_descendant_lease(|| lease.try_lock(), Duration::from_millis(20))
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::TimedOut
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let mut holder = Some(holder);
+    let mut attempts = 0;
+    wait_for_descendant_lease(
+        || {
+            attempts += 1;
+            let result = lease.try_lock();
+            if attempts == 1 {
+                assert!(matches!(result, Err(fs::TryLockError::WouldBlock)));
+                drop(holder.take());
+            }
+            result
+        },
+        Duration::from_secs(1),
+    )
+    .expect("lease polling must observe release after initial contention");
+    assert_eq!(attempts, 2);
+}
+
+#[cfg(feature = "ci")]
+#[test]
+fn stdin_eof_cancels_an_active_interpreter_and_its_descendant() {
+    let output = Command::new(if cfg!(windows) { "python" } else { "python3" })
+        .args([
+            "-S",
+            "-c",
+            "import sys; sys.stdout.buffer.write(sys.executable.encode('utf-8'))",
+        ])
+        .output()
+        .expect("CI must provide Python for the active-probe fixture");
+    assert!(output.status.success());
+    let python = String::from_utf8(output.stdout).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("sitecustomize.py"),
+        include_str!("fixtures/shutdown_probe.py"),
+    )
+    .unwrap();
+    let control_path = directory.path().join("control");
+    let lease_path = directory.path().join("lease");
+    let ready_path = directory.path().join("ready");
+    let mut control = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&control_path)
+        .unwrap();
+    control.write_all(b"x").unwrap();
+    control.try_lock().unwrap();
+    let client = PetJsonRpcClient::spawn_with_environment(&[
+        ("PYTHONPATH", directory.path().as_os_str()),
+        ("PET_SHUTDOWN_CONTROL", control_path.as_os_str()),
+        ("PET_SHUTDOWN_LEASE", lease_path.as_os_str()),
+        ("PET_SHUTDOWN_READY", ready_path.as_os_str()),
+    ])
+    .unwrap();
+    client.info().unwrap();
+    let worker = client.clone();
+    let request = thread::spawn(move || worker.resolve(&python));
+    let started = Instant::now();
+    while !ready_path.is_file() {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "probe must establish its descendant lease; stderr: {}",
+            client.stderr_output()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let lease = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lease_path)
+        .unwrap();
+    assert!(matches!(
+        lease.try_lock(),
+        Err(fs::TryLockError::WouldBlock)
+    ));
+    let started = Instant::now();
+    let status = client.shutdown(Duration::from_secs(4)).unwrap();
+    assert!(
+        status.success(),
+        "active-probe shutdown failed: {status}; stderr: {}",
+        client.stderr_output()
+    );
+    // Observe OS lease release within the same budget as server shutdown.
+    wait_for_descendant_lease(
+        || lease.try_lock(),
+        Duration::from_secs(4).saturating_sub(started.elapsed()),
+    )
+    .expect("shutdown must release the actual descendant's lease");
+    assert!(started.elapsed() < Duration::from_secs(4));
+    assert!(
+        request.join().unwrap().is_err(),
+        "an active request must be cancelled, not reported as successful"
     );
 }

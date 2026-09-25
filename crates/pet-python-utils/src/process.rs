@@ -5,6 +5,8 @@
 
 mod tree;
 use tree::ProcessTree;
+mod supervisor;
+use supervisor::{Admission, Supervisor};
 
 use std::{
     fmt,
@@ -19,12 +21,14 @@ const CAPTURE_LIMIT: usize = 4 * 1024 * 1024;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+static SUPERVISOR: Supervisor = Supervisor::new();
 
 #[derive(Debug)]
 pub enum ProcessError {
     Spawn(io::Error),
     Ownership(io::Error),
     Io(io::Error),
+    Cancelled,
     Timeout(Duration),
     OutputLimit(usize),
     IncompleteOutput(ExitStatus),
@@ -52,6 +56,7 @@ impl fmt::Display for ProcessError {
             Self::Spawn(error) => write!(f, "failed to spawn subprocess: {error}"),
             Self::Ownership(error) => write!(f, "subprocess ownership failed: {error}"),
             Self::Io(error) => write!(f, "subprocess I/O failed: {error}"),
+            Self::Cancelled => write!(f, "subprocess cancelled for process shutdown"),
             Self::Timeout(timeout) => write!(f, "subprocess timed out after {timeout:?}"),
             Self::OutputLimit(limit) => {
                 write!(f, "subprocess output exceeded {limit} captured bytes")
@@ -72,7 +77,10 @@ impl std::error::Error for ProcessError {
         match self {
             Self::Spawn(error) | Self::Ownership(error) | Self::Io(error) => Some(error),
             Self::Cleanup { primary, .. } => Some(primary.as_ref()),
-            Self::Timeout(_) | Self::OutputLimit(_) | Self::IncompleteOutput(_) => None,
+            Self::Cancelled
+            | Self::Timeout(_)
+            | Self::OutputLimit(_)
+            | Self::IncompleteOutput(_) => None,
         }
     }
 }
@@ -95,23 +103,66 @@ impl From<io::Error> for ProcessError {
 /// depend on additional creation flags. Arguments, cwd, and environment are kept.
 /// Retained bytes are bounded; an extra byte detects overflow and is not retained.
 pub fn output(command: &mut Command, timeout: Duration) -> Result<Output, ProcessError> {
-    output_with_limit(command, timeout, CAPTURE_LIMIT)
+    output_with_supervisor(command, timeout, CAPTURE_LIMIT, &SUPERVISOR)
 }
 
+/// Permanently closes discovery-probe admission for this process, cancels all
+/// admitted probes, and waits up to `timeout` for their ownership cleanup.
+///
+/// A successful return guarantees that every probe accepted before closure has
+/// completed cleanup successfully. The first cleanup failure is retained and
+/// returned after all admitted probes finish, including from repeated calls. A
+/// timeout leaves admission closed and cancellation active; callers may invoke
+/// this again to continue waiting. Synchronous OS process creation and OS I/O
+/// calls cannot be interrupted by this API, so shutdown can time out while an
+/// admitted thread is inside one of those calls.
+pub fn shutdown(timeout: Duration) -> io::Result<()> {
+    SUPERVISOR.shutdown(timeout)
+}
+
+/// Returns whether process-wide probe shutdown has begun.
+pub fn is_shutting_down() -> bool {
+    SUPERVISOR.is_shutting_down()
+}
+
+#[cfg(test)]
 fn output_with_limit(
     command: &mut Command,
     timeout: Duration,
     limit: usize,
 ) -> Result<Output, ProcessError> {
-    output_with_setup(command, timeout, limit, |tree, child| tree.attach(child))
+    output_with_supervisor(command, timeout, limit, &SUPERVISOR)
 }
 
+fn output_with_supervisor(
+    command: &mut Command,
+    timeout: Duration,
+    limit: usize,
+    supervisor: &Supervisor,
+) -> Result<Output, ProcessError> {
+    output_with_supervisor_setup(command, timeout, limit, supervisor, |tree, child| {
+        tree.attach(child)
+    })
+}
+
+#[cfg(test)]
 fn output_with_setup(
     command: &mut Command,
     timeout: Duration,
     limit: usize,
     setup: impl FnOnce(&mut ProcessTree, &Child) -> io::Result<()>,
 ) -> Result<Output, ProcessError> {
+    output_with_supervisor_setup(command, timeout, limit, &SUPERVISOR, setup)
+}
+
+fn output_with_supervisor_setup(
+    command: &mut Command,
+    timeout: Duration,
+    limit: usize,
+    supervisor: &Supervisor,
+    setup: impl FnOnce(&mut ProcessTree, &Child) -> io::Result<()>,
+) -> Result<Output, ProcessError> {
+    let admission = supervisor.admit()?;
     let mut tree = ProcessTree::prepare(command).map_err(ProcessError::Ownership)?;
     let mut child = command
         .stdin(Stdio::null())
@@ -139,14 +190,17 @@ fn output_with_setup(
             started,
             timeout,
             limit,
+            &admission,
         )
     })();
     drop(stdout);
     drop(stderr);
     let cleanup = cleanup(child, &mut tree);
+    let shutdown_won = admission.finish(&cleanup);
     match result {
-        Ok(output) => cleanup.map(|()| output).map_err(ProcessError::Ownership),
         Err(primary) => Err(primary.with_cleanup(cleanup)),
+        Ok(_) if shutdown_won => Err(ProcessError::Cancelled.with_cleanup(cleanup)),
+        Ok(output) => cleanup.map(|()| output).map_err(ProcessError::Ownership),
     }
 }
 
@@ -157,6 +211,7 @@ fn capture(
     started: Instant,
     timeout: Duration,
     limit: usize,
+    admission: &Admission<'_>,
 ) -> Result<Output, ProcessError> {
     let mut captured_stdout = Vec::new();
     let mut captured_stderr = Vec::new();
@@ -165,6 +220,9 @@ fn capture(
     let mut status = None;
     let mut scratch = [0; 8192];
     loop {
+        if admission.is_cancelled() {
+            return Err(ProcessError::Cancelled);
+        }
         if status.is_none() {
             status = poll()?;
         }
@@ -438,13 +496,20 @@ mod tests {
                 }
                 std::process::exit(if mode == "nonzero" { 23 } else { 0 });
             }
-            "hang" => {
+            "hang" | "noisy-hang" => {
                 fs::write(
                     std::env::var_os("PET_CAPTURE_PID").unwrap(),
                     std::process::id().to_string(),
                 )
                 .unwrap();
-                thread::sleep(Duration::from_secs(30));
+                let started = Instant::now();
+                while started.elapsed() < Duration::from_secs(30) {
+                    if mode == "noisy-hang" {
+                        io::stdout().write_all(&[0xfe; 1024]).unwrap();
+                        io::stdout().flush().unwrap();
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
             }
             "inherit" | "tree-hang" | "tree-limit" | "tree-nonzero" | "tree-no-pipes"
             | "escape" => {
@@ -879,6 +944,40 @@ mod tests {
         assert_child_reaped(pid);
     }
 
+    #[test]
+    fn setup_failure_remains_primary_when_shutdown_wins_completion() {
+        let _guard = FIXTURES.lock().unwrap();
+        let supervisor = Supervisor::new();
+        let mut pid = 0;
+        let error = output_with_supervisor_setup(
+            &mut fixture_command("quiet"),
+            Duration::from_secs(2),
+            100,
+            &supervisor,
+            |tree, child| {
+                #[cfg(unix)]
+                tree.attach(child)?;
+                #[cfg(windows)]
+                let _ = tree;
+                pid = child.id();
+                let shutdown = supervisor.shutdown(Duration::ZERO).unwrap_err();
+                assert_eq!(shutdown.kind(), io::ErrorKind::TimedOut);
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "injected ownership failure after shutdown",
+                ))
+            },
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, ProcessError::Ownership(_)), "{error}");
+        assert!(error
+            .to_string()
+            .contains("injected ownership failure after shutdown"));
+        assert_child_reaped(pid);
+        supervisor.shutdown(Duration::ZERO).unwrap();
+    }
+
     struct BytesPipe(io::Cursor<Vec<u8>>);
     impl Pipe for BytesPipe {
         fn read_available(&mut self, buffer: &mut [u8]) -> io::Result<PipeRead> {
@@ -973,6 +1072,8 @@ mod tests {
             bytes: BytesPipe(io::Cursor::new(vec![0xff, 1, 2])),
         };
         let mut stderr = BytesPipe(io::Cursor::new(vec![]));
+        let supervisor = Supervisor::new();
+        let admission = supervisor.admit().unwrap();
         let result = capture(
             &mut || tree.poll(&mut child).map_err(ProcessError::Ownership),
             &mut stdout,
@@ -980,12 +1081,239 @@ mod tests {
             Instant::now(),
             Duration::from_secs(1),
             3,
+            &admission,
         )
         .unwrap();
         assert_eq!(result.stdout, vec![0xff, 1, 2]);
         assert!(result.stderr.is_empty());
         assert!(result.status.success());
         cleanup(child, &mut tree).unwrap();
+        assert!(!admission.finish(&Ok(())));
+    }
+
+    #[test]
+    fn closed_supervisor_refuses_probe_before_spawn() {
+        let supervisor = Supervisor::new();
+        supervisor.shutdown(Duration::ZERO).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let pid = directory.path().join("pid");
+        let mut command = fixture_command("hang");
+        command.env("PET_CAPTURE_PID", &pid);
+
+        let error = output_with_supervisor(
+            &mut command,
+            Duration::from_secs(10),
+            CAPTURE_LIMIT,
+            &supervisor,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, ProcessError::Cancelled), "{error}");
+        assert!(!pid.exists(), "cancelled probe was spawned");
+    }
+
+    #[test]
+    fn shutdown_cancels_running_quiet_and_noisy_probes() {
+        let _guard = FIXTURES.lock().unwrap();
+        for mode in ["hang", "noisy-hang"] {
+            let supervisor = Supervisor::new();
+            let directory = tempfile::tempdir().unwrap();
+            let pid_file = directory.path().join("pid");
+            let mut command = fixture_command(mode);
+            command.env("PET_CAPTURE_PID", &pid_file);
+
+            thread::scope(|scope| {
+                let probe = scope.spawn(|| {
+                    output_with_supervisor(
+                        &mut command,
+                        Duration::from_secs(15),
+                        CAPTURE_LIMIT,
+                        &supervisor,
+                    )
+                });
+                let pid = wait_for_pid(&pid_file, "probe did not reach fixture");
+                let started = Instant::now();
+                supervisor.shutdown(Duration::from_secs(5)).unwrap();
+                assert!(
+                    started.elapsed() < Duration::from_secs(2),
+                    "shutdown did not cancel {mode} probe promptly"
+                );
+                let error = probe.join().unwrap().unwrap_err();
+                assert!(matches!(error, ProcessError::Cancelled), "{error}");
+                assert_child_reaped(pid);
+            });
+        }
+    }
+
+    #[test]
+    fn shutdown_releases_descendants_and_preserves_unrelated_processes() {
+        let _guard = FIXTURES.lock().unwrap();
+        let unrelated_directory = tempfile::tempdir().unwrap();
+        let mut unrelated = FixtureChild(
+            fixture_command("descendant")
+                .env("PET_CAPTURE_DIRECTORY", unrelated_directory.path())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        wait_for_path(
+            &unrelated_directory.path().join("ready"),
+            "unrelated fixture did not start",
+        );
+
+        let supervisor = Supervisor::new();
+        let owned = ReleaseDescendant(tempfile::tempdir().unwrap());
+        let root_pid = owned.0.path().join("root-pid");
+        let mut command = fixture_command("tree-hang");
+        command
+            .env("PET_CAPTURE_DIRECTORY", owned.0.path())
+            .env("PET_CAPTURE_PID", &root_pid);
+        thread::scope(|scope| {
+            let probe = scope.spawn(|| {
+                output_with_supervisor(
+                    &mut command,
+                    Duration::from_secs(15),
+                    CAPTURE_LIMIT,
+                    &supervisor,
+                )
+            });
+            wait_for_path(
+                &owned.0.path().join("ready"),
+                "owned descendant did not start",
+            );
+            supervisor.shutdown(Duration::from_secs(5)).unwrap();
+            let error = probe.join().unwrap().unwrap_err();
+            assert!(matches!(error, ProcessError::Cancelled), "{error}");
+        });
+
+        owned.assert_terminated();
+        assert_child_reaped(fs::read_to_string(root_pid).unwrap().parse().unwrap());
+        assert!(unrelated.0.try_wait().unwrap().is_none());
+        let lease = fs::File::open(unrelated_directory.path().join("lease")).unwrap();
+        assert!(matches!(
+            lease.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+    }
+
+    #[test]
+    fn shutdown_closes_admission_and_waits_for_accepted_cleanup() {
+        use std::sync::mpsc;
+
+        let supervisor = Supervisor::new();
+        let admission = supervisor.admit().unwrap();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                completed_tx
+                    .send(supervisor.shutdown(Duration::from_secs(2)))
+                    .unwrap();
+            });
+            let started = Instant::now();
+            while !supervisor.is_shutting_down() {
+                assert!(
+                    started.elapsed() < Duration::from_secs(1),
+                    "shutdown did not close admission"
+                );
+                thread::yield_now();
+            }
+            assert!(matches!(supervisor.admit(), Err(ProcessError::Cancelled)));
+            assert!(
+                completed_rx.try_recv().is_err(),
+                "shutdown completed before accepted cleanup"
+            );
+            assert!(admission.finish(&Ok(())));
+            completed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn shutdown_timeout_keeps_admission_closed_and_can_be_retried() {
+        let supervisor = Supervisor::new();
+        let admission = supervisor.admit().unwrap();
+        let error = supervisor.shutdown(Duration::ZERO).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(matches!(supervisor.admit(), Err(ProcessError::Cancelled)));
+        assert!(admission.finish(&Ok(())));
+        supervisor.shutdown(Duration::ZERO).unwrap();
+    }
+
+    #[test]
+    fn shutdown_preserves_first_cleanup_failure() {
+        use std::sync::mpsc;
+
+        let supervisor = Supervisor::new();
+        let first = supervisor.admit().unwrap();
+        let second = supervisor.admit().unwrap();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                completed_tx
+                    .send(supervisor.shutdown(Duration::from_secs(2)))
+                    .unwrap();
+            });
+            let started = Instant::now();
+            while !supervisor.is_shutting_down() {
+                assert!(
+                    started.elapsed() < Duration::from_secs(1),
+                    "shutdown did not close admission"
+                );
+                thread::yield_now();
+            }
+            assert!(first.finish(&Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected first cleanup failure",
+            ))));
+            assert!(second.finish(&Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "injected later cleanup failure",
+            ))));
+            let error = completed_rx
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert!(error.to_string().contains("probe cleanup failed"));
+            assert!(error.to_string().contains("injected first cleanup failure"));
+        });
+
+        let repeated = supervisor.shutdown(Duration::ZERO).unwrap_err();
+        assert_eq!(repeated.kind(), io::ErrorKind::PermissionDenied);
+        assert!(repeated
+            .to_string()
+            .contains("injected first cleanup failure"));
+
+        let successful = Supervisor::new();
+        let admission = successful.admit().unwrap();
+        assert!(!admission.finish(&Ok(())));
+        successful.shutdown(Duration::ZERO).unwrap();
+    }
+
+    fn wait_for_path(path: &Path, failure: &str) {
+        let started = Instant::now();
+        while !path.exists() {
+            assert!(started.elapsed() < Duration::from_secs(10), "{failure}");
+            thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    fn wait_for_pid(path: &Path, failure: &str) -> u32 {
+        let started = Instant::now();
+        loop {
+            if let Ok(pid) = fs::read_to_string(path).and_then(|value| {
+                value
+                    .parse()
+                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+            }) {
+                return pid;
+            }
+            assert!(started.elapsed() < Duration::from_secs(10), "{failure}");
+            thread::sleep(POLL_INTERVAL);
+        }
     }
 
     struct FailingPipe;
@@ -1028,6 +1356,13 @@ mod tests {
             ProcessError::OutputLimit(1).with_cleanup(Ok(())),
             ProcessError::OutputLimit(1)
         ));
+        let cancellation = ProcessError::Cancelled.with_cleanup(Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "injected cancellation cleanup failure",
+        )));
+        assert!(
+            matches!(&cancellation, ProcessError::Cleanup { primary, .. } if matches!(primary.as_ref(), ProcessError::Cancelled))
+        );
         assert!(error.to_string().contains("timed out"));
         assert!(error.to_string().contains("kill failure"));
         let source = std::error::Error::source(&error)

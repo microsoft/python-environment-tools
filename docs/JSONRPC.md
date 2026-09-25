@@ -11,6 +11,48 @@ For samples using JSONRPC, please have a look at the [sample.js](./sample.js) fi
 
 Any requests/notifications not documented here are not supported.
 
+## Transport lifetime and limits
+
+Close the server process's stdin after receiving all responses you need. EOF at a
+frame boundary is a normal shutdown, not an empty request. PET stops accepting
+requests and output, discards pending notifications/replies, cancels admitted
+interpreter and manager probes, and exits successfully once their ownership
+cleanup finishes. Closing stdin is cancellation, not a request to drain unfinished
+requests. Test clients wait for normal exit and forcibly terminate only their own
+child as a bounded failure fallback.
+
+EOF inside a header or payload, malformed framing, and read/write/flush failures
+are terminal errors: PET reports the failure on stderr and exits unsuccessfully.
+Malformed JSON in a complete frame instead receives a Parse Error (`-32700`,
+`id: null`), after which subsequent frames can still be processed. Protocol stdout
+contains framed JSONRPC only.
+
+Input is currently one `Content-Length` header followed by a blank line and the
+specified number of UTF-8 payload bytes. Both CRLF and LF line endings are accepted.
+Headers including the separator are limited to 8 KiB, and payloads to 16 MiB, before
+payload allocation. Multi-header input parsing is tracked separately in
+[#532](https://github.com/microsoft/python-environment-tools/issues/532).
+
+One process-lifetime writer emits accepted frames in FIFO order, so a refresh reply
+cannot overtake notifications already admitted before it. Each serialized output
+payload is limited to 16 MiB; the queue holds at most 1,024 frames and 32 MiB of
+retained frame capacity. The queue limit excludes one in-flight frame and the
+single producer's serialization/frame-building buffers, whose payloads are also
+limited to 16 MiB each. Queue saturation is a terminal connection error rather
+than an unbounded allocation or a wait on a slow consumer. These are output bounds,
+not a bound on total request/discovery memory or worker concurrency.
+
+The writer owns a duplicate OS stdout handle and does not hold Rust's global stdout
+lock. Shutdown drops queued output and abandons in-flight output without joining
+an OS-blocked writer or stdin reader; those process-lifetime threads end when the
+standalone server exits. The first output failure recorded before closure remains
+fatal; errors arriving after normal closure are discarded with the cancelled work.
+Admitted probes are tracked separately through ownership cleanup, with a shared
+three-second server shutdown wait. Cleanup failures or an expired wait are reported
+as errors, never as clean shutdown. Synchronous OS process creation and individual
+OS I/O calls cannot be interrupted by this mechanism; nor does it extend the Unix
+ownership boundary to descendants that deliberately escape their process group.
+
 ## Request identifiers
 
 Requests include an `id` that is a string, JSON number, or explicit `null`. PET preserves
@@ -280,7 +322,7 @@ Interpreter probes used for resolution and manager probes used during refresh/di
 - Unix probes start in a new process group. PET signals that group before reaping its leader, avoiding process-ID reuse. On macOS, an otherwise ambiguous permission error is accepted only when bounded, unchanged membership and process-birth identities confirm that all group members are already zombies; incomplete or failed inspection remains an error. Descendants that deliberately start another group/session escape this boundary; PET does not act as a system-wide descendant reaper.
 - Windows probes start suspended and without a console window. PET assigns an unnamed, non-breakaway, kill-on-close job before resuming the child's sole thread. Stable Rust does not expose the primary-thread handle, so PET uses a per-process thread-metadata snapshot (`PssCaptureSnapshot`, Windows 8.1+) and verifies the selected thread's process identity. It does not enumerate system-wide threads or clone the child's address space. Ambiguous/missing thread ownership or failed job assignment fails the probe rather than running it unsupervised. Command arguments, environment, working directory, and batch-file launch still use Rust's standard process implementation; the discovery-only runner replaces any caller-supplied Windows creation flags with `CREATE_NO_WINDOW | CREATE_SUSPENDED`. All current interpreter/manager callers previously supplied only `CREATE_NO_WINDOW`.
 - After the direct child exits, draining continues within the same deadline. If output has not reached EOF (for example, an escaped Unix descendant retains a write handle), the probe fails explicitly with incomplete output rather than waiting indefinitely. Output produced only by background helpers after their parent exits is not guaranteed: remaining owned helpers are terminated, including on successful parent exit.
-- These are per-subprocess limits, not a total request/workspace budget. They do not bound synchronous OS process creation. Server active-request cancellation and shutdown remain a separate lifecycle concern.
+- These are per-subprocess limits, not a total request/workspace budget. They do not bound synchronous OS process creation. During server shutdown, new probes are refused and active probes are cancelled through the same ownership cleanup. Cancellation alone is traced rather than logged as a probe failure; cleanup failures remain errors.
 
 Missing default Conda executables are quietly ignored; installed/custom manager failures and all
 timeouts/output failures are logged. Interpreter and Conda JSON is parsed strictly. Poetry stdout
