@@ -6,6 +6,7 @@ use pet_core::{arch::Architecture, env::PythonEnv, python_environment::PythonEnv
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    process::{Command, Output},
     time::{Duration, SystemTime},
 };
 
@@ -102,11 +103,19 @@ fn get_interpreter_details_with_timeout(
     executable: &Path,
     timeout: Duration,
 ) -> Option<ResolvedPythonEnv> {
+    get_interpreter_details_with_runner(executable, timeout, output)
+}
+
+fn get_interpreter_details_with_runner(
+    executable: &Path,
+    timeout: Duration,
+    run: impl FnOnce(&mut Command, Duration) -> Result<Output, ProcessError>,
+) -> Option<ResolvedPythonEnv> {
     // Spawn the python exe and get the version, sys.prefix and sys.executable.
     let executable = executable.to_str()?;
     let start = SystemTime::now();
     trace!("Executing Python: {} -c {}", executable, PYTHON_INFO_CMD);
-    let result = output(
+    let result = run(
         new_silent_command(executable).args(["-c", PYTHON_INFO_CMD]),
         timeout,
     );
@@ -194,28 +203,39 @@ fn parse_interpreter_output(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use std::{os::unix::fs::PermissionsExt, time::Instant};
+    use std::time::Instant;
 
     // https://github.com/microsoft/python-environment-tools/issues/525:
     // A launcher printing GBK-encoded "文件不存在" must not panic discovery.
     #[test]
-    fn get_interpreter_details_handles_non_utf8_stdout() -> std::io::Result<()> {
-        let directory = tempfile::tempdir()?;
-        let executable = directory.path().join("python");
-        std::fs::write(
-            &executable,
-            "#!/bin/sh\nprintf '\\316\\304\\274\\376\\262\\273\\264\\346\\324\\332: -c\\r\\n'\n",
-        )?;
-        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))?;
-        let result = get_interpreter_details_with_timeout(&executable, Duration::from_secs(5));
+    fn get_interpreter_details_handles_non_utf8_stdout() {
+        let result = get_interpreter_details_with_runner(
+            Path::new("/bin/sh"),
+            Duration::from_secs(5),
+            |command, timeout| {
+                assert_eq!(command.get_program(), "/bin/sh");
+                assert!(command.get_args().eq(["-c", PYTHON_INFO_CMD]));
+                let result = output(
+                    new_silent_command("/bin/sh").args([
+                        "-c",
+                        r"printf '\316\304\274\376\262\273\264\346\324\332: -c\r\n'",
+                    ]),
+                    timeout,
+                )
+                .expect("non-UTF-8 interpreter fixture runner must complete");
+                assert!(result.status.success());
+                assert_eq!(
+                    result.stdout,
+                    b"\xce\xc4\xbc\xfe\xb2\xbb\xb4\xe6\xd4\xda: -c\r\n"
+                );
+                Ok(result)
+            },
+        );
         assert!(result.is_none());
-        directory.close()
     }
 
     #[test]
     fn noisy_interpreter_output_resolves_only_on_success() {
-        let directory = tempfile::tempdir().unwrap();
-        let executable = directory.path().join("python");
         let payload = format!(
             "{}\n{}",
             PYTHON_INFO_JSON_SEPARATOR,
@@ -223,16 +243,40 @@ mod tests {
         );
         for exit_code in [0, 23] {
             let script = format!(
-                "#!/bin/sh\nprintf '%s' '{}' >&2\nprintf '\\377\\376%s\\n' '{}'\nexit {exit_code}\n",
-                "x".repeat(128 * 1024), payload
+                r#"i=0
+while [ "$i" -lt 128 ]; do
+    printf '%1024s' '' >&2
+    i=$((i + 1))
+done
+printf '\377\376%s\n' '{payload}'
+exit {exit_code}
+"#
             );
-            std::fs::write(&executable, script).unwrap();
-            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
             let started = Instant::now();
-            let result = get_interpreter_details_with_timeout(&executable, Duration::from_secs(5));
+            let result = get_interpreter_details_with_runner(
+                Path::new("/bin/sh"),
+                Duration::from_secs(5),
+                |command, timeout| {
+                    assert_eq!(command.get_program(), "/bin/sh");
+                    assert!(command.get_args().eq(["-c", PYTHON_INFO_CMD]));
+                    let result =
+                        output(new_silent_command("/bin/sh").args(["-c", &script]), timeout)
+                            .expect("noisy interpreter fixture runner must complete");
+                    assert_eq!(result.status.code(), Some(exit_code));
+                    assert_eq!(result.stderr.len(), 128 * 1024);
+                    assert!(result.stdout.starts_with(&[0xff, 0xfe]));
+                    assert_eq!(&result.stdout[2..], format!("{payload}\n").as_bytes());
+                    Ok(result)
+                },
+            );
             assert!(started.elapsed() < Duration::from_secs(5));
             if exit_code == 0 {
-                assert_eq!(result.unwrap().version, "3.13.1");
+                assert_eq!(
+                    result
+                        .expect("successful noisy interpreter fixture must resolve")
+                        .version,
+                    "3.13.1"
+                );
             } else {
                 assert!(
                     result.is_none(),
@@ -242,34 +286,28 @@ mod tests {
         }
     }
 
-    /// Regression test for #463: a spawn that never exits must not block the
-    /// resolve path indefinitely. We use a shell script that sleeps far longer
-    /// than the test timeout and assert that the call returns None promptly
-    /// (well under the script's sleep duration).
+    /// Regression test for #463: a spawn that never exits must not block resolve.
     #[test]
     fn get_interpreter_details_times_out_on_hanging_executable() {
-        let tmp_dir = std::env::temp_dir().join(format!(
-            "pet_resolve_timeout_{}_{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&tmp_dir).unwrap();
-        let fake_exe = tmp_dir.join("hangs");
-        std::fs::write(&fake_exe, "#!/bin/sh\nexec sleep 60\n").unwrap();
-        let mut perms = std::fs::metadata(&fake_exe).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&fake_exe, perms).unwrap();
-
         let start = Instant::now();
-        let result = get_interpreter_details_with_timeout(&fake_exe, Duration::from_millis(200));
+        let result = get_interpreter_details_with_runner(
+            Path::new("/bin/sh"),
+            Duration::from_millis(200),
+            |command, timeout| {
+                assert_eq!(command.get_program(), "/bin/sh");
+                assert!(command.get_args().eq(["-c", PYTHON_INFO_CMD]));
+                let result = output(
+                    new_silent_command("/bin/sh").args(["-c", "exec sleep 60"]),
+                    timeout,
+                );
+                assert!(
+                    matches!(&result, Err(ProcessError::Timeout(_))),
+                    "{result:?}"
+                );
+                result
+            },
+        );
         let elapsed = start.elapsed();
-
-        let _ = std::fs::remove_file(&fake_exe);
-        let _ = std::fs::remove_dir(&tmp_dir);
-
         assert!(result.is_none(), "hanging spawn must return None");
         assert!(
             elapsed < Duration::from_secs(3),
