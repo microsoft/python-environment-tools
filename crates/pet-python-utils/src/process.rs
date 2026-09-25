@@ -1,7 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Direct-child output capture. Descendant supervision is intentionally separate.
+//! Bounded probe output capture with OS-scoped descendant ownership.
+
+mod tree;
+use tree::ProcessTree;
 
 use std::{
     fmt,
@@ -20,6 +23,7 @@ const CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Debug)]
 pub enum ProcessError {
     Spawn(io::Error),
+    Ownership(io::Error),
     Io(io::Error),
     Timeout(Duration),
     OutputLimit(usize),
@@ -46,6 +50,7 @@ impl fmt::Display for ProcessError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Spawn(error) => write!(f, "failed to spawn subprocess: {error}"),
+            Self::Ownership(error) => write!(f, "subprocess ownership failed: {error}"),
             Self::Io(error) => write!(f, "subprocess I/O failed: {error}"),
             Self::Timeout(timeout) => write!(f, "subprocess timed out after {timeout:?}"),
             Self::OutputLimit(limit) => {
@@ -56,7 +61,7 @@ impl fmt::Display for ProcessError {
                 "subprocess exited with {status} but output did not reach EOF before the deadline"
             ),
             Self::Cleanup { primary, source } => {
-                write!(f, "{primary}; direct-child cleanup failed: {source}")
+                write!(f, "{primary}; subprocess cleanup failed: {source}")
             }
         }
     }
@@ -65,7 +70,7 @@ impl fmt::Display for ProcessError {
 impl std::error::Error for ProcessError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Spawn(error) | Self::Io(error) => Some(error),
+            Self::Spawn(error) | Self::Ownership(error) | Self::Io(error) => Some(error),
             Self::Cleanup { primary, .. } => Some(primary.as_ref()),
             Self::Timeout(_) | Self::OutputLimit(_) | Self::IncompleteOutput(_) => None,
         }
@@ -78,11 +83,16 @@ impl From<io::Error> for ProcessError {
     }
 }
 
-/// Drain both pipes while the direct child runs, without reader threads.
+/// Drain both pipes while an owned subprocess runs, without reader threads.
 ///
 /// The execution clock starts when synchronous OS spawn returns. At direct-child
-/// exit we continue draining within the same deadline, including when another
-/// process temporarily retains a write handle. Descendants cannot extend it.
+/// exit, remaining members of its Unix process group or Windows job are killed
+/// before reaping the child. Draining continues within the original deadline.
+/// Escaped Unix descendants are not owned and cannot extend that deadline.
+/// This is a discovery-probe API, not a general replacement for Command::output.
+/// On Windows it **replaces any caller-supplied creation flags** with
+/// CREATE_NO_WINDOW | CREATE_SUSPENDED for safe job assignment. Callers must not
+/// depend on additional creation flags. Arguments, cwd, and environment are kept.
 /// Retained bytes are bounded; an extra byte detects overflow and is not retained.
 pub fn output(command: &mut Command, timeout: Duration) -> Result<Output, ProcessError> {
     output_with_limit(command, timeout, CAPTURE_LIMIT)
@@ -93,6 +103,16 @@ fn output_with_limit(
     timeout: Duration,
     limit: usize,
 ) -> Result<Output, ProcessError> {
+    output_with_setup(command, timeout, limit, |tree, child| tree.attach(child))
+}
+
+fn output_with_setup(
+    command: &mut Command,
+    timeout: Duration,
+    limit: usize,
+    setup: impl FnOnce(&mut ProcessTree, &Child) -> io::Result<()>,
+) -> Result<Output, ProcessError> {
+    let mut tree = ProcessTree::prepare(command).map_err(ProcessError::Ownership)?;
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -109,10 +129,11 @@ fn output_with_limit(
         .take()
         .expect("stderr was configured as a pipe");
     let result = (|| {
+        setup(&mut tree, &child).map_err(ProcessError::Ownership)?;
         configure_pipe(&stdout)?;
         configure_pipe(&stderr)?;
         capture(
-            &mut child,
+            &mut || tree.poll(&mut child).map_err(ProcessError::Ownership),
             &mut stdout,
             &mut stderr,
             started,
@@ -122,14 +143,15 @@ fn output_with_limit(
     })();
     drop(stdout);
     drop(stderr);
+    let cleanup = cleanup(child, &mut tree);
     match result {
-        Ok(output) => Ok(output),
-        Err(primary) => Err(primary.with_cleanup(terminate_and_reap(child))),
+        Ok(output) => cleanup.map(|()| output).map_err(ProcessError::Ownership),
+        Err(primary) => Err(primary.with_cleanup(cleanup)),
     }
 }
 
 fn capture(
-    child: &mut Child,
+    poll: &mut impl FnMut() -> Result<Option<ExitStatus>, ProcessError>,
     stdout: &mut impl Pipe,
     stderr: &mut impl Pipe,
     started: Instant,
@@ -144,7 +166,7 @@ fn capture(
     let mut scratch = [0; 8192];
     loop {
         if status.is_none() {
-            status = poll_child(child)?;
+            status = poll()?;
         }
         let mut progressed = false;
         if !stdout_eof {
@@ -318,7 +340,16 @@ fn poll_child(child: &mut Child) -> io::Result<Option<ExitStatus>> {
     }
 }
 
-fn terminate_and_reap(mut child: Child) -> io::Result<()> {
+fn cleanup(child: Child, tree: &mut ProcessTree) -> io::Result<()> {
+    let started = Instant::now();
+    let termination = tree.terminate();
+    let reaping = terminate_and_reap(child, started);
+    let descendants = tree.finish(started);
+    // Always attempt reaping even when group/job termination failed.
+    termination.and(reaping).and(descendants)
+}
+
+fn terminate_and_reap(mut child: Child, started: Instant) -> io::Result<()> {
     match poll_child(&mut child) {
         Ok(Some(_)) => return Ok(()),
         Ok(None) => {}
@@ -331,7 +362,6 @@ fn terminate_and_reap(mut child: Child) -> io::Result<()> {
         }
     }
     let kill_error = child.kill().err();
-    let started = Instant::now();
     loop {
         match poll_child(&mut child) {
             Ok(Some(_)) => return Ok(()),
@@ -416,9 +446,20 @@ mod tests {
                 .unwrap();
                 thread::sleep(Duration::from_secs(30));
             }
-            "inherit" => {
+            "inherit" | "tree-hang" | "tree-limit" | "tree-nonzero" | "tree-no-pipes"
+            | "escape" => {
+                if let Some(pid_file) = std::env::var_os("PET_CAPTURE_PID") {
+                    fs::write(pid_file, std::process::id().to_string()).unwrap();
+                }
                 let mut command = fixture_command("descendant");
-                command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+                if mode == "tree-no-pipes" {
+                    command.stdout(Stdio::null()).stderr(Stdio::null());
+                } else {
+                    command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+                }
+                if mode == "escape" {
+                    command.env("PET_CAPTURE_ESCAPE", "1");
+                }
                 let mut descendant = command.spawn().unwrap();
                 let directory = std::env::var_os("PET_CAPTURE_DIRECTORY").unwrap();
                 let ready = Path::new(&directory).join("ready");
@@ -431,11 +472,31 @@ mod tests {
                     }
                     thread::sleep(POLL_INTERVAL);
                 }
+                if mode == "tree-hang" {
+                    thread::sleep(Duration::from_secs(30));
+                }
+                if mode == "tree-limit" {
+                    io::stdout().write_all(&vec![0xfe; LARGE_OUTPUT]).unwrap();
+                }
+                std::process::exit(if mode == "tree-nonzero" { 23 } else { 0 });
+            }
+            "nested" => {
+                let result =
+                    output(&mut fixture_command("inherit"), Duration::from_secs(5)).unwrap();
+                assert!(result.status.success());
                 std::process::exit(0);
             }
             "descendant" => {
                 let directory = std::env::var_os("PET_CAPTURE_DIRECTORY").unwrap();
                 let directory = Path::new(&directory);
+                #[cfg(unix)]
+                if std::env::var_os("PET_CAPTURE_ESCAPE").is_some() {
+                    // SAFETY: this deliberately escaped, single fixture process
+                    // is cleaned up by the release handshake, not by PET.
+                    assert_ne!(unsafe { libc::setsid() }, -1);
+                }
+                let lease = fs::File::create(directory.join("lease")).unwrap();
+                lease.lock().unwrap();
                 fs::write(directory.join("ready"), b"ready").unwrap();
                 let started = Instant::now();
                 while !directory.join("release").exists()
@@ -543,25 +604,115 @@ mod tests {
 
     struct ReleaseDescendant(tempfile::TempDir);
 
+    impl ReleaseDescendant {
+        fn assert_terminated(&self) {
+            assert!(
+                self.0.path().join("ready").exists(),
+                "descendant never started"
+            );
+            let lease = fs::File::open(self.0.path().join("lease")).unwrap();
+            let started = Instant::now();
+            loop {
+                match lease.try_lock() {
+                    Ok(()) => break,
+                    Err(fs::TryLockError::WouldBlock) => {
+                        assert!(
+                            started.elapsed() < CLEANUP_TIMEOUT,
+                            "descendant still holds its lease"
+                        );
+                        thread::sleep(POLL_INTERVAL);
+                    }
+                    Err(error) => panic!("failed to inspect descendant lease: {error}"),
+                }
+            }
+            assert!(
+                !self.0.path().join("done").exists(),
+                "descendant exited on its own instead of being terminated"
+            );
+        }
+    }
+
+    impl ReleaseDescendant {
+        fn release(&self) -> io::Result<()> {
+            fs::write(self.0.path().join("release"), b"release")?;
+            if !self.0.path().join("ready").exists() {
+                return Ok(());
+            }
+            let lease = fs::File::open(self.0.path().join("lease"))?;
+            let started = Instant::now();
+            loop {
+                match lease.try_lock() {
+                    Ok(()) => return Ok(()),
+                    Err(fs::TryLockError::WouldBlock) => {
+                        if started.elapsed() >= Duration::from_secs(12) {
+                            return Err(io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "descendant did not acknowledge cleanup",
+                            ));
+                        }
+                        thread::sleep(POLL_INTERVAL);
+                    }
+                    Err(fs::TryLockError::Error(error)) => return Err(error),
+                }
+            }
+        }
+    }
+
     impl Drop for ReleaseDescendant {
         fn drop(&mut self) {
-            fs::write(self.0.path().join("release"), b"release").unwrap();
-            let started = Instant::now();
-            while !self.0.path().join("done").exists() && self.0.path().join("ready").exists() {
-                assert!(
-                    started.elapsed() < Duration::from_secs(12),
-                    "descendant did not acknowledge cleanup"
-                );
-                thread::sleep(POLL_INTERVAL);
+            if let Err(error) = self.release() {
+                eprintln!("Failed to clean up descendant fixture: {error}");
             }
         }
     }
 
     #[test]
-    fn inherited_pipe_returns_explicit_error_without_waiting_for_descendant() {
+    fn root_exit_terminates_descendants_with_or_without_inherited_pipes() {
+        let _guard = FIXTURES.lock().unwrap();
+        for mode in ["inherit", "tree-no-pipes", "tree-nonzero"] {
+            let directory = ReleaseDescendant(tempfile::tempdir().unwrap());
+            let pid = directory.0.path().join("root-pid");
+            let mut command = fixture_command(mode);
+            command
+                .env("PET_CAPTURE_DIRECTORY", directory.0.path())
+                .env("PET_CAPTURE_PID", &pid);
+            let started = Instant::now();
+            let result = output(&mut command, Duration::from_secs(5)).unwrap();
+            assert_eq!(
+                result.status.code(),
+                Some(if mode == "tree-nonzero" { 23 } else { 0 })
+            );
+            assert!(started.elapsed() < Duration::from_secs(5));
+            directory.assert_terminated();
+            assert_child_reaped(fs::read_to_string(pid).unwrap().parse().unwrap());
+        }
+    }
+
+    #[test]
+    fn timeout_and_output_limit_terminate_descendants() {
+        let _guard = FIXTURES.lock().unwrap();
+        for mode in ["tree-hang", "tree-limit"] {
+            let directory = ReleaseDescendant(tempfile::tempdir().unwrap());
+            let mut command = fixture_command(mode);
+            command.env("PET_CAPTURE_DIRECTORY", directory.0.path());
+            let started = Instant::now();
+            let error = output_with_limit(&mut command, Duration::from_secs(2), 4096).unwrap_err();
+            if mode == "tree-hang" {
+                assert!(matches!(error, ProcessError::Timeout(_)), "{error}");
+            } else {
+                assert!(matches!(error, ProcessError::OutputLimit(4096)), "{error}");
+            }
+            assert!(started.elapsed() < Duration::from_secs(5));
+            directory.assert_terminated();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn escaped_descendant_cannot_extend_capture_deadline() {
         let _guard = FIXTURES.lock().unwrap();
         let directory = ReleaseDescendant(tempfile::tempdir().unwrap());
-        let mut command = fixture_command("inherit");
+        let mut command = fixture_command("escape");
         command.env("PET_CAPTURE_DIRECTORY", directory.0.path());
         let started = Instant::now();
         let error = output(&mut command, Duration::from_secs(2)).unwrap_err();
@@ -571,7 +722,161 @@ mod tests {
         );
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(!directory.0.path().join("done").exists());
-        drop(directory);
+        directory.release().unwrap();
+        assert!(directory.0.path().join("done").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nested_job_ownership_terminates_descendants() {
+        let _guard = FIXTURES.lock().unwrap();
+        let directory = ReleaseDescendant(tempfile::tempdir().unwrap());
+        let mut command = fixture_command("nested");
+        command.env("PET_CAPTURE_DIRECTORY", directory.0.path());
+        assert!(output(&mut command, Duration::from_secs(10))
+            .unwrap()
+            .status
+            .success());
+        directory.assert_terminated();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failure_after_job_assignment_reaps_suspended_child() {
+        let _guard = FIXTURES.lock().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("pid");
+        let mut command = fixture_command("hang");
+        command.env("PET_CAPTURE_PID", &pid_file);
+        let mut pid = 0;
+        let error = output_with_setup(&mut command, Duration::from_secs(2), 100, |tree, child| {
+            tree.assign(child)?;
+            pid = child.id();
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected resume failure",
+            ))
+        })
+        .unwrap_err();
+        assert!(matches!(error, ProcessError::Ownership(_)), "{error}");
+        assert!(error.to_string().contains("injected resume failure"));
+        assert!(
+            !pid_file.exists(),
+            "suspended fixture executed before resume"
+        );
+        assert_child_reaped(pid);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn runner_explicitly_replaces_windows_creation_flags() {
+        use std::os::windows::{io::AsRawHandle, process::CommandExt};
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcess, GetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS, IDLE_PRIORITY_CLASS,
+            NORMAL_PRIORITY_CLASS,
+        };
+        let _guard = FIXTURES.lock().unwrap();
+        // SAFETY: the pseudo-handle is valid for querying our process priority.
+        let parent_priority = unsafe { GetPriorityClass(GetCurrentProcess()) };
+        assert_ne!(parent_priority, 0);
+        let expected = match parent_priority {
+            IDLE_PRIORITY_CLASS | BELOW_NORMAL_PRIORITY_CLASS => parent_priority,
+            _ => NORMAL_PRIORITY_CLASS,
+        };
+        let requested = if expected == IDLE_PRIORITY_CLASS {
+            BELOW_NORMAL_PRIORITY_CLASS
+        } else {
+            IDLE_PRIORITY_CLASS
+        };
+        let mut command = fixture_command("quiet");
+        command.creation_flags(requested);
+        let mut actual_priority = 0;
+        let result =
+            output_with_setup(&mut command, Duration::from_secs(2), 1024, |tree, child| {
+                // SAFETY: the still-suspended child handle is live.
+                actual_priority = unsafe { GetPriorityClass(child.as_raw_handle()) };
+                tree.attach(child)
+            })
+            .unwrap();
+        assert!(result.status.success());
+        assert_eq!(actual_priority, expected);
+    }
+
+    struct FixtureChild(Child);
+
+    impl Drop for FixtureChild {
+        fn drop(&mut self) {
+            if self.0.try_wait().unwrap().is_none() {
+                self.0.kill().unwrap();
+            }
+            self.0.wait().unwrap();
+        }
+    }
+
+    #[test]
+    fn cleanup_does_not_terminate_an_unrelated_process() {
+        let _guard = FIXTURES.lock().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let mut unrelated = FixtureChild(
+            fixture_command("descendant")
+                .env("PET_CAPTURE_DIRECTORY", directory.path())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let started = Instant::now();
+        while !directory.path().join("ready").exists() {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "unrelated fixture did not start"
+            );
+            assert!(unrelated.0.try_wait().unwrap().is_none());
+            thread::sleep(POLL_INTERVAL);
+        }
+        let owned = ReleaseDescendant(tempfile::tempdir().unwrap());
+        let mut command = fixture_command("inherit");
+        command.env("PET_CAPTURE_DIRECTORY", owned.0.path());
+        assert!(output(&mut command, Duration::from_secs(5))
+            .unwrap()
+            .status
+            .success());
+        owned.assert_terminated();
+        assert!(unrelated.0.try_wait().unwrap().is_none());
+        let lease = fs::File::open(directory.path().join("lease")).unwrap();
+        assert!(matches!(
+            lease.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
+        ));
+        // FixtureChild is dropped before its directory and reaps this control process.
+    }
+
+    #[test]
+    fn setup_failure_reaps_child_and_preserves_error() {
+        let _guard = FIXTURES.lock().unwrap();
+        let mut pid = 0;
+        let error = output_with_setup(
+            &mut fixture_command("quiet"),
+            Duration::from_secs(2),
+            100,
+            |tree, child| {
+                // Unix ownership is established before exec; Windows assignment
+                // and resume normally happen here. Exercise an early setup error.
+                #[cfg(unix)]
+                tree.attach(child)?;
+                #[cfg(windows)]
+                let _ = tree;
+                pid = child.id();
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "injected ownership failure",
+                ))
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(error, ProcessError::Ownership(_)), "{error}");
+        assert!(error.to_string().contains("injected ownership failure"));
+        assert_child_reaped(pid);
     }
 
     struct BytesPipe(io::Cursor<Vec<u8>>);
@@ -652,19 +957,24 @@ mod tests {
     #[test]
     fn exited_child_retries_transient_pending_reads_within_deadline() {
         let _guard = FIXTURES.lock().unwrap();
-        let mut child = fixture_command("quiet")
+        let mut command = fixture_command("quiet");
+        let mut tree = ProcessTree::prepare(&mut command).unwrap();
+        let mut child = command
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
-        assert!(child.wait().unwrap().success());
+        tree.attach(&child).unwrap();
+        while tree.poll(&mut child).unwrap().is_none() {
+            thread::sleep(POLL_INTERVAL);
+        }
         let mut stdout = TemporarilyPendingPipe {
             pending_reads: 3,
             bytes: BytesPipe(io::Cursor::new(vec![0xff, 1, 2])),
         };
         let mut stderr = BytesPipe(io::Cursor::new(vec![]));
         let result = capture(
-            &mut child,
+            &mut || tree.poll(&mut child).map_err(ProcessError::Ownership),
             &mut stdout,
             &mut stderr,
             Instant::now(),
@@ -675,6 +985,7 @@ mod tests {
         assert_eq!(result.stdout, vec![0xff, 1, 2]);
         assert!(result.stderr.is_empty());
         assert!(result.status.success());
+        cleanup(child, &mut tree).unwrap();
     }
 
     struct FailingPipe;

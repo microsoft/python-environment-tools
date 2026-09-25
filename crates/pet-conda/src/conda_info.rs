@@ -244,7 +244,14 @@ mod tests {
         }
         let info = CondaInfo::from_with_runner(Some(executable.clone()), |command, timeout| {
             assert_eq!(timeout, Duration::from_secs(15));
-            output(command, Duration::from_secs(5))
+            let result = output(command, Duration::from_secs(5))
+                .expect("noisy Conda fixture runner must complete");
+            assert!(
+                result.status.success(),
+                "noisy Conda fixture exited with {}",
+                result.status
+            );
+            Ok(result)
         })
         .expect("noisy Conda fixture must still resolve");
         assert_eq!(info.conda_version, "25.1.0");
