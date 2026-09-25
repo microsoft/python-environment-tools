@@ -17,6 +17,19 @@ mod jsonrpc_client;
 
 use jsonrpc_client::{EnvironmentNotification, PetJsonRpcClient};
 
+fn frame_with_headers(payload: &[u8], headers: &[(&str, &str)], line_ending: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::new();
+    for (name, value) in headers {
+        frame.extend_from_slice(name.as_bytes());
+        frame.extend_from_slice(b": ");
+        frame.extend_from_slice(value.as_bytes());
+        frame.extend_from_slice(line_ending);
+    }
+    frame.extend_from_slice(line_ending);
+    frame.extend_from_slice(payload);
+    frame
+}
+
 struct RawRpcClient {
     child: Child,
     responses: mpsc::Receiver<std::io::Result<Value>>,
@@ -61,9 +74,22 @@ impl RawRpcClient {
 
     fn send(&mut self, message: Value) {
         let body = serde_json::to_vec(&message).unwrap();
+        self.send_payload(&body);
+    }
+
+    fn send_payload(&mut self, body: &[u8]) {
+        let content_length = body.len().to_string();
+        let frame = frame_with_headers(
+            body,
+            &[("Content-Length", content_length.as_str())],
+            b"\r\n",
+        );
+        self.write_raw(&frame);
+    }
+
+    fn write_raw(&mut self, bytes: &[u8]) {
         let stdin = self.child.stdin.as_mut().expect("PET stdin must be piped");
-        write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
-        stdin.write_all(&body).unwrap();
+        stdin.write_all(bytes).unwrap();
         stdin.flush().unwrap();
     }
 
@@ -90,6 +116,188 @@ impl Drop for RawRpcClient {
             }
         }
     }
+}
+
+fn assert_rpc_error(response: &Value, expected_id: &Value, expected_code: i64) {
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response.get("id"), Some(expected_id));
+    assert_eq!(response["error"]["code"], expected_code);
+    assert!(response.get("result").is_none());
+}
+
+#[test]
+fn native_wire_accepts_header_variants_fragmentation_and_consecutive_frames() {
+    let mut client = RawRpcClient::spawn();
+    let crlf_payload = br#"{"jsonrpc":"2.0","id":"crlf-content-type-first","method":"info"}"#;
+    let lf_payload =
+        "{\"jsonrpc\":\"2.0\",\"id\":\"lf-snowman-\u{2603}\",\"method\":\"info\"}".as_bytes();
+    let no_content_type_payload = br#"{"jsonrpc":"2.0","id":"no-content-type","method":"info"}"#;
+    assert!(
+        lf_payload.iter().any(|byte| !byte.is_ascii()),
+        "fixture must exercise byte lengths rather than character counts"
+    );
+
+    let crlf_length = crlf_payload.len().to_string();
+    let lf_length = lf_payload.len().to_string();
+    let no_content_type_length = no_content_type_payload.len().to_string();
+    let mut wire = frame_with_headers(
+        crlf_payload,
+        &[
+            ("cOnTeNt-TyPe", "application/vscode-jsonrpc; charset=utf-8"),
+            ("X-Before-Length", "accepted"),
+            ("cOnTeNt-LeNgTh", crlf_length.as_str()),
+        ],
+        b"\r\n",
+    );
+    wire.extend(frame_with_headers(
+        lf_payload,
+        &[
+            ("CONTENT-LENGTH", lf_length.as_str()),
+            ("x-after-length", "accepted"),
+            ("CONTENT-TYPE", "application/vscode-jsonrpc; charset=utf-8"),
+        ],
+        b"\n",
+    ));
+    wire.extend(frame_with_headers(
+        no_content_type_payload,
+        &[
+            ("X-Optional-Content-Type", "omitted"),
+            ("Content-Length", no_content_type_length.as_str()),
+        ],
+        b"\r\n",
+    ));
+
+    for fragment in wire.chunks(3) {
+        client.write_raw(fragment);
+    }
+
+    for expected_id in [
+        "crlf-content-type-first",
+        "lf-snowman-\u{2603}",
+        "no-content-type",
+    ] {
+        let response = client.receive();
+        assert_eq!(response["jsonrpc"], "2.0");
+        assert_eq!(response["id"], expected_id);
+        assert!(response["result"]["petVersion"].is_string());
+        assert!(response.get("error").is_none());
+    }
+}
+
+#[test]
+fn complete_invalid_json_and_utf8_frames_recover_for_the_next_frame() {
+    let mut client = RawRpcClient::spawn();
+
+    client.send_payload(br#"{"jsonrpc":"2.0","id":"malformed","method":"info""#);
+    assert_rpc_error(&client.receive(), &Value::Null, -32700);
+
+    client.send_payload(&[b'{', b'"', 0xff, b'"', b':', b'1', b'}']);
+    assert_rpc_error(&client.receive(), &Value::Null, -32700);
+
+    client.send(json!({
+        "jsonrpc": "2.0",
+        "id": "after-parse-errors",
+        "method": "info"
+    }));
+    let response = client.receive();
+    assert_eq!(response["id"], "after-parse-errors");
+    assert!(response["result"]["petVersion"].is_string());
+}
+
+#[test]
+fn native_wire_validates_envelopes_params_and_legacy_errors() {
+    let mut client = RawRpcClient::spawn();
+
+    for invalid in [
+        Value::Null,
+        json!(false),
+        json!(42),
+        json!("request"),
+        json!([]),
+        json!([{"jsonrpc": "2.0", "id": "batch", "method": "info"}]),
+    ] {
+        client.send(invalid);
+        assert_rpc_error(&client.receive(), &Value::Null, -32600);
+    }
+
+    for request in [
+        json!({"id": "missing-version", "method": "info"}),
+        json!({"jsonrpc": "1.0", "id": "wrong-version", "method": "info"}),
+        json!({"jsonrpc": 2.0, "id": 17, "method": "info"}),
+    ] {
+        let expected_id = request["id"].clone();
+        client.send(request);
+        assert_rpc_error(&client.receive(), &expected_id, -32600);
+    }
+
+    for invalid_id in [json!([]), json!({"nested": "id"})] {
+        client.send(json!({
+            "jsonrpc": "2.0",
+            "id": invalid_id,
+            "method": "info"
+        }));
+        assert_rpc_error(&client.receive(), &Value::Null, -32600);
+    }
+
+    for (index, params) in [json!(false), json!(7), json!("scalar")]
+        .into_iter()
+        .enumerate()
+    {
+        let id = json!(format!("invalid-params-{index}"));
+        client.send(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "info",
+            "params": params
+        }));
+        assert_rpc_error(&client.receive(), &id, -32602);
+    }
+
+    for (id, params) in [
+        ("missing-params", None),
+        ("null-params", Some(Value::Null)),
+        ("array-params", Some(json!([]))),
+        ("object-params", Some(json!({}))),
+    ] {
+        let mut request = json!({"jsonrpc": "2.0", "id": id, "method": "info"});
+        if let Some(params) = params {
+            request["params"] = params;
+        }
+        client.send(request);
+        let response = client.receive();
+        assert_eq!(response["id"], id);
+        assert!(response["result"]["petVersion"].is_string());
+    }
+
+    client.send(json!({
+        "jsonrpc": "2.0",
+        "method": "info",
+        "params": "invalid-notification-params"
+    }));
+    client.send(json!({
+        "jsonrpc": "2.0",
+        "id": "notification-sentinel",
+        "method": "info"
+    }));
+    let response = client.receive();
+    assert_eq!(response["id"], "notification-sentinel");
+    assert!(response["result"]["petVersion"].is_string());
+
+    client.send(json!({"jsonrpc": "2.0", "id": "missing-method"}));
+    assert_rpc_error(&client.receive(), &json!("missing-method"), -3);
+    client.send(json!({
+        "jsonrpc": "2.0",
+        "id": "unknown-method",
+        "method": "unknown"
+    }));
+    assert_rpc_error(&client.receive(), &json!("unknown-method"), -1);
+    client.send(json!({
+        "jsonrpc": "2.0",
+        "id": "handler-invalid-param",
+        "method": "resolve",
+        "params": {"executable": 42}
+    }));
+    assert_rpc_error(&client.receive(), &json!("handler-invalid-param"), -4);
 }
 
 #[test]
@@ -522,6 +730,12 @@ impl ShutdownFixture {
         stdin.write_all(body).unwrap();
         stdin.flush().unwrap();
     }
+
+    fn write_raw(&mut self, bytes: &[u8]) {
+        let stdin = self.child.stdin.as_mut().unwrap();
+        stdin.write_all(bytes).unwrap();
+        stdin.flush().unwrap();
+    }
 }
 
 impl Drop for ShutdownFixture {
@@ -532,6 +746,76 @@ impl Drop for ShutdownFixture {
         {
             eprintln!("Failed to stop shutdown fixture: {error}");
         }
+    }
+}
+
+fn assert_fatal_framing_input(name: &str, input: &[u8]) {
+    let mut fixture = ShutdownFixture::spawn();
+    fixture.write_raw(input);
+    let started = Instant::now();
+    fixture.child.stdin.take();
+    let status = jsonrpc_client::wait_for_exit(&mut fixture.child, Duration::from_secs(1))
+        .unwrap_or_else(|error| panic!("{name} did not terminate within one second: {error}"));
+    assert!(
+        !status.success(),
+        "{name} must terminate the server unsuccessfully"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{name} exceeded the shutdown budget"
+    );
+    let mut stderr = Vec::new();
+    fixture
+        .child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_end(&mut stderr)
+        .unwrap();
+    assert!(!stderr.is_empty(), "{name} must be reported");
+    assert!(
+        stderr.len() < 4096,
+        "{name} produced an error flood of {} bytes",
+        stderr.len()
+    );
+}
+
+#[test]
+fn invalid_and_oversize_framing_terminates_with_bounded_diagnostics() {
+    const MAX_HEADER_BYTES: usize = 8 * 1024;
+    const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
+
+    let mut oversized_header = b"X-Oversized: ".to_vec();
+    oversized_header.resize(MAX_HEADER_BYTES + 1, b'x');
+    oversized_header.extend_from_slice(b"\r\n\r\n");
+
+    let cases = [
+        (
+            "invalid Content-Length",
+            b"Content-Length: twelve\r\n\r\n".to_vec(),
+        ),
+        (
+            "missing Content-Length",
+            b"Content-Type: application/json\r\n\r\n".to_vec(),
+        ),
+        (
+            "duplicate Content-Length",
+            b"Content-Length: 0\r\nContent-Length: 0\r\n\r\n".to_vec(),
+        ),
+        (
+            "overflowing Content-Length",
+            b"Content-Length: 184467440737095516160\r\n\r\n".to_vec(),
+        ),
+        (
+            "oversize Content-Length",
+            format!("Content-Length: {}\r\n\r\n", MAX_PAYLOAD_BYTES + 1).into_bytes(),
+        ),
+        ("malformed header", b"Not-A-Header\r\n\r\n".to_vec()),
+        ("oversize header", oversized_header),
+    ];
+
+    for (name, input) in cases {
+        assert_fatal_framing_input(name, &input);
     }
 }
 

@@ -27,11 +27,21 @@ Malformed JSON in a complete frame instead receives a Parse Error (`-32700`,
 `id: null`), after which subsequent frames can still be processed. Protocol stdout
 contains framed JSONRPC only.
 
-Input is currently one `Content-Length` header followed by a blank line and the
-specified number of UTF-8 payload bytes. Both CRLF and LF line endings are accepted.
-Headers including the separator are limited to 8 KiB, and payloads to 16 MiB, before
-payload allocation. Multi-header input parsing is tracked separately in
-[#532](https://github.com/microsoft/python-environment-tools/issues/532).
+Each input frame contains ASCII headers through a blank line, followed by exactly
+`Content-Length` UTF-8 payload **bytes** (not characters). Both CRLF and LF line
+endings are accepted. Header names are ASCII-case-insensitive; optional
+`Content-Type` and other well-formed headers may precede or follow `Content-Length`.
+PET always decodes payloads as UTF-8; it does not negotiate another encoding from
+`Content-Type`. Fragmented reads and consecutive frames preserve byte boundaries.
+
+Exactly one `Content-Length` is required. Its value is decimal digits, optionally
+surrounded by spaces or tabs; signs, fractions, duplicate/missing lengths, overflow,
+and malformed header names or values are rejected. Total raw headers (including
+line endings and the blank separator) are limited to 8 KiB, and payloads to 16 MiB,
+before payload allocation. Both exact limits are accepted. Invalid framing closes
+the connection unsuccessfully rather than attempting to guess the next boundary.
+A complete frame containing invalid UTF-8 or invalid JSON gets the recoverable
+Parse Error described above.
 
 One process-lifetime writer emits accepted frames in FIFO order, so a refresh reply
 cannot overtake notifications already admitted before it. Each serialized output
@@ -63,8 +73,27 @@ spelling is not preserved. Prefer string IDs when exact values exceed the 64-bit
 or the precision of a client's numeric type. JSONRPC recommends avoiding fractional and null IDs.
 
 Only an absent `id` denotes a notification. Boolean, array, and object IDs produce an Invalid
-Request error (`-32600`) with `id: null` and do not invoke a handler. Other existing method and
-parameter error codes are unchanged. Notifications do not receive request replies.
+Request error (`-32600`) with `id: null` and do not invoke a handler. Valid notifications
+do not receive request replies.
+
+## Request envelopes and errors
+
+Each payload must be a JSON object with `"jsonrpc": "2.0"`; batches are not supported.
+Non-object payloads and missing/invalid versions produce Invalid Request (`-32600`)
+without invoking a handler. Errors preserve a valid parsed ID where available, or
+use `id: null` otherwise. An invalid envelope with no ID is still an error, not a
+valid notification.
+
+If present, `params` must be an object or array. Absent params and explicit `null`
+remain supported for compatibility; method-specific schemas still apply. Other
+parameter containers produce Invalid Params (`-32602`) for requests. Otherwise-valid
+notifications with invalid params are logged and not dispatched or replied to.
+Existing PET method-level codes are retained: missing/nonstring method (`-3`),
+unknown request method (`-1`), and handler-specific parameter errors (`-4`). Unknown
+notification methods are logged without a reply. These legacy codes are not the
+standard JSONRPC equivalents and clients should retain their existing handling.
+Complete-frame envelope/parameter errors do not prevent subsequent frames from
+being processed.
 
 # Info Request
 

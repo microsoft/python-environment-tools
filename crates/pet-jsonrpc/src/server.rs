@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use crate::{send_error, RequestId};
+use crate::{framing::read_frame, send_error, RequestId};
 use serde_json::{self, Value};
 use std::{
     collections::HashMap,
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader},
     sync::{mpsc, Arc},
     thread,
     time::Duration,
@@ -70,6 +70,11 @@ impl<C> HandlersKeyedByMethodName<C> {
     }
 
     fn handle_request(&self, message: Value) {
+        let Value::Object(message) = message else {
+            (self.send_error)(None, -32600, "Invalid JSONRPC request".to_string());
+            return;
+        };
+
         let id = match message.get("id") {
             None => None,
             Some(Value::String(id)) => Some(RequestId::String(id.clone())),
@@ -80,11 +85,36 @@ impl<C> HandlersKeyedByMethodName<C> {
                 return;
             }
         };
-        match message["method"].as_str() {
+
+        if !matches!(message.get("jsonrpc"), Some(Value::String(version)) if version == "2.0") {
+            (self.send_error)(id.as_ref(), -32600, "Invalid JSONRPC request".to_string());
+            return;
+        }
+
+        match message.get("method").and_then(Value::as_str) {
             Some(method) => {
+                let params = match message.get("params") {
+                    None | Some(Value::Null) => Value::Null,
+                    Some(params @ (Value::Object(_) | Value::Array(_))) => params.clone(),
+                    Some(_) => {
+                        if let Some(id) = id.as_ref() {
+                            (self.send_error)(
+                                Some(id),
+                                -32602,
+                                "JSONRPC params must be an object or array".to_string(),
+                            );
+                        } else {
+                            log::error!(
+                                "Ignoring JSONRPC notification with invalid params for method {method}"
+                            );
+                        }
+                        return;
+                    }
+                };
+
                 if let Some(id) = id {
                     if let Some(handler) = self.requests.get(method) {
-                        handler(self.context.clone(), id, message["params"].clone());
+                        handler(self.context.clone(), id, params);
                     } else {
                         eprint!("Failed to find handler for method: {method}");
                         (self.send_error)(
@@ -94,12 +124,13 @@ impl<C> HandlersKeyedByMethodName<C> {
                         );
                     }
                 } else if let Some(handler) = self.notifications.get(method) {
-                    handler(self.context.clone(), message["params"].clone());
+                    handler(self.context.clone(), params);
                 } else {
                     eprint!("Failed to find handler for method: {method}");
                 }
             }
             None => {
+                let message = Value::Object(message);
                 eprint!("Failed to get method from message: {message}");
                 (self.send_error)(
                     id.as_ref(),
@@ -112,8 +143,6 @@ impl<C> HandlersKeyedByMethodName<C> {
 }
 
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(20);
-const MAX_HEADER_BYTES: usize = 8 * 1024;
-const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024;
 
 /// Runs the standalone process transport until EOF or a fatal I/O error.
 /// Pending output is discarded at shutdown; callers must finish subprocess cleanup
@@ -141,7 +170,7 @@ fn close_transport(
 
 fn read_input(mut reader: impl BufRead, sender: mpsc::SyncSender<io::Result<Option<Vec<u8>>>>) {
     loop {
-        let frame = read_payload(&mut reader);
+        let frame = read_frame(&mut reader);
         let terminal = !matches!(&frame, Ok(Some(_)));
         if sender.send(frame).is_err() || terminal {
             return;
@@ -177,65 +206,6 @@ fn dispatch_input<C>(
     }
 }
 
-fn read_payload(reader: &mut impl BufRead) -> io::Result<Option<Vec<u8>>> {
-    let mut header = String::new();
-    let count = (&mut *reader)
-        .take(MAX_HEADER_BYTES as u64 + 1)
-        .read_line(&mut header)?;
-    if count == 0 {
-        return Ok(None);
-    }
-    if count > MAX_HEADER_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "JSONRPC header exceeds limit",
-        ));
-    }
-    if !header.ends_with('\n') {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "Truncated JSONRPC header",
-        ));
-    }
-    let length = get_content_length(&header)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    if length > MAX_PAYLOAD_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "JSONRPC payload exceeds limit",
-        ));
-    }
-    let mut separator = String::new();
-    (&mut *reader)
-        .take((MAX_HEADER_BYTES - count) as u64 + 1)
-        .read_line(&mut separator)?;
-    if count + separator.len() > MAX_HEADER_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "JSONRPC header exceeds limit",
-        ));
-    }
-    if !separator.ends_with('\n') {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "Truncated JSONRPC header separator",
-        ));
-    }
-    if separator != "\r\n" && separator != "\n" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Expected a blank JSONRPC header separator",
-        ));
-    }
-    let mut payload = Vec::new();
-    payload
-        .try_reserve_exact(length)
-        .map_err(io::Error::other)?;
-    payload.resize(length, 0);
-    reader.read_exact(&mut payload)?;
-    Ok(Some(payload))
-}
-
 fn handle_payload<C>(
     handlers: &HandlersKeyedByMethodName<C>,
     payload: impl AsRef<[u8]>,
@@ -245,31 +215,12 @@ fn handle_payload<C>(
     Ok(())
 }
 
-/// Parses the content length from the given line.
-fn get_content_length(line: &str) -> Result<usize, String> {
-    let line = line.trim();
-    if let Some(content_length) = line.find("Content-Length: ") {
-        let start = content_length + "Content-Length: ".len();
-        if let Ok(length) = line[start..].parse::<usize>() {
-            Ok(length)
-        } else {
-            Err(format!(
-                "Failed to parse content length from {} for {}",
-                &line[start..],
-                line
-            ))
-        }
-    } else {
-        Err(format!(
-            "String 'Content-Length' not found in input => {line}"
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framing::{MAX_HEADER_BYTES, MAX_PAYLOAD_BYTES};
     use serde_json::json;
+    use std::io::Read;
     use std::sync::Mutex;
 
     #[test]
@@ -322,9 +273,8 @@ mod tests {
         })
     }
 
-    #[test]
-    fn request_ids_preserve_values_for_dispatch_and_errors() {
-        for value in [
+    fn supported_request_id_values() -> [Value; 10] {
+        [
             json!("request-1"),
             json!(""),
             json!("\u{03c0}-request"),
@@ -335,7 +285,12 @@ mod tests {
             json!(i64::MIN),
             json!(1.5),
             Value::Null,
-        ] {
+        ]
+    }
+
+    #[test]
+    fn request_ids_preserve_values_for_dispatch_and_errors() {
+        for value in supported_request_id_values() {
             let id = serde_json::from_value::<RequestId>(value.clone()).unwrap();
             assert_eq!(serde_json::to_value(&id).unwrap(), value);
             let context = Arc::new(TestContext::default());
@@ -346,16 +301,21 @@ mod tests {
             handlers.add_notification_handler("method", |context, params| {
                 *context.notification.lock().unwrap() = Some(params);
             });
-            handlers.handle_request(json!({"id": value, "method": "method", "params": 42}));
+            handlers.handle_request(
+                json!({"jsonrpc": "2.0", "id": value, "method": "method", "params": {"value": 42}}),
+            );
             assert_eq!(
                 *context.request.lock().unwrap(),
-                Some((id.clone(), json!(42)))
+                Some((id.clone(), json!({"value": 42})))
             );
             assert!(context.notification.lock().unwrap().is_none());
-            handlers.handle_request(json!({"method": "method", "params": 7}));
-            assert_eq!(context.notification.lock().unwrap().take(), Some(json!(7)));
-            handlers.handle_request(json!({"id": value, "method": "unknown"}));
-            handlers.handle_request(json!({"id": value}));
+            handlers.handle_request(json!({"jsonrpc": "2.0", "method": "method", "params": [7]}));
+            assert_eq!(
+                context.notification.lock().unwrap().take(),
+                Some(json!([7]))
+            );
+            handlers.handle_request(json!({"jsonrpc": "2.0", "id": value, "method": "unknown"}));
+            handlers.handle_request(json!({"jsonrpc": "2.0", "id": value}));
             let errors = context.errors.lock().unwrap();
             assert_eq!(errors.len(), 2);
             assert_eq!(errors[0].0, Some(id.clone()));
@@ -375,13 +335,16 @@ mod tests {
         handlers.add_notification_handler("method", |context, params| {
             *context.notification.lock().unwrap() = Some(params);
         });
-        handlers.handle_request(json!({"method": "method", "params": 7}));
-        assert_eq!(context.notification.lock().unwrap().take(), Some(json!(7)));
+        handlers.handle_request(json!({"jsonrpc": "2.0", "method": "method", "params": [7]}));
+        assert_eq!(
+            context.notification.lock().unwrap().take(),
+            Some(json!([7]))
+        );
         assert!(context.request.lock().unwrap().is_none());
         assert!(context.errors.lock().unwrap().is_empty());
         for value in [json!(true), json!(false), json!([]), json!({"id": 1})] {
             assert!(serde_json::from_value::<RequestId>(value.clone()).is_err());
-            handlers.handle_request(json!({"id": value, "method": "method"}));
+            handlers.handle_request(json!({"jsonrpc": "2.0", "id": value, "method": "method"}));
             assert!(context.notification.lock().unwrap().is_none());
             assert!(context.request.lock().unwrap().is_none());
             assert_eq!(
@@ -390,32 +353,180 @@ mod tests {
             );
         }
         assert!(context.errors.lock().unwrap().is_empty());
-        handlers.handle_request(json!({"id": "after-invalid", "method": "method", "params": 42}));
+        handlers.handle_request(
+            json!({"jsonrpc": "2.0", "id": "after-invalid", "method": "method", "params": [42]}),
+        );
         assert_eq!(
             context.request.lock().unwrap().take(),
-            Some((RequestId::String("after-invalid".into()), json!(42)))
+            Some((RequestId::String("after-invalid".into()), json!([42])))
         );
         assert!(context.notification.lock().unwrap().is_none());
         assert!(context.errors.lock().unwrap().is_empty());
     }
 
     #[test]
-    fn get_content_length_parses_valid_header() {
-        assert_eq!(get_content_length("Content-Length: 42\r\n").unwrap(), 42);
+    fn invalid_top_level_values_and_batches_do_not_invoke_handlers() {
+        let context = Arc::new(TestContext::default());
+        let mut handlers = create_handlers_with_recorded_errors(context.clone());
+        handlers.add_request_handler("method", |context, id, params| {
+            *context.request.lock().unwrap() = Some((id, params));
+        });
+        handlers.add_notification_handler("method", |context, params| {
+            *context.notification.lock().unwrap() = Some(params);
+        });
+
+        for message in [
+            Value::Null,
+            json!(false),
+            json!(42),
+            json!("request"),
+            json!([]),
+            json!([{"jsonrpc": "2.0", "id": 1, "method": "method"}]),
+        ] {
+            handlers.handle_request(message);
+        }
+
+        assert!(context.request.lock().unwrap().is_none());
+        assert!(context.notification.lock().unwrap().is_none());
+        assert_eq!(
+            context.errors.lock().unwrap().as_slice(),
+            vec![(None, -32600, "Invalid JSONRPC request".to_string()); 6]
+        );
     }
 
     #[test]
-    fn get_content_length_rejects_missing_header() {
-        let error = get_content_length("Content-Type: application/json\r\n").unwrap_err();
+    fn invalid_jsonrpc_versions_do_not_invoke_handlers() {
+        let context = Arc::new(TestContext::default());
+        let mut handlers = create_handlers_with_recorded_errors(context.clone());
+        handlers.add_request_handler("method", |context, id, params| {
+            *context.request.lock().unwrap() = Some((id, params));
+        });
+        handlers.add_notification_handler("method", |context, params| {
+            *context.notification.lock().unwrap() = Some(params);
+        });
 
-        assert!(error.contains("String 'Content-Length' not found"));
+        for message in [
+            json!({"method": "method"}),
+            json!({"jsonrpc": null, "method": "method"}),
+            json!({"jsonrpc": 2.0, "method": "method"}),
+            json!({"jsonrpc": true, "method": "method"}),
+            json!({"jsonrpc": "1.0", "method": "method"}),
+            json!({"jsonrpc": "2.0 ", "method": "method"}),
+        ] {
+            handlers.handle_request(message);
+        }
+
+        assert!(context.request.lock().unwrap().is_none());
+        assert!(context.notification.lock().unwrap().is_none());
+        assert_eq!(
+            context.errors.lock().unwrap().as_slice(),
+            vec![(None, -32600, "Invalid JSONRPC request".to_string()); 6]
+        );
     }
 
     #[test]
-    fn get_content_length_rejects_non_numeric_length() {
-        let error = get_content_length("Content-Length: nope\r\n").unwrap_err();
+    fn valid_ids_round_trip_in_new_envelope_and_params_errors() {
+        for value in supported_request_id_values() {
+            let id = serde_json::from_value::<RequestId>(value.clone()).unwrap();
+            let context = Arc::new(TestContext::default());
+            let mut handlers = create_handlers_with_recorded_errors(context.clone());
+            handlers.add_request_handler("method", |context, id, params| {
+                *context.request.lock().unwrap() = Some((id, params));
+            });
 
-        assert!(error.contains("Failed to parse content length"));
+            handlers.handle_request(json!({"jsonrpc": "1.0", "id": value, "method": "method"}));
+            handlers.handle_request(
+                json!({"jsonrpc": "2.0", "id": value, "method": "method", "params": true}),
+            );
+
+            assert!(context.request.lock().unwrap().is_none());
+            assert_eq!(
+                context.errors.lock().unwrap().as_slice(),
+                &[
+                    (
+                        Some(id.clone()),
+                        -32600,
+                        "Invalid JSONRPC request".to_string()
+                    ),
+                    (
+                        Some(id),
+                        -32602,
+                        "JSONRPC params must be an object or array".to_string()
+                    )
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn valid_parameter_containers_dispatch_requests_and_notifications() {
+        for params in [None, Some(Value::Null), Some(json!([])), Some(json!({}))] {
+            let expected = params.clone().unwrap_or(Value::Null);
+            let context = Arc::new(TestContext::default());
+            let mut handlers = create_handlers_with_recorded_errors(context.clone());
+            handlers.add_request_handler("method", |context, id, params| {
+                *context.request.lock().unwrap() = Some((id, params));
+            });
+            handlers.add_notification_handler("method", |context, params| {
+                *context.notification.lock().unwrap() = Some(params);
+            });
+
+            let mut request = json!({"jsonrpc": "2.0", "id": 1, "method": "method"});
+            let mut notification = json!({"jsonrpc": "2.0", "method": "method"});
+            if let Some(params) = params {
+                request["params"] = params.clone();
+                notification["params"] = params;
+            }
+            handlers.handle_request(request);
+            handlers.handle_request(notification);
+
+            assert_eq!(
+                context.request.lock().unwrap().take(),
+                Some((1.into(), expected.clone()))
+            );
+            assert_eq!(context.notification.lock().unwrap().take(), Some(expected));
+            assert!(context.errors.lock().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn invalid_parameter_containers_do_not_invoke_handlers() {
+        let context = Arc::new(TestContext::default());
+        let mut handlers = create_handlers_with_recorded_errors(context.clone());
+        handlers.add_request_handler("method", |context, id, params| {
+            *context.request.lock().unwrap() = Some((id, params));
+        });
+        handlers.add_notification_handler("method", |context, params| {
+            *context.notification.lock().unwrap() = Some(params);
+        });
+
+        for (index, params) in [json!(false), json!(42), json!("params")]
+            .into_iter()
+            .enumerate()
+        {
+            handlers.handle_request(
+                json!({"jsonrpc": "2.0", "id": index, "method": "method", "params": params}),
+            );
+            handlers
+                .handle_request(json!({"jsonrpc": "2.0", "method": "method", "params": params}));
+        }
+
+        assert!(context.request.lock().unwrap().is_none());
+        assert!(context.notification.lock().unwrap().is_none());
+        assert_eq!(
+            context
+                .errors
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(id, code, _)| (id.clone(), *code))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(0.into()), -32602),
+                (Some(1.into()), -32602),
+                (Some(2.into()), -32602)
+            ]
+        );
     }
 
     #[test]
@@ -526,21 +637,42 @@ mod tests {
         let context = Arc::new(TestContext::default());
         let handlers = create_handlers_with_recorded_errors(context.clone());
 
-        let message = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "params": { "value": 42 }
-        });
-
-        handlers.handle_request(message.clone());
+        let messages = [
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "params": { "value": 42 }
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": 42
+            }),
+        ];
+        for message in &messages {
+            handlers.handle_request(message.clone());
+        }
 
         assert_eq!(
             context.errors.lock().unwrap().as_slice(),
-            &[(
-                Some(1.into()),
-                -3,
-                format!("Failed to extract method from JSONRPC payload {message:?}")
-            )]
+            &[
+                (
+                    Some(1.into()),
+                    -3,
+                    format!(
+                        "Failed to extract method from JSONRPC payload {:?}",
+                        messages[0]
+                    )
+                ),
+                (
+                    Some(1.into()),
+                    -3,
+                    format!(
+                        "Failed to extract method from JSONRPC payload {:?}",
+                        messages[1]
+                    )
+                )
+            ]
         );
     }
 
@@ -567,14 +699,14 @@ mod tests {
     }
     #[test]
     fn input_distinguishes_clean_eof_from_truncated_frames() {
-        assert!(read_payload(&mut io::Cursor::new(b"")).unwrap().is_none());
+        assert!(read_frame(&mut io::Cursor::new(b"")).unwrap().is_none());
         for bytes in [
             b"Content-Length: 2".as_slice(),
             b"Content-Length: 2\r\n".as_slice(),
             b"Content-Length: 2\r\n\r".as_slice(),
             b"Content-Length: 2\r\n\r\n{".as_slice(),
         ] {
-            let error = read_payload(&mut io::Cursor::new(bytes)).unwrap_err();
+            let error = read_frame(&mut io::Cursor::new(bytes)).unwrap_err();
             assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
         }
     }
@@ -588,25 +720,21 @@ mod tests {
         bytes.extend_from_slice(b"Content-Length: 2\n\n");
         bytes.extend_from_slice(second);
         let mut reader = BufReader::with_capacity(1, io::Cursor::new(bytes));
-        assert_eq!(read_payload(&mut reader).unwrap().unwrap(), first);
-        assert_eq!(read_payload(&mut reader).unwrap().unwrap(), second);
-        assert!(read_payload(&mut reader).unwrap().is_none());
+        assert_eq!(read_frame(&mut reader).unwrap().unwrap(), first);
+        assert_eq!(read_frame(&mut reader).unwrap().unwrap(), second);
+        assert!(read_frame(&mut reader).unwrap().is_none());
     }
 
     #[test]
     fn input_rejects_oversized_headers_and_payloads_before_body_reads() {
         let bytes = vec![b'x'; MAX_HEADER_BYTES + 1];
         assert_eq!(
-            read_payload(&mut io::Cursor::new(bytes))
-                .unwrap_err()
-                .kind(),
+            read_frame(&mut io::Cursor::new(bytes)).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
         let bytes = format!("Content-Length: {}\r\n\r\n", MAX_PAYLOAD_BYTES + 1);
         assert_eq!(
-            read_payload(&mut io::Cursor::new(bytes))
-                .unwrap_err()
-                .kind(),
+            read_frame(&mut io::Cursor::new(bytes)).unwrap_err().kind(),
             io::ErrorKind::InvalidData
         );
     }
