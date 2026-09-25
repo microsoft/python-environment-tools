@@ -20,6 +20,21 @@ static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+pub(crate) fn configure_isolated_pet_environment(command: &mut Command) {
+    command.env_clear().env("PATH", "");
+
+    if let Some(value) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", value);
+    }
+
+    #[cfg(windows)]
+    for name in ["SYSTEMROOT", "SYSTEMDRIVE"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RefreshResult {
@@ -121,19 +136,11 @@ impl PetJsonRpcClient {
         cmd.arg("server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // Clear all inherited env vars to prevent host-specific tool
-            // configuration from leaking into the test environment, then
-            // restore only the minimum required for the OS to function.
-            .env_clear()
-            .env("PATH", "")
-            .envs(environment.iter().copied());
-        #[cfg(windows)]
-        for name in ["SYSTEMROOT", "SYSTEMDRIVE"] {
-            if let Some(value) = std::env::var_os(name) {
-                cmd.env(name, value);
-            }
-        }
+            .stderr(Stdio::piped());
+        configure_isolated_pet_environment(&mut cmd);
+        // Explicit fixture variables take precedence over the runner values
+        // retained by the isolated environment.
+        cmd.envs(environment.iter().copied());
         let mut process = cmd
             .spawn()
             .map_err(|e| format!("Failed to spawn pet server: {e}"))?;

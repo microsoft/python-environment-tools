@@ -30,15 +30,8 @@ impl RawRpcClient {
             .arg("server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .env_clear()
-            .env("PATH", "");
-        #[cfg(windows)]
-        for name in ["SYSTEMROOT", "SYSTEMDRIVE"] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
+            .stderr(Stdio::inherit());
+        jsonrpc_client::configure_isolated_pet_environment(&mut command);
         let mut child = command.spawn().expect("raw fixture must spawn PET");
         let stdout = child.stdout.take().expect("PET stdout must be piped");
         let (sender, responses) = mpsc::channel();
@@ -516,15 +509,8 @@ impl ShutdownFixture {
             .arg("server")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env_clear()
-            .env("PATH", "");
-        #[cfg(windows)]
-        for name in ["SYSTEMROOT", "SYSTEMDRIVE"] {
-            if let Some(value) = std::env::var_os(name) {
-                command.env(name, value);
-            }
-        }
+            .stderr(Stdio::piped());
+        jsonrpc_client::configure_isolated_pet_environment(&mut command);
         Self {
             child: command.spawn().expect("shutdown fixture must spawn PET"),
         }
