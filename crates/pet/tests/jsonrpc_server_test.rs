@@ -676,10 +676,13 @@ fn stdin_eof_exits_while_output_is_not_drained() {
     reader.join().unwrap();
 }
 
-fn wait_for_descendant_lease(lease: &fs::File, timeout: Duration) -> std::io::Result<()> {
+fn wait_for_descendant_lease(
+    mut try_lock: impl FnMut() -> Result<(), fs::TryLockError>,
+    timeout: Duration,
+) -> std::io::Result<()> {
     let started = Instant::now();
     loop {
-        match lease.try_lock() {
+        match try_lock() {
             Ok(()) => return Ok(()),
             Err(fs::TryLockError::Error(error)) => return Err(error),
             Err(fs::TryLockError::WouldBlock) => {}
@@ -708,14 +711,28 @@ fn descendant_lease_wait_is_bounded_and_requires_release() {
         .unwrap();
     let started = Instant::now();
     assert_eq!(
-        wait_for_descendant_lease(&lease, Duration::from_millis(20))
+        wait_for_descendant_lease(|| lease.try_lock(), Duration::from_millis(20))
             .unwrap_err()
             .kind(),
         std::io::ErrorKind::TimedOut
     );
     assert!(started.elapsed() < Duration::from_secs(1));
-    drop(holder);
-    wait_for_descendant_lease(&lease, Duration::ZERO).unwrap();
+    let mut holder = Some(holder);
+    let mut attempts = 0;
+    wait_for_descendant_lease(
+        || {
+            attempts += 1;
+            let result = lease.try_lock();
+            if attempts == 1 {
+                assert!(matches!(result, Err(fs::TryLockError::WouldBlock)));
+                drop(holder.take());
+            }
+            result
+        },
+        Duration::from_secs(1),
+    )
+    .expect("lease polling must observe release after initial contention");
+    assert_eq!(attempts, 2);
 }
 
 #[cfg(feature = "ci")]
@@ -785,7 +802,7 @@ fn stdin_eof_cancels_an_active_interpreter_and_its_descendant() {
     );
     // Observe OS lease release within the same budget as server shutdown.
     wait_for_descendant_lease(
-        &lease,
+        || lease.try_lock(),
         Duration::from_secs(4).saturating_sub(started.elapsed()),
     )
     .expect("shutdown must release the actual descendant's lease");
