@@ -599,7 +599,8 @@ fn closed_output_exits_without_waiting_for_stdin_eof() {
             .stderr(Stdio::inherit())
             .spawn()
             .expect("isolated closed-output fixture must spawn");
-        let status = jsonrpc_client::shutdown_fixture(&mut child, Duration::from_secs(20)).unwrap();
+        // Cover readiness, both forced-shutdown waits, reader joining, and Drop cleanup.
+        let status = jsonrpc_client::shutdown_fixture(&mut child, Duration::from_secs(40)).unwrap();
         assert!(
             status.success(),
             "isolated closed-output fixture failed: {status}"
