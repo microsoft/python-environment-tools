@@ -37,6 +37,7 @@ class SourceCoverage:
     lines: dict[int, int]
     unmapped: int = 0
     unmapped_hits: int = 0
+    summary_hit_shortfall: int = 0
 
 
 def line_records(path: Path) -> dict[str, SourceCoverage]:
@@ -73,9 +74,12 @@ def line_records(path: Path) -> dict[str, SourceCoverage]:
                 raise SnapshotError('LCOV source missing line summaries')
             row = records[name]
             row.unmapped = summaries['LF'] - len(row.lines)
-            row.unmapped_hits = summaries['LH'] - sum(count > 0 for count in row.lines.values())
-            if row.unmapped < 0 or not 0 <= row.unmapped_hits <= row.unmapped:
+            hit_difference = summaries['LH'] - sum(count > 0 for count in row.lines.values())
+            if (row.unmapped < 0 or summaries['LH'] > summaries['LF'] or
+                    hit_difference > row.unmapped):
                 raise SnapshotError(f'LCOV line records disagree with summaries: {name}')
+            row.unmapped_hits = max(hit_difference, 0)
+            row.summary_hit_shortfall = max(-hit_difference, 0)
             # LLVM summaries can count more entries than its unique DA source lines.
             # Unlocated entries remain conservatively uncovered in the source-focused report.
             name = None
@@ -222,15 +226,20 @@ def summarize(root: Path, records: dict[str, SourceCoverage], changed: dict[str,
         production = {n: count for n, count in lines.items() if n not in excluded}
         tests = {n: count for n, count in lines.items() if n in excluded}
         edits = production.keys() & changed.get(name, set())
+        uncertainty = record.unmapped + record.summary_hit_shortfall - record.unmapped_hits
         files.append({
             'path': name, 'production_found': len(production) + record.unmapped,
             'unmapped_summary_lines': record.unmapped,
             'unmapped_summary_hits': record.unmapped_hits,
+            'summary_hit_shortfall': record.summary_hit_shortfall,
+            'mapped_hit_uncertainty': uncertainty,
             'changed_lines_without_line_records': sorted(changed.get(name, set()) - lines.keys() - excluded),
-            'production_hit': sum(n > 0 for n in production.values()),
-            'test_found': len(tests), 'test_hit': sum(n > 0 for n in tests.values()),
+            'production_hit': max(0, sum(n > 0 for n in production.values()) - uncertainty),
+            'test_found': len(tests),
+            'test_hit': max(0, sum(n > 0 for n in tests.values()) - uncertainty),
             'uncovered_production': sorted(n for n, hits in production.items() if not hits),
             'changed_production_found': len(edits),
+            'changed_production_hit': max(0, sum(production[n] > 0 for n in edits) - uncertainty),
             'uncovered_changed_production': sorted(n for n in edits if not production[n]),
         })
     return {'schema_version': 1, 'files': files,
@@ -257,13 +266,12 @@ def branch_counts(path: Path) -> tuple[int, int]:
 def details_report(data: dict) -> str:
     files = data['files']
     totals = {key: sum(f[key] for f in files) for key in
-              ('production_hit', 'production_found', 'test_hit', 'test_found', 'changed_production_found')}
-    uncovered = sum(len(f['uncovered_changed_production']) for f in files)
+              ('production_hit', 'production_found', 'test_hit', 'test_found', 'changed_production_found', 'changed_production_hit')}
     lines = ['## Production-focused coverage', '',
              'Supplemental schema 1; the whole-workspace exact-base line/function gate is unchanged.', '',
              f"Production lines: {totals['production_hit']}/{totals['production_found']}; "
              f"test lines: {totals['test_hit']}/{totals['test_found']}.",
-             f"Changed executable production lines: {totals['changed_production_found'] - uncovered}/"
+             f"Changed executable production lines: {totals['changed_production_hit']}/"
              f"{totals['changed_production_found']} covered.", '',
              '| Source | Production hit/total | Test hit/total | Unmapped summary lines | Uncovered changed production lines |',
              '| --- | ---: | ---: | ---: | --- |']
@@ -272,6 +280,8 @@ def details_report(data: dict) -> str:
         lines.append(f"| {f['path']} | {f['production_hit']}/{f['production_found']} | "
                      f"{f['test_hit']}/{f['test_found']} | {f['unmapped_summary_lines']} | {missing} |")
     lines += ['', 'Unmapped LF summary entries are conservatively counted as uncovered production.',
+              'Each covered subtotal deducts max(positive DA + unmapped LF - LH, 0) as unmapped-hit uncertainty;',
+              'these are conservative lower bounds, not a claim of exact attribution. Details retain the deficit.',
               'Changed lines lacking DA records (including non-executable syntax) are retained in details.json;',
               'they are not assumed covered.', '',
               'Changed Rust files without instrumentation (not assumed covered):']

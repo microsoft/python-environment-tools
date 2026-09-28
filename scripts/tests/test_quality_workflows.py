@@ -91,6 +91,8 @@ class QualityWorkflowTests(unittest.TestCase):
         measure = steps["Measure Exact PR Base on the Same Runner"]
         self.assertIn("github.event.pull_request.base.sha", measure)
         self.assertIn("git worktree add --detach", measure)
+        self.assertIn("PET_SUBPROCESS_COVERAGE_PROOF: ${{ runner.temp }}/base-subprocess-coverage.json", measure)
+        self.assertNotIn("${{ github.workspace }}/subprocess-coverage.json", measure)
         self.assertIn("cargo llvm-cov --workspace", measure)
         self.assertNotIn("--features", measure)
         self.assertIn("cargo llvm-cov --workspace", steps["Collect Native macOS Coverage"])

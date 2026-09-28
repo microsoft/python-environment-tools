@@ -134,6 +134,11 @@ per file (including unmatched summary hits) and conservatively retained as uncov
 never dropped from the denominator or silently assigned coverage.
 Changed lines without `DA` records are listed separately in JSON, including non-executable syntax;
 they are not silently considered covered.
+Native macOS also demonstrates `LH` below the number of positive unique `DA` entries. Reports
+retain this deficit and deduct `max(positive DA + unmapped LF - LH, 0)` from each covered
+production/test/changed subtotal (clamped at zero). This accounts for hits that could belong to
+unmapped entries instead of a mapped subset. These subtotals are lower bounds; the report does
+not pretend to locate the discrepancy on a particular source line. Raw LCOV and the exact-base gate remain intact.
 
 Every coverage job opts into `normal_shutdown_records_pid_unique_server_profiles` through
 `PET_SUBPROCESS_COVERAGE_PROOF`. The test requires cargo-llvm-cov's absolute, PID-unique output

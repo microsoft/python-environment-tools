@@ -58,6 +58,7 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           CARGO_TARGET_DIR: ${{ runner.temp }}/coverage-base-target
+          PET_SUBPROCESS_COVERAGE_PROOF: ${{ runner.temp }}/base-subprocess-coverage.json
         run: |
           git worktree add --detach "$RUNNER_TEMP/coverage-base" "$BASE"
           cd "$RUNNER_TEMP/coverage-base"

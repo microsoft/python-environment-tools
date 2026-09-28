@@ -48,7 +48,7 @@ class DetailCoverageTests(unittest.TestCase):
 
     def test_lcov_line_summaries_cannot_hide_truncated_or_overcounted_data(self):
         valid = self.record()
-        for text in [valid.replace('LH:1', 'LH:0'),
+        for text in [valid.replace('LH:1', 'LH:-1'),
                      valid.replace('LF:2', 'LF:1'),
                      valid.replace('LF:2\n', ''),
                      valid.replace('LH:1\n', ''),
@@ -74,7 +74,7 @@ class DetailCoverageTests(unittest.TestCase):
         self.assertEqual(records[name].unmapped, 1)
         result = detail.summarize(self.root, records, {name: {2}})['files'][0]
         self.assertEqual(result['production_found'], 2)
-        self.assertEqual(result['production_hit'], 1)
+        self.assertEqual(result['production_hit'], 0)
         self.assertEqual(result['unmapped_summary_lines'], 1)
         self.assertEqual(result['changed_lines_without_line_records'], [2])
         records = detail.line_records(self.lcov(self.record().replace('DA:1,1\n', '')))
@@ -94,6 +94,34 @@ class DetailCoverageTests(unittest.TestCase):
             source = '#[cfg(test)]\n' + declaration + '\nfn real() {}\n'
             with self.subTest(declaration=declaration):
                 self.assertEqual(detail.test_lines(source), {1, 2})
+
+    def test_macos_summary_hit_shortfall_is_visible_and_cannot_inflate_subtotals(self):
+        name = 'crates/pet/src/lib.rs'
+        path = self.root / name
+        path.parent.mkdir(parents=True)
+        path.write_text('fn first() {}\nfn second() {}\n')
+        text = self.record(lines='DA:1,1\nDA:2,1\n').replace('LH:2', 'LH:1')
+        records = detail.line_records(self.lcov(text))
+        self.assertEqual(records[name].summary_hit_shortfall, 1)
+        result = detail.summarize(self.root, records, {name: {1, 2}})['files'][0]
+        self.assertEqual(result['production_hit'], 1)
+        self.assertEqual(result['changed_production_hit'], 1)
+        self.assertEqual(result['summary_hit_shortfall'], 1)
+
+    def test_unmapped_hits_cannot_inflate_any_subset_lower_bound(self):
+        name = 'crates/pet/src/lib.rs'
+        path = self.root / name
+        path.parent.mkdir(parents=True)
+        path.write_text('fn real() {}\n#[cfg(test)]\nmod tests {\n fn test1() {}\n fn test2() {}\n}\n')
+        text = self.record(lines='DA:1,1\nDA:4,1\nDA:5,1\n').replace('LF:3', 'LF:4').replace('LH:3', 'LH:2')
+        records = detail.line_records(self.lcov(text))
+        row = detail.summarize(self.root, records, {name: {1}})['files'][0]
+        self.assertEqual(row['unmapped_summary_lines'], 1)
+        self.assertEqual(row['summary_hit_shortfall'], 1)
+        self.assertEqual(row['mapped_hit_uncertainty'], 2)
+        self.assertEqual(row['production_hit'], 0)
+        self.assertEqual(row['test_hit'], 0)
+        self.assertEqual(row['changed_production_hit'], 0)
 
     def test_inline_tests_do_not_hide_later_production_items(self):
         source = 'fn before() {}\n#[cfg(test)]\nmod tests {\n fn check() {}\n}\nfn after() {}\n'
