@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
+mod framing;
 mod output;
 pub mod server;
 
