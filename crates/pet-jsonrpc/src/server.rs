@@ -273,6 +273,30 @@ mod tests {
         })
     }
 
+    fn assert_valid_dispatch_after_invalid_input(
+        handlers: &HandlersKeyedByMethodName<TestContext>,
+        context: &TestContext,
+    ) {
+        assert!(context.request.lock().unwrap().is_none());
+        assert!(context.notification.lock().unwrap().is_none());
+        let error_count = context.errors.lock().unwrap().len();
+        handlers.handle_request(
+            json!({"jsonrpc": "2.0", "id": "after-invalid", "method": "method", "params": [42]}),
+        );
+        assert_eq!(
+            context.request.lock().unwrap().take(),
+            Some((RequestId::String("after-invalid".into()), json!([42])))
+        );
+        assert!(context.notification.lock().unwrap().is_none());
+        handlers.handle_request(json!({"jsonrpc": "2.0", "method": "method", "params": [7]}));
+        assert_eq!(
+            context.notification.lock().unwrap().take(),
+            Some(json!([7]))
+        );
+        assert!(context.request.lock().unwrap().is_none());
+        assert_eq!(context.errors.lock().unwrap().len(), error_count);
+    }
+
     fn supported_request_id_values() -> [Value; 10] {
         [
             json!("request-1"),
@@ -392,6 +416,7 @@ mod tests {
             context.errors.lock().unwrap().as_slice(),
             vec![(None, -32600, "Invalid JSONRPC request".to_string()); 6]
         );
+        assert_valid_dispatch_after_invalid_input(&handlers, &context);
     }
 
     #[test]
@@ -422,6 +447,7 @@ mod tests {
             context.errors.lock().unwrap().as_slice(),
             vec![(None, -32600, "Invalid JSONRPC request".to_string()); 6]
         );
+        assert_valid_dispatch_after_invalid_input(&handlers, &context);
     }
 
     #[test]
@@ -449,12 +475,21 @@ mod tests {
                         "Invalid JSONRPC request".to_string()
                     ),
                     (
-                        Some(id),
+                        Some(id.clone()),
                         -32602,
                         "JSONRPC params must be an object or array".to_string()
                     )
                 ]
             );
+            handlers.handle_request(
+                json!({"jsonrpc": "2.0", "id": value, "method": "method", "params": [42]}),
+            );
+            assert_eq!(
+                context.request.lock().unwrap().take(),
+                Some((id, json!([42])))
+            );
+            assert!(context.notification.lock().unwrap().is_none());
+            assert_eq!(context.errors.lock().unwrap().len(), 2);
         }
     }
 
@@ -527,6 +562,7 @@ mod tests {
                 (Some(2.into()), -32602)
             ]
         );
+        assert_valid_dispatch_after_invalid_input(&handlers, &context);
     }
 
     #[test]
