@@ -113,6 +113,53 @@ for the new client clocks.
 
 Linux and Windows line and function coverage are compared with the exact base commit. A decrease greater than 0.01 percentage points blocks the pull request. Coverage artifacts and comments remain available for inspection even when the comparison fails.
 
+### Production-focused and subprocess evidence
+
+The raw workspace percentages still include inline tests and retain the same exact-base
+0.01 percentage-point line/function gate. Supplemental `production-coverage/report.md` and
+schema-1 `details.json` separate executable production/test lines, list uncovered production
+lines, and intersect added/modified Rust lines with executable production lines. Changed files
+without instrumentation are listed explicitly, never assumed covered. These diagnostics do not
+introduce a fabricated baseline, change the raw denominator, or replace regression protection.
+
+Classification excludes integration-test/benchmark directories and Rust items explicitly marked
+`#[cfg(test)]` or `#[test]`, including inline modules and test-only helper functions. It masks
+strings, raw/byte strings, characters, and nested comments before matching item boundaries.
+Helpers outside those boundaries and complex conditional attributes remain conservatively in the
+production category; this is a source-focused diagnostic, not full Rust conditional-compilation
+analysis. Invalid/missing LCOV, missing source, inconsistent hit summaries, and source-line
+mismatches fail the reporting step. LLVM summaries can include more entries in `LF`/`LH`
+than the unique `DA` source lines (observed in real Windows exports). That deficit is reported
+per file (including unmatched summary hits) and conservatively retained as uncovered production,
+never dropped from the denominator or silently assigned coverage.
+Changed lines without `DA` records are listed separately in JSON, including non-executable syntax;
+they are not silently considered covered.
+
+Every coverage job opts into `normal_shutdown_records_pid_unique_server_profiles` through
+`PET_SUBPROCESS_COVERAGE_PROOF`. The test requires cargo-llvm-cov's absolute, PID-unique output
+pattern, launches idle and known-`info` PET subprocesses, closes stdin, and requires successful
+bounded exit and nonempty profiles for those exact child PIDs. The raw profiles stay in the normal
+cargo-llvm-cov collection directory and are included in the workspace report. The verifier also
+merges each child's profiles separately with the matching Rust LLVM tools and proves zero idle
+versus positive `info` execution at the real handler, transport dispatch, and response writer.
+The uploaded `subprocess-coverage/proof.json` and isolated LCOV exports retain that evidence;
+a killed child, missing profile, or absent execution witness fails rather than appearing covered.
+
+Native ARM64 macOS coverage runs workspace default-feature and native process/transport tests,
+including Darwin-specific process ownership paths. It intentionally does not compare this workload
+with Linux/Windows's installed-manager `ci` workload. For each macOS PR, the exact base revision is
+built and measured separately on the same runner with the same compiler and feature selection;
+the unchanged line/function comparator gates those comparable artifacts. This works on the first
+PR without silently accepting an absent macOS baseline. Main/manual runs publish the native
+measurement and proof for inspection. Existing functional macOS installed-manager jobs remain.
+
+Stable Rust line instrumentation does not provide condition/branch outcomes. Reports show LCOV
+`BRDA` totals when supplied, otherwise explicitly report branch data as unavailable (not 100%).
+Native malformed-frame/envelope, EOF, broken-output, saturation, and descendant tests provide
+behavioral failure-path evidence, but line coverage cannot prove both sides of every condition.
+Nightly `cargo llvm-cov --branch` can be used as a separate experiment; its unstable toolchain
+and differing denominator are not substituted into the stable cross-platform gate.
+
 ## Running locally
 
 The comparator requires Python 3.10 or newer.

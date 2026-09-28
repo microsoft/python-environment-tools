@@ -27,6 +27,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set Python to PATH
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -181,6 +184,21 @@ jobs:
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: trace
+          PET_SUBPROCESS_COVERAGE_PROOF: ${{ github.workspace }}/subprocess-coverage.json
+        shell: bash
+
+      - name: Verify Isolated Server Coverage
+        if: always()
+        run: python scripts/coverage_detail.py proof --manifest subprocess-coverage.json --output subprocess-coverage
+        shell: bash
+
+      - name: Report Production and Changed Coverage
+        if: always()
+        run: >-
+          python scripts/coverage_detail.py report
+          --lcov lcov.info
+          --base "HEAD"
+          --output production-coverage
         shell: bash
 
       - name: Validate Coverage Baseline
@@ -194,8 +212,14 @@ jobs:
         shell: bash
 
       - name: Upload Coverage Artifact
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-baseline-${{ matrix.os }}
-          path: lcov.info
+          path: |
+            lcov.info
+            coverage-baseline-report.md
+            production-coverage/
+            subprocess-coverage/
+            subprocess-coverage.json
           retention-days: 90

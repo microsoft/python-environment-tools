@@ -38,6 +38,10 @@ struct RawRpcClient {
 
 impl RawRpcClient {
     fn spawn() -> Self {
+        Self::spawn_with_profile(None)
+    }
+
+    fn spawn_with_profile(profile: Option<&Path>) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_pet"));
         command
             .arg("server")
@@ -45,6 +49,9 @@ impl RawRpcClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
         jsonrpc_client::configure_isolated_pet_environment(&mut command);
+        if let Some(profile) = profile {
+            command.env("LLVM_PROFILE_FILE", profile);
+        }
         let mut child = command.spawn().expect("raw fixture must spawn PET");
         let stdout = child.stdout.take().expect("PET stdout must be piped");
         let (sender, responses) = mpsc::channel();
@@ -817,6 +824,89 @@ fn invalid_and_oversize_framing_terminates_with_bounded_diagnostics() {
     for (name, input) in cases {
         assert_fatal_framing_input(name, &input);
     }
+}
+
+#[test]
+fn normal_shutdown_records_pid_unique_server_profiles() {
+    let Some(proof_path) = std::env::var_os("PET_SUBPROCESS_COVERAGE_PROOF") else {
+        return;
+    };
+    let inherited = PathBuf::from(
+        std::env::var_os("LLVM_PROFILE_FILE")
+            .expect("coverage proof requires cargo-llvm-cov instrumentation"),
+    );
+    let directory = inherited.parent().expect("profile must have a directory");
+    assert!(
+        directory.is_absolute(),
+        "profile directory must be absolute"
+    );
+    assert!(
+        inherited
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("%p"),
+        "cargo-llvm-cov must use PID-unique profiles"
+    );
+    let mut profiles = serde_json::Map::new();
+    for (name, request) in [("idle", false), ("info", true)] {
+        let prefix = format!("pet-proof-{}-{name}-", std::process::id());
+        let pattern = directory.join(format!("{prefix}%p-%m.profraw"));
+        let mut client = RawRpcClient::spawn_with_profile(Some(&pattern));
+        let prefix = format!("{prefix}{}-", client.child.id());
+        assert!(
+            fs::read_dir(directory).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&prefix)),
+            "child profile must not predate this process exit"
+        );
+        if request {
+            client.send(json!({"jsonrpc": "2.0", "id": "profile-proof", "method": "info"}));
+            let reply = client.receive();
+            assert_eq!(reply["id"], "profile-proof");
+            assert_eq!(reply["result"]["petVersion"], env!("CARGO_PKG_VERSION"));
+        }
+        client.child.stdin.take();
+        let status = jsonrpc_client::wait_for_exit(&mut client.child, Duration::from_secs(4))
+            .expect("profile proof requires graceful exit, not kill fallback");
+        assert!(
+            status.success(),
+            "profile probe exited unsuccessfully: {status}"
+        );
+        jsonrpc_client::join_reader(client.reader.take().unwrap(), Duration::from_secs(4)).unwrap();
+        let raw: Vec<PathBuf> = fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(&prefix)
+            })
+            .collect();
+        assert!(
+            !raw.is_empty(),
+            "normal server exit did not flush its own profile"
+        );
+        for path in &raw {
+            assert!(
+                fs::metadata(path).unwrap().len() > 0,
+                "empty server profile"
+            );
+        }
+        profiles.insert(name.into(), json!(raw));
+    }
+    fs::write(
+        proof_path,
+        serde_json::to_vec_pretty(&json!({
+            "binary": env!("CARGO_BIN_EXE_pet"),
+            "profiles": profiles,
+        }))
+        .unwrap(),
+    )
+    .expect("write subprocess coverage evidence");
 }
 
 #[test]

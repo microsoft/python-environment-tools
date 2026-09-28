@@ -1,0 +1,92 @@
+name: Native macOS Coverage
+
+on:
+  pull_request:
+    branches: [main, 'release*', 'release/*', 'release-*']
+  push:
+    branches: [main, 'release*', 'release/*', 'release-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: macos-14
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set Python to PATH
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Validate Coverage Reporting
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+      - name: Collect Native macOS Coverage
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info -- --test-threads=1
+        env:
+          PET_SUBPROCESS_COVERAGE_PROOF: ${{ github.workspace }}/subprocess-coverage.json
+
+      - name: Verify Isolated Server Coverage
+        if: always()
+        run: python scripts/coverage_detail.py proof --manifest subprocess-coverage.json --output subprocess-coverage
+
+      - name: Report Production and Changed Coverage
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: python scripts/coverage_detail.py report --lcov lcov.info --base "$BASE" --output production-coverage
+
+      - name: Measure Exact PR Base on the Same Runner
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/coverage-base-target
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/coverage-base" "$BASE"
+          cd "$RUNNER_TEMP/coverage-base"
+          cargo llvm-cov --workspace --lcov --output-path "$GITHUB_WORKSPACE/baseline-lcov.info" -- --test-threads=1
+
+      - name: Compare Exact Base Coverage
+        if: always() && github.event_name == 'pull_request'
+        run: >-
+          python scripts/quality_snapshot.py coverage
+          --current lcov.info --baseline baseline-lcov.info --platform macOS
+          --report coverage-report.md --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate Main Coverage
+        if: github.event_name != 'pull_request'
+        run: >-
+          python scripts/quality_snapshot.py coverage
+          --current lcov.info --baseline lcov.info --platform macOS
+          --report coverage-report.md --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Native macOS Coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-macos-native
+          path: |
+            lcov.info
+            baseline-lcov.info
+            coverage-report.md
+            production-coverage/
+            subprocess-coverage/
+            subprocess-coverage.json
+          retention-days: 30
