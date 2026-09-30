@@ -123,15 +123,18 @@ without instrumentation are listed explicitly, never assumed covered. These diag
 introduce a fabricated baseline, change the raw denominator, or replace regression protection.
 
 Classification excludes integration-test/benchmark directories and Rust items explicitly marked
-`#[cfg(test)]` or `#[test]`, including inline modules and test-only helper functions. It masks
+`#[cfg(test)]` or `#[test]`, including inline modules and test-only helper functions. Nested
+`all`/`any` predicates are also excluded when they require `test`: `all(test, unix)` is test-only,
+but `any(test, unix)` is not. It masks
 strings, raw/byte strings, characters, and nested comments before matching item boundaries.
-Helpers outside those boundaries and complex conditional attributes remain conservatively in the
+Helpers outside those boundaries and unsupported conditional predicates remain conservatively in the
 production category; this is a source-focused diagnostic, not full Rust conditional-compilation
 analysis. Invalid/missing LCOV, missing source, inconsistent hit summaries, and source-line
 mismatches fail the reporting step. LLVM summaries can include more entries in `LF`/`LH`
 than the unique `DA` source lines (observed in real Windows exports). That deficit is reported
-per file (including unmatched summary hits) and conservatively retained as uncovered production,
-never dropped from the denominator or silently assigned coverage.
+per file (including unmatched summary hits) and conservatively retained as uncovered production
+in mixed source files, or uncovered tests in integration-test/benchmark files. It is never dropped
+from the denominator or silently assigned coverage.
 Changed lines without `DA` records are listed separately in JSON, including non-executable syntax;
 they are not silently considered covered.
 Native macOS also demonstrates `LH` below the number of positive unique `DA` entries. Reports

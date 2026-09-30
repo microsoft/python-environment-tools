@@ -123,6 +123,37 @@ class DetailCoverageTests(unittest.TestCase):
         self.assertEqual(row['test_hit'], 0)
         self.assertEqual(row['changed_production_hit'], 0)
 
+    def test_conditional_attributes_exclude_only_items_requiring_test(self):
+        required = [
+            'all(test, unix)', 'all(windows, test,)', 'all(test, feature = "flag")',
+            'all(any(unix, windows), all(feature = "flag", test))',
+            'any(all(test, unix), all(windows, test))',
+        ]
+        optional = [
+            'any(test, unix)', 'any(windows, test)', 'not(test)', 'all(unix, feature = "test")',
+            'any(all(test, unix), windows)', 'all(any(test, unix), windows)', 'any()', 'all()',
+        ]
+        for condition in required + optional:
+            source = f'#[cfg({condition})]\nmod scoped {{\n fn helper() {{}}\n}}\nfn real() {{}}\n'
+            with self.subTest(condition=condition):
+                self.assertEqual(detail.test_lines(source), {1, 2, 3, 4} if condition in required else set())
+
+    def test_unmapped_test_file_entries_stay_in_the_test_denominator(self):
+        for folder in ['tests', 'benches']:
+            name = f'crates/pet/{folder}/fixture.rs'
+            path = self.root / name
+            path.parent.mkdir(parents=True)
+            path.write_text('fn helper() {}\nfn check() {}\n')
+            records = detail.line_records(self.lcov(self.record(name).replace('LF:2', 'LF:3')))
+            row = detail.summarize(self.root, records, {name: {1, 2}})['files'][0]
+            with self.subTest(folder=folder):
+                self.assertEqual(row['production_found'], 0)
+                self.assertEqual(row['production_hit'], 0)
+                self.assertEqual(row['changed_production_found'], 0)
+                self.assertEqual(row['test_found'], 3)
+                self.assertEqual(row['test_hit'], 0)
+                self.assertEqual(row['unmapped_summary_lines'], 1)
+
     def test_inline_tests_do_not_hide_later_production_items(self):
         source = 'fn before() {}\n#[cfg(test)]\nmod tests {\n fn check() {}\n}\nfn after() {}\n'
         self.assertEqual(detail.test_lines(source), {2, 3, 4, 5})

@@ -149,10 +149,37 @@ def code_mask(source: str) -> str:
     return ''.join(chars)
 
 
+def cfg_requires_test(expression: str) -> bool:
+    expression = expression.strip()
+    if expression == 'test':
+        return True
+    group = re.fullmatch(r'(all|any)\s*\((.*)\)', expression, re.DOTALL)
+    if not group:
+        return False
+    arguments = []
+    depth = start = 0
+    for index, char in enumerate(group[2]):
+        depth += (char == '(') - (char == ')')
+        if depth < 0:
+            raise SnapshotError('Unbalanced Rust cfg predicate')
+        if char == ',' and depth == 0:
+            arguments.append(group[2][start:index])
+            start = index + 1
+    if depth:
+        raise SnapshotError('Unbalanced Rust cfg predicate')
+    final = group[2][start:]
+    if final.strip():
+        arguments.append(final)
+    required = [cfg_requires_test(argument) for argument in arguments]
+    return any(required) if group[1] == 'all' else bool(required) and all(required)
+
+
 def test_lines(source: str) -> set[int]:
     masked = code_mask(source)
     excluded: set[int] = set()
-    for match in re.finditer(r'#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|test)\s*\]', masked):
+    for match in re.finditer(r'#\s*\[\s*(?:cfg\s*\((?P<cfg>[^]]*)\)|test)\s*\]', masked):
+        if match['cfg'] is not None and not cfg_requires_test(match['cfg']):
+            continue
         start = match.start()
         end = match.end()
         # Other attributes belong to this same item, not its body.
@@ -226,20 +253,21 @@ def summarize(root: Path, records: dict[str, SourceCoverage], changed: dict[str,
         if any(n > len(source.splitlines()) for n in lines):
             raise SnapshotError(f'LCOV source revision mismatch: {name}')
         parts = Path(name).parts
-        excluded = set(lines) if 'tests' in parts or 'benches' in parts else test_lines(source)
+        test_only = 'tests' in parts or 'benches' in parts
+        excluded = set(lines) if test_only else test_lines(source)
         production = {n: count for n, count in lines.items() if n not in excluded}
         tests = {n: count for n, count in lines.items() if n in excluded}
         edits = production.keys() & changed.get(name, set())
         uncertainty = record.unmapped + record.summary_hit_shortfall - record.unmapped_hits
         files.append({
-            'path': name, 'production_found': len(production) + record.unmapped,
+            'path': name, 'production_found': len(production) + (0 if test_only else record.unmapped),
             'unmapped_summary_lines': record.unmapped,
             'unmapped_summary_hits': record.unmapped_hits,
             'summary_hit_shortfall': record.summary_hit_shortfall,
             'mapped_hit_uncertainty': uncertainty,
             'changed_lines_without_line_records': sorted(changed.get(name, set()) - lines.keys() - excluded),
             'production_hit': max(0, sum(n > 0 for n in production.values()) - uncertainty),
-            'test_found': len(tests),
+            'test_found': len(tests) + (record.unmapped if test_only else 0),
             'test_hit': max(0, sum(n > 0 for n in tests.values()) - uncertainty),
             'uncovered_production': sorted(n for n, hits in production.items() if not hits),
             'changed_production_found': len(edits),
