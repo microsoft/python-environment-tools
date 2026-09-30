@@ -19,6 +19,7 @@ COUNT_KEYS = {
     "firstProcessEmptyDiskCache",
     "newProcessAfterFirstRefresh",
     "sameProcessWarm",
+    "persistentCacheResolve",
     "cacheUsage",
     "inventoryResources",
     "resolveLatency",
@@ -32,6 +33,8 @@ SUCCESS_KEYS = {
     "measurementCounts",
     "refreshScenarioSamples",
     "cacheUsage",
+    "persistentCacheResolveSamples",
+    "persistentCacheAfterColdResolve",
     "resolveConcurrency",
     "coldResolveBatches",
     "resolveLatencyUs",
@@ -54,6 +57,11 @@ SCENARIOS = {
     "firstProcessEmptyDiskCache",
     "newProcessAfterFirstRefresh",
     "sameProcessWarm",
+}
+PERSISTENT_CACHE_SCENARIOS = {
+    "cold": 1,
+    "diskWarm": 0,
+    "sameProcessWarm": 0,
 }
 
 
@@ -127,6 +135,7 @@ def validate_success_metrics(value: Any, expected_mode: str) -> dict[str, Any]:
         "firstProcessEmptyDiskCache": len(expected_sizes),
         "newProcessAfterFirstRefresh": len(expected_sizes),
         "sameProcessWarm": len(expected_sizes) * expected_samples,
+        "persistentCacheResolve": len(PERSISTENT_CACHE_SCENARIOS),
         "cacheUsage": len(expected_sizes),
         "inventoryResources": len(expected_sizes),
         "resolveLatency": expected_concurrency * expected_batches,
@@ -212,6 +221,54 @@ def validate_success_metrics(value: Any, expected_mode: str) -> dict[str, Any]:
             raise MetricsError(
                 "diskCacheAvailableForNewProcess must exactly reflect nonzero cached bytes"
             )
+
+    cache_control = metrics["persistentCacheResolveSamples"]
+    if (
+        not isinstance(cache_control, list)
+        or len(cache_control) != len(PERSISTENT_CACHE_SCENARIOS)
+    ):
+        raise MetricsError(
+            "persistentCacheResolveSamples must contain cold, disk-warm, and same-process samples"
+        )
+    seen_cache_control_scenarios = set()
+    for index, value in enumerate(cache_control):
+        sample = require_object(
+            value,
+            f"persistentCacheResolveSamples[{index}]",
+            {"scenario", "sampleCount", "latencyUs", "interpreterProcessesStarted"},
+        )
+        scenario = sample["scenario"]
+        if (
+            not isinstance(scenario, str)
+            or scenario not in PERSISTENT_CACHE_SCENARIOS
+            or scenario in seen_cache_control_scenarios
+        ):
+            raise MetricsError(
+                f"persistentCacheResolveSamples[{index}] has an invalid or duplicate scenario"
+            )
+        seen_cache_control_scenarios.add(scenario)
+        if require_integer(sample["sampleCount"], "sampleCount", minimum=1) != 1:
+            raise MetricsError(
+                f"persistentCacheResolveSamples[{index}].sampleCount must equal 1"
+            )
+        require_integer_list(
+            sample["latencyUs"],
+            f"persistentCacheResolveSamples[{index}].latencyUs",
+            1,
+        )
+        processes = require_integer(
+            sample["interpreterProcessesStarted"], "interpreterProcessesStarted"
+        )
+        if processes != PERSISTENT_CACHE_SCENARIOS[scenario]:
+            raise MetricsError(
+                f"persistentCacheResolveSamples[{index}] has an invalid interpreter process count"
+            )
+    persistent_cache = validate_cache_value(
+        metrics["persistentCacheAfterColdResolve"],
+        "persistentCacheAfterColdResolve",
+    )
+    if persistent_cache["files"] == 0 or persistent_cache["bytes"] == 0:
+        raise MetricsError("cold real resolve must produce a nonempty persistent cache")
 
     require_integer(metrics["resolveConcurrency"], "resolveConcurrency", minimum=1)
     require_integer(metrics["coldResolveBatches"], "coldResolveBatches", minimum=1)

@@ -2,12 +2,20 @@
 
 `session_performance` runs deterministic virtual-environment fixtures against
 real PET servers. For every inventory size it labels and measures three distinct
-refresh scenarios: a first server process with an explicitly empty cache
-directory, a new process after that first refresh using the same cache
+file-only refresh scenarios: a first server process with an explicitly empty
+cache directory, a new process after that first refresh using the same cache
 directory, and repeated warm refreshes in that second process. Process-cold does
-not imply an OS-cold filesystem cache. The new-process scenario records whether
-the first refresh actually wrote nonzero cache bytes; a zero-byte directory is
-not reported as a disk-cache hit.
+not imply an OS-cold filesystem cache. These fake environments are identified
+from files and normally produce no persistent resolve-cache entries, so their
+new-process samples are not described as disk-cache hits.
+
+A separate, fixed-size control resolves one real venv. Its cold process must
+start exactly one instrumented interpreter and write a nonempty persistent
+cache entry before a normal bounded shutdown. A new PET process then resolves
+the unchanged interpreter from the same cache without starting an interpreter,
+and a same-process warm resolve must do the same. All three resolved identities
+must match. The artifact labels their latencies `cold`, `diskWarm`, and
+`sameProcessWarm` and records one sample and the observed probe count for each.
 
 The benchmark also measures request-relative time to first fixture environment (excluding ambient host results),
 concurrent resolve latency, and sampled process-specific resident memory,
@@ -50,10 +58,14 @@ artifacts rather than uploading invalid JSON. Failed runs retain validated
 measurements when available; failures without usable metrics have explicit failed
 status and zero counts. The workflow preserves the original benchmark failure.
 
-Resolve overlap is established in an untimed proof pass by a fixture barrier:
+Resolve overlap is established in an untimed proof pass by a fixture barrier.
+Only environments below the fixture resolve root enter the barrier; resolved
+real paths keep macOS temporary-directory aliases equivalent, while ambient
+interpreters bypass it. During the proof pass,
 every distinct interpreter process records entry before the client issues
-`info`, reconfigures to a new workspace and cache, and refreshes that known
-inventory. The barrier remains held until those responsiveness checks complete.
+`info`, reconfigures to a new workspace while retaining the process's original
+cache directory, and refreshes that known inventory. The barrier remains held
+until those responsiveness checks complete.
 Platform-global locators may also report host installations and managers. The
 benchmark converts only configured workspace entries to strict fixture
 identities, validates that fixture-scoped managers remain empty, and records

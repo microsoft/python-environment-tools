@@ -125,6 +125,16 @@ impl Fixture {
     }
 
     fn create_resolve_environments(&self, count: usize) -> Vec<PathBuf> {
+        (0..count)
+            .map(|index| {
+                self.create_resolve_environment(
+                    &self.resolve_root().join(format!("resolve-{index}")),
+                )
+            })
+            .collect()
+    }
+
+    fn create_resolve_environment(&self, prefix: &Path) -> PathBuf {
         let python = std::env::var_os("PET_SESSION_PYTHON").unwrap_or_else(|| {
             if cfg!(windows) {
                 "python".into()
@@ -132,22 +142,18 @@ impl Fixture {
                 "python3".into()
             }
         });
-        (0..count)
-            .map(|index| {
-                let prefix = self.resolve_root().join(format!("resolve-{index}"));
-                let output = Command::new(&python)
-                    .args(["-m", "venv", "--without-pip", "--copies"])
-                    .arg(&prefix)
-                    .output()
-                    .expect("failed to start Python venv fixture setup");
-                assert!(
-                    output.status.success(),
-                    "failed to create resolve environment {index}: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                python_executable(&bin_directory(&prefix), false)
-            })
-            .collect()
+        let output = Command::new(&python)
+            .args(["-m", "venv", "--without-pip", "--copies"])
+            .arg(prefix)
+            .output()
+            .expect("failed to start Python venv fixture setup");
+        assert!(
+            output.status.success(),
+            "failed to create resolve environment at {}: {}",
+            prefix.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        python_executable(&bin_directory(prefix), false)
     }
 
     fn resolve_root(&self) -> PathBuf {
@@ -460,6 +466,46 @@ fn cache_json((files, bytes): (usize, u64)) -> serde_json::Value {
     })
 }
 
+fn resolve_and_measure(
+    client: &PetJsonRpcClient,
+    executable: &Path,
+) -> (EnvironmentIdentity, u128) {
+    let executable = executable
+        .to_str()
+        .expect("resolve fixture path was not UTF-8");
+    let (result, latency) = client
+        .submit_resolve(executable)
+        .expect("failed to submit cache-control resolve")
+        .wait(REQUEST_TIMEOUT)
+        .expect("cache-control resolve failed");
+    let environment: EnvironmentNotification =
+        serde_json::from_value(result).expect("resolve returned an invalid environment");
+    assert_eq!(
+        environment.error, None,
+        "cache-control resolve reported an error"
+    );
+    (
+        EnvironmentIdentity {
+            executable: norm_case(
+                environment
+                    .executable
+                    .expect("resolved environment had no executable"),
+            ),
+            prefix: norm_case(
+                environment
+                    .prefix
+                    .expect("resolved environment had no prefix"),
+            ),
+            kind: environment
+                .kind
+                .expect("resolved environment had no classification"),
+            name: environment.name,
+            version: environment.version,
+        },
+        latency.as_micros(),
+    )
+}
+
 fn shutdown_client(client: &PetJsonRpcClient, context: &str) {
     let status = client
         .shutdown(Duration::from_secs(10))
@@ -565,6 +611,94 @@ fn long_lived_session_benchmark() {
     let mut max_ambient_environment_count = 0;
     let mut max_ambient_manager_count = 0;
 
+    let barrier = fixture.barrier.as_os_str();
+    let python_path = fixture.python_path.as_os_str();
+    let resolve_root = fixture.resolve_root();
+    let resolve_environment =
+        fixture.create_resolve_environment(&resolve_root.join("cache-control"));
+    let resolve_cache = fixture._root.path().join("resolve-cache");
+    fs::create_dir_all(&resolve_cache).expect("failed to create resolve cache");
+    let resolve_environment_variables = [
+        ("PET_SESSION_RESOLVE_BARRIER", barrier),
+        ("PET_SESSION_RESOLVE_ROOT", resolve_root.as_os_str()),
+        ("PYTHONPATH", python_path),
+    ];
+
+    fixture.clear_barrier();
+    let mut cold_release = BarrierReleaseGuard::new(&fixture.barrier);
+    cold_release.release();
+    let cold_process = PetJsonRpcClient::spawn_with_environment(&resolve_environment_variables)
+        .expect("failed to spawn cold cache-control server");
+    cold_process
+        .configure(json!({
+            "workspaceDirectories": [&fixture.workspace],
+            "cacheDirectory": &resolve_cache,
+        }))
+        .expect("failed to configure cold cache-control server");
+    let (cold_identity, cold_latency_us) = resolve_and_measure(&cold_process, &resolve_environment);
+    assert_eq!(
+        fixture.entered_count(),
+        1,
+        "cold cache-control resolve must probe the interpreter once"
+    );
+    assert_eq!(fixture.released_count(), 1);
+    assert_eq!(fixture.failed_count(), 0);
+    shutdown_client(&cold_process, "cold cache-control server");
+    let cache_after_cold_resolve = directory_usage(&resolve_cache);
+    assert!(
+        cache_after_cold_resolve.0 > 0 && cache_after_cold_resolve.1 > 0,
+        "cold real resolve did not produce a persistent cache entry"
+    );
+
+    fixture.clear_barrier();
+    let mut warm_release = BarrierReleaseGuard::new(&fixture.barrier);
+    warm_release.release();
+    let warm_process = PetJsonRpcClient::spawn_with_environment(&resolve_environment_variables)
+        .expect("failed to spawn disk-warm cache-control server");
+    warm_process
+        .configure(json!({
+            "workspaceDirectories": [&fixture.workspace],
+            "cacheDirectory": &resolve_cache,
+        }))
+        .expect("failed to configure disk-warm cache-control server");
+    let (disk_warm_identity, disk_warm_latency_us) =
+        resolve_and_measure(&warm_process, &resolve_environment);
+    assert_eq!(
+        fixture.entered_count(),
+        0,
+        "disk-warm resolve spawned an interpreter instead of using the persistent cache"
+    );
+    let (same_process_identity, same_process_warm_latency_us) =
+        resolve_and_measure(&warm_process, &resolve_environment);
+    assert_eq!(
+        fixture.entered_count(),
+        0,
+        "same-process warm resolve unexpectedly spawned an interpreter"
+    );
+    assert_eq!(cold_identity, disk_warm_identity);
+    assert_eq!(cold_identity, same_process_identity);
+    shutdown_client(&warm_process, "disk-warm cache-control server");
+    let persistent_cache_resolve_samples = vec![
+        json!({
+            "scenario": "cold",
+            "sampleCount": 1,
+            "latencyUs": [cold_latency_us],
+            "interpreterProcessesStarted": 1,
+        }),
+        json!({
+            "scenario": "diskWarm",
+            "sampleCount": 1,
+            "latencyUs": [disk_warm_latency_us],
+            "interpreterProcessesStarted": 0,
+        }),
+        json!({
+            "scenario": "sameProcessWarm",
+            "sampleCount": 1,
+            "latencyUs": [same_process_warm_latency_us],
+            "interpreterProcessesStarted": 0,
+        }),
+    ];
+
     for &size in sizes {
         let mut expected = fixture.reset_inventory(size);
         expected.sort_unstable();
@@ -660,9 +794,6 @@ fn long_lived_session_benchmark() {
         }));
     }
 
-    let barrier = fixture.barrier.as_os_str();
-    let python_path = fixture.python_path.as_os_str();
-    let resolve_root = fixture.resolve_root();
     let client = PetJsonRpcClient::spawn_with_environment(&[
         ("PET_SESSION_RESOLVE_BARRIER", barrier),
         ("PET_SESSION_RESOLVE_ROOT", resolve_root.as_os_str()),
@@ -770,9 +901,12 @@ fn long_lived_session_benchmark() {
 
     fixture.clear_barrier();
     let pre_resolve_resources = observe_resources(client.process_id());
+    let original_cache_before_overlap = directory_usage(&fixture.cache);
+    assert!(
+        original_cache_before_overlap.0 > 0 && original_cache_before_overlap.1 > 0,
+        "warm-up resolve did not populate the original process cache"
+    );
     let overlap_workspace = fixture._root.path().join("overlap-workspace");
-    let overlap_cache = fixture._root.path().join("overlap-cache");
-    fs::create_dir_all(&overlap_cache).expect("failed to create overlap cache");
     let mut overlap_expected = fixture.reset_inventory_at(&overlap_workspace, 3);
     overlap_expected.sort_unstable();
     let overlap_executables = resolve_executables
@@ -810,7 +944,7 @@ fn long_lived_session_benchmark() {
     client
         .configure(json!({
             "workspaceDirectories": [&overlap_workspace],
-            "cacheDirectory": &overlap_cache,
+            "cacheDirectory": &fixture.cache,
         }))
         .expect("configure was not responsive while resolves were blocked");
     client.clear_notifications();
@@ -838,6 +972,11 @@ fn long_lived_session_benchmark() {
     max_ambient_environment_count =
         max_ambient_environment_count.max(overlap_ambient_environment_count);
     max_ambient_manager_count = max_ambient_manager_count.max(overlap_ambient_manager_count);
+    assert_eq!(
+        directory_usage(&fixture.cache),
+        original_cache_before_overlap,
+        "overlap reconfiguration did not retain the original cache contents"
+    );
     assert_eq!(
         fixture.released_count(),
         0,
@@ -976,6 +1115,7 @@ fn long_lived_session_benchmark() {
                 "firstProcessEmptyDiskCache": first_process_sample_count,
                 "newProcessAfterFirstRefresh": new_process_sample_count,
                 "sameProcessWarm": same_process_warm_sample_count,
+                "persistentCacheResolve": persistent_cache_resolve_samples.len(),
                 "cacheUsage": cache_usage.len(),
                 "inventoryResources": inventory_resource_samples.len(),
                 "resolveLatency": resolve_latency_us.len(),
@@ -983,6 +1123,8 @@ fn long_lived_session_benchmark() {
             },
             "refreshScenarioSamples": refresh_scenario_samples,
             "cacheUsage": cache_usage,
+            "persistentCacheResolveSamples": persistent_cache_resolve_samples,
+            "persistentCacheAfterColdResolve": cache_json(cache_after_cold_resolve),
             "resolveConcurrency": resolve_concurrency,
             "coldResolveBatches": cold_resolve_batches,
             "resolveLatencyUs": resolve_latency_us,

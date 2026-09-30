@@ -525,57 +525,6 @@ fn spawn_stdout_reader(stdout: ChildStdout, state: Arc<ClientState>) -> JoinHand
     })
 }
 
-#[cfg(test)]
-pub(crate) fn controlled_pending_request(
-    client: &PetJsonRpcClient,
-    submitted_at: Instant,
-) -> (PendingRequest, impl FnOnce(Result<Value, String>, Instant)) {
-    let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
-    let (sender, receiver) = mpsc::channel();
-    client
-        .inner
-        .state
-        .pending
-        .lock()
-        .unwrap()
-        .insert(id, sender.clone());
-    let request = PendingRequest {
-        id,
-        method: "controlled".to_string(),
-        submitted_at,
-        receiver,
-        client: client.clone(),
-    };
-    let send = move |result, received_at| {
-        sender
-            .send(TimedResponse {
-                result,
-                received_at,
-            })
-            .expect("controlled pending receiver should remain connected");
-    };
-    (request, send)
-}
-
-#[cfg(test)]
-pub(crate) fn pending_request_registered(
-    client: &PetJsonRpcClient,
-    request: &PendingRequest,
-) -> bool {
-    client
-        .inner
-        .state
-        .pending
-        .lock()
-        .unwrap()
-        .contains_key(&request.id)
-}
-
-#[cfg(test)]
-pub(crate) fn pending_request_count(client: &PetJsonRpcClient) -> usize {
-    client.inner.state.pending.lock().unwrap().len()
-}
-
 fn spawn_stderr_reader(
     stderr: impl Read + Send + 'static,
     state: Arc<ClientState>,
@@ -648,4 +597,114 @@ pub(crate) fn read_message(reader: &mut BufReader<ChildStdout>) -> io::Result<Op
         )
     })?;
     Ok(Some(message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn controlled_pending_request(
+        client: &PetJsonRpcClient,
+        submitted_at: Instant,
+    ) -> (PendingRequest, impl FnOnce(Result<Value, String>, Instant)) {
+        let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
+        let (sender, receiver) = mpsc::channel();
+        client
+            .inner
+            .state
+            .pending
+            .lock()
+            .unwrap()
+            .insert(id, sender.clone());
+        let request = PendingRequest {
+            id,
+            method: "controlled".to_string(),
+            submitted_at,
+            receiver,
+            client: client.clone(),
+        };
+        let send = move |result, received_at| {
+            sender
+                .send(TimedResponse {
+                    result,
+                    received_at,
+                })
+                .expect("controlled pending receiver should remain connected");
+        };
+        (request, send)
+    }
+
+    fn pending_request_registered(client: &PetJsonRpcClient, request: &PendingRequest) -> bool {
+        client
+            .inner
+            .state
+            .pending
+            .lock()
+            .unwrap()
+            .contains_key(&request.id)
+    }
+
+    fn pending_request_count(client: &PetJsonRpcClient) -> usize {
+        client.inner.state.pending.lock().unwrap().len()
+    }
+
+    #[test]
+    fn pending_request_uses_receipt_time_and_operation_deadline() {
+        let client = PetJsonRpcClient::spawn().expect("failed to spawn idle PET client");
+
+        let submitted_at = Instant::now() - Duration::from_secs(10);
+        let received_at = submitted_at + Duration::from_millis(125);
+        let (received, send_received) = controlled_pending_request(&client, submitted_at);
+        send_received(Ok(json!({ "ok": true })), received_at);
+        let (result, latency) = received
+            .wait(Duration::from_secs(30))
+            .expect("recorded response should be returned");
+        assert_eq!(result, json!({ "ok": true }));
+        assert_eq!(latency, Duration::from_millis(125));
+        assert_eq!(pending_request_count(&client), 0);
+
+        let consumed_after_deadline_at = Instant::now() - Duration::from_secs(31);
+        let (consumed_after_deadline, send_timely) =
+            controlled_pending_request(&client, consumed_after_deadline_at);
+        send_timely(
+            Ok(json!({ "timely": true })),
+            consumed_after_deadline_at + Duration::from_secs(29),
+        );
+        let (result, latency) = consumed_after_deadline
+            .wait(Duration::from_secs(30))
+            .expect("a timely received response remains valid when consumed after the deadline");
+        assert_eq!(result, json!({ "timely": true }));
+        assert_eq!(latency, Duration::from_secs(29));
+
+        let received_after_deadline_at = Instant::now() - Duration::from_secs(31);
+        let (received_after_deadline, send_late) =
+            controlled_pending_request(&client, received_after_deadline_at);
+        send_late(
+            Ok(json!({ "late": true })),
+            received_after_deadline_at + Duration::from_secs(30) + Duration::from_millis(1),
+        );
+        let error = received_after_deadline
+            .wait(Duration::from_secs(30))
+            .expect_err("a response received after the operation deadline must time out");
+        assert!(error.contains("Timed out waiting for controlled response"));
+        assert_eq!(pending_request_count(&client), 0);
+
+        let expired_at = Instant::now() - Duration::from_secs(31);
+        let (expired, _keep_sender_connected) = controlled_pending_request(&client, expired_at);
+        assert!(pending_request_registered(&client, &expired));
+        let error = expired
+            .wait(Duration::from_secs(30))
+            .expect_err("an expired operation must not receive a fresh wait budget");
+        assert!(error.contains("Timed out waiting for controlled response"));
+        assert_eq!(pending_request_count(&client), 0);
+
+        let (dropped, _keep_sender_connected) = controlled_pending_request(&client, Instant::now());
+        assert!(pending_request_registered(&client, &dropped));
+        drop(dropped);
+        assert_eq!(
+            pending_request_count(&client),
+            0,
+            "dropping a pending request must remove its map entry"
+        );
+    }
 }

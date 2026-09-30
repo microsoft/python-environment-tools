@@ -13,76 +13,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
-mod jsonrpc_client;
+pub mod jsonrpc_client;
 
 use jsonrpc_client::{EnvironmentNotification, PetJsonRpcClient};
-
-#[test]
-fn pending_request_uses_receipt_time_and_operation_deadline() {
-    let client = PetJsonRpcClient::spawn().expect("failed to spawn idle PET client");
-
-    let submitted_at = Instant::now() - Duration::from_secs(10);
-    let received_at = submitted_at + Duration::from_millis(125);
-    let (received, send_received) =
-        jsonrpc_client::controlled_pending_request(&client, submitted_at);
-    send_received(Ok(json!({ "ok": true })), received_at);
-    let (result, latency) = received
-        .wait(Duration::from_secs(30))
-        .expect("recorded response should be returned");
-    assert_eq!(result, json!({ "ok": true }));
-    assert_eq!(latency, Duration::from_millis(125));
-    assert_eq!(jsonrpc_client::pending_request_count(&client), 0);
-
-    let consumed_after_deadline_at = Instant::now() - Duration::from_secs(31);
-    let (consumed_after_deadline, send_timely) =
-        jsonrpc_client::controlled_pending_request(&client, consumed_after_deadline_at);
-    send_timely(
-        Ok(json!({ "timely": true })),
-        consumed_after_deadline_at + Duration::from_secs(29),
-    );
-    let (result, latency) = consumed_after_deadline
-        .wait(Duration::from_secs(30))
-        .expect("a timely received response remains valid when consumed after the deadline");
-    assert_eq!(result, json!({ "timely": true }));
-    assert_eq!(latency, Duration::from_secs(29));
-
-    let received_after_deadline_at = Instant::now() - Duration::from_secs(31);
-    let (received_after_deadline, send_late) =
-        jsonrpc_client::controlled_pending_request(&client, received_after_deadline_at);
-    send_late(
-        Ok(json!({ "late": true })),
-        received_after_deadline_at + Duration::from_secs(30) + Duration::from_millis(1),
-    );
-    let error = received_after_deadline
-        .wait(Duration::from_secs(30))
-        .expect_err("a response received after the operation deadline must time out");
-    assert!(error.contains("Timed out waiting for controlled response"));
-    assert_eq!(jsonrpc_client::pending_request_count(&client), 0);
-
-    let expired_at = Instant::now() - Duration::from_secs(31);
-    let (expired, _keep_sender_connected) =
-        jsonrpc_client::controlled_pending_request(&client, expired_at);
-    assert!(jsonrpc_client::pending_request_registered(
-        &client, &expired
-    ));
-    let error = expired
-        .wait(Duration::from_secs(30))
-        .expect_err("an expired operation must not receive a fresh wait budget");
-    assert!(error.contains("Timed out waiting for controlled response"));
-    assert_eq!(jsonrpc_client::pending_request_count(&client), 0);
-
-    let (dropped, _keep_sender_connected) =
-        jsonrpc_client::controlled_pending_request(&client, Instant::now());
-    assert!(jsonrpc_client::pending_request_registered(
-        &client, &dropped
-    ));
-    drop(dropped);
-    assert_eq!(
-        jsonrpc_client::pending_request_count(&client),
-        0,
-        "dropping a pending request must remove its map entry"
-    );
-}
 
 fn frame_with_headers(payload: &[u8], headers: &[(&str, &str)], line_ending: &[u8]) -> Vec<u8> {
     let mut frame = Vec::new();
