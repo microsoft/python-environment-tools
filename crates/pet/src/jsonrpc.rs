@@ -33,8 +33,9 @@ use pet_jsonrpc::{
 };
 use pet_poetry::Poetry;
 use pet_poetry::PoetryLocator;
+use pet_pyenv::PyEnv;
 use pet_python_utils::cache::clear_cache;
-use pet_python_utils::cache::set_cache_directory;
+use pet_python_utils::cache::set_cache_directory_and_get_effective;
 use pet_reporter::collect;
 use pet_reporter::{cache::CacheReporter, jsonrpc};
 use pet_telemetry::report_inaccuracies_identified_after_resolving;
@@ -54,10 +55,29 @@ use std::{
 };
 use tracing::info_span;
 
-#[derive(Debug, Clone, Default)]
-struct ConfigurationState {
+#[derive(Clone)]
+struct LocatorGraph {
+    locators: Arc<Vec<Arc<dyn Locator>>>,
+    conda_locator: Arc<Conda>,
+    poetry_locator: Arc<Poetry>,
+}
+
+struct PublishedRequestState {
     generation: u64,
     config: Configuration,
+    graph: LocatorGraph,
+    active: Mutex<bool>,
+}
+
+impl PublishedRequestState {
+    fn new(generation: u64, config: Configuration, graph: LocatorGraph) -> Self {
+        Self {
+            generation,
+            config,
+            graph,
+            active: Mutex::new(true),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,7 +382,7 @@ struct RefreshExecution {
     result: RefreshResult,
     perf: RefreshPerformance,
     reporter: Arc<CacheReporter>,
-    configuration: Arc<RwLock<ConfigurationState>>,
+    published_state: Arc<RwLock<Arc<PublishedRequestState>>>,
     refresh_generation: u64,
     conda_locator: Arc<Conda>,
     poetry_locator: Arc<Poetry>,
@@ -443,39 +463,54 @@ fn finish_refresh_errors(completion_guard: &mut RefreshCompletionGuard<'_>, mess
     }
 }
 
+fn run_if_request_state_active<F>(request_state: &PublishedRequestState, callback: F) -> bool
+where
+    F: FnOnce(),
+{
+    let active = request_state
+        .active
+        .lock()
+        .expect("request snapshot active mutex poisoned");
+    if !*active {
+        return false;
+    }
+
+    let result = panic::catch_unwind(AssertUnwindSafe(callback));
+    drop(active);
+    if let Err(panic_payload) = result {
+        panic::resume_unwind(panic_payload);
+    }
+    true
+}
+
 fn sync_refresh_locator_state_if_current<F>(
-    configuration: &RwLock<ConfigurationState>,
-    refresh_generation: u64,
+    published_state: &RwLock<Arc<PublishedRequestState>>,
+    request_state: &Arc<PublishedRequestState>,
     sync: F,
 ) -> Result<(), u64>
 where
     F: FnOnce(),
 {
-    let state = configuration.read().unwrap();
-    if state.generation != refresh_generation {
-        return Err(state.generation);
+    if !run_if_request_state_active(request_state, sync) {
+        return Err(published_state
+            .read()
+            .expect("published state lock poisoned")
+            .generation);
     }
 
-    sync();
     Ok(())
 }
 
 struct GenerationGuardedReporter {
     reporter: Arc<dyn Reporter>,
-    configuration: Arc<RwLock<ConfigurationState>>,
-    refresh_generation: u64,
+    request_state: Arc<PublishedRequestState>,
 }
 
 impl GenerationGuardedReporter {
-    fn new(
-        reporter: Arc<dyn Reporter>,
-        configuration: Arc<RwLock<ConfigurationState>>,
-        refresh_generation: u64,
-    ) -> Self {
+    fn new(reporter: Arc<dyn Reporter>, request_state: Arc<PublishedRequestState>) -> Self {
         Self {
             reporter,
-            configuration,
-            refresh_generation,
+            request_state,
         }
     }
 
@@ -484,13 +519,12 @@ impl GenerationGuardedReporter {
         F: FnOnce(&dyn Reporter),
         S: FnOnce(),
     {
-        let state = self.configuration.read().unwrap();
-        if state.generation == self.refresh_generation {
+        if run_if_request_state_active(self.request_state.as_ref(), || {
             report(self.reporter.as_ref());
+        }) {
             return;
         }
 
-        drop(state);
         on_stale();
     }
 }
@@ -502,7 +536,7 @@ impl Reporter for GenerationGuardedReporter {
             || {
                 trace!(
                     "Skipping manager notification for stale generation {}",
-                    self.refresh_generation
+                    self.request_state.generation
                 )
             },
         );
@@ -514,7 +548,7 @@ impl Reporter for GenerationGuardedReporter {
             || {
                 trace!(
                     "Skipping environment notification for stale generation {}: {:?}",
-                    self.refresh_generation,
+                    self.request_state.generation,
                     env.executable
                         .clone()
                         .unwrap_or(env.prefix.clone().unwrap_or_default())
@@ -529,7 +563,7 @@ impl Reporter for GenerationGuardedReporter {
             || {
                 trace!(
                     "Skipping telemetry notification for stale generation {}: {:?}",
-                    self.refresh_generation,
+                    self.request_state.generation,
                     event
                 )
             },
@@ -538,7 +572,7 @@ impl Reporter for GenerationGuardedReporter {
 }
 
 pub struct Context {
-    configuration: Arc<RwLock<ConfigurationState>>,
+    published_state: Arc<RwLock<Arc<PublishedRequestState>>>,
     // Serializes overlapping `configure` RPCs so that two configures cannot
     // interleave their `locator.configure()` calls. Lock ordering: always
     // acquire `configure_in_progress` BEFORE `configuration.write()`. Refresh
@@ -546,8 +580,6 @@ pub struct Context {
     // #461 for why this is decoupled from the configuration `RwLock`: holding
     // the write lock across locator I/O regresses refresh latency.
     configure_in_progress: Arc<Mutex<()>>,
-    locators: Arc<Vec<Arc<dyn Locator>>>,
-    conda_locator: Arc<Conda>,
     os_environment: Arc<dyn Environment>,
     refresh_coordinator: RefreshCoordinator,
     glob_expansion_admission: Arc<GlobExpansionAdmission>,
@@ -567,12 +599,13 @@ pub fn start_jsonrpc_server() -> std::io::Result<()> {
     // These are globals for the the lifetime of the server.
     // Hence passed around as Arcs via the context.
     let environment = EnvironmentApi::new();
-    let conda_locator = Arc::new(Conda::from(&environment));
-    let poetry_locator = Arc::new(Poetry::from(&environment));
+    let graph = create_initial_locator_graph(&environment);
     let context = Context {
-        locators: create_locators(conda_locator.clone(), poetry_locator.clone(), &environment),
-        conda_locator,
-        configuration: Arc::new(RwLock::new(ConfigurationState::default())),
+        published_state: Arc::new(RwLock::new(Arc::new(PublishedRequestState::new(
+            0,
+            Configuration::default(),
+            graph,
+        )))),
         configure_in_progress: Arc::new(Mutex::new(())),
         os_environment: Arc::new(environment),
         refresh_coordinator: RefreshCoordinator::default(),
@@ -768,9 +801,7 @@ pub fn handle_configure(context: Arc<Context>, id: RequestId, params: Value) {
                 }
 
                 if let Err(message) = apply_configure_options(
-                    context.configuration.as_ref(),
-                    &context.configure_in_progress,
-                    &context.locators,
+                    context.as_ref(),
                     configure_options,
                     workspace_directories,
                     environment_directories,
@@ -859,30 +890,73 @@ fn expand_refresh_options(options: &RefreshOptions) -> Result<RefreshOptions, Gl
 }
 
 fn apply_configure_options(
-    configuration: &RwLock<ConfigurationState>,
-    configure_in_progress: &Mutex<()>,
-    locators: &Arc<Vec<Arc<dyn Locator>>>,
+    context: &Context,
     configure_options: ConfigureOptions,
     workspace_directories: Option<Vec<PathBuf>>,
     environment_directories: Option<Vec<PathBuf>>,
 ) -> Result<(), String> {
-    // Phase A — Prepare: serialize concurrent configures, then briefly
-    // take a read lock to snapshot the current config and compute the next
-    // one. No lock is held while locators are invoked, so refresh threads
-    // (which take `configuration.read()`) are not blocked by per-locator
-    // I/O. See #461.
-    let _configure_guard = configure_in_progress.lock().unwrap();
+    apply_configure_options_with_graph(
+        context.published_state.as_ref(),
+        &context.configure_in_progress,
+        configure_options,
+        workspace_directories,
+        environment_directories,
+        |previous_state, next_config| {
+            create_replacement_locator_graph(
+                context.os_environment.as_ref(),
+                &previous_state.graph,
+                &previous_state.config,
+                next_config,
+            )
+        },
+    )
+}
 
-    let (previous_config, mut next_config, next_generation) = {
-        // Read-only snapshot. `configure_in_progress` already ensures no
-        // other configure thread is racing, and refresh threads only ever
-        // take read locks, so a read lock here suffices.
-        let state = configuration.read().unwrap();
-        let previous_config = state.config.clone();
-        let next_config = state.config.clone();
-        let next_generation = state.generation + 1;
-        (previous_config, next_config, next_generation)
-    };
+fn apply_configure_options_with_graph<F>(
+    published_state: &RwLock<Arc<PublishedRequestState>>,
+    configure_in_progress: &Mutex<()>,
+    configure_options: ConfigureOptions,
+    workspace_directories: Option<Vec<PathBuf>>,
+    environment_directories: Option<Vec<PathBuf>>,
+    create_graph: F,
+) -> Result<(), String>
+where
+    F: FnOnce(&PublishedRequestState, &Configuration) -> LocatorGraph,
+{
+    apply_configure_options_with_graph_and_cache(
+        published_state,
+        configure_in_progress,
+        configure_options,
+        workspace_directories,
+        environment_directories,
+        create_graph,
+        set_cache_directory_and_get_effective,
+    )
+}
+
+fn apply_configure_options_with_graph_and_cache<F, C>(
+    published_state: &RwLock<Arc<PublishedRequestState>>,
+    configure_in_progress: &Mutex<()>,
+    configure_options: ConfigureOptions,
+    workspace_directories: Option<Vec<PathBuf>>,
+    environment_directories: Option<Vec<PathBuf>>,
+    create_graph: F,
+    configure_cache: C,
+) -> Result<(), String>
+where
+    F: FnOnce(&PublishedRequestState, &Configuration) -> LocatorGraph,
+    C: FnOnce(PathBuf) -> PathBuf,
+{
+    let _configure_guard = configure_in_progress
+        .lock()
+        .expect("configure serialization mutex poisoned");
+
+    let previous_state = published_state
+        .read()
+        .expect("published state lock poisoned")
+        .clone();
+    let mut next_config = previous_state.config.clone();
+    let next_generation = previous_state.generation + 1;
 
     next_config.workspace_directories = workspace_directories;
     next_config.conda_executable = configure_options.conda_executable;
@@ -902,11 +976,47 @@ fn apply_configure_options(
         next_config
     );
 
-    // Phase B — Configure locators with no configuration lock held so that
-    // concurrent refreshes can read the (still-old) generation without
-    // blocking on locator I/O.
-    let mut configured_locator_count = 0;
-    for locator in locators.iter() {
+    if let Some(cache_directory) = cache_directory {
+        let effective_cache_directory =
+            panic::catch_unwind(AssertUnwindSafe(|| configure_cache(cache_directory))).map_err(
+                |panic_payload| {
+                    let panic_message = panic_payload_message(panic_payload.as_ref());
+                    error!(
+                        "Cache directory configuration panicked for generation {}: {}",
+                        next_generation, panic_message
+                    );
+                    format!(
+                        "Cache directory configuration failed for generation {next_generation}: {panic_message}"
+                    )
+                },
+            )?;
+        next_config.cache_directory = Some(effective_cache_directory);
+    }
+
+    let next_graph = panic::catch_unwind(AssertUnwindSafe(|| {
+        create_graph(previous_state.as_ref(), &next_config)
+    }))
+    .map_err(|panic_payload| {
+        let panic_message = panic_payload_message(panic_payload.as_ref());
+        error!(
+            "Locator graph construction panicked for generation {}: {}",
+            next_generation, panic_message
+        );
+        format!(
+            "Locator graph construction failed for generation {next_generation}: {panic_message}"
+        )
+    })?;
+
+    for locator in next_graph.locators.iter() {
+        if previous_state
+            .graph
+            .locators
+            .iter()
+            .any(|previous| Arc::ptr_eq(previous, locator))
+            && locator.get_kind() == pet_core::LocatorKind::Poetry
+        {
+            continue;
+        }
         if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
             locator.configure(&next_config);
         })) {
@@ -915,75 +1025,31 @@ fn apply_configure_options(
                 "Locator configuration panicked for generation {}: {}",
                 next_generation, panic_message
             );
-            rollback_locator_config(
-                locators,
-                &previous_config,
-                next_generation,
-                configured_locator_count + 1,
-            );
             return Err(format!(
                 "Locator configuration failed for generation {next_generation}: {panic_message}"
             ));
         }
-        configured_locator_count += 1;
     }
 
-    if let Some(cache_directory) = cache_directory {
-        if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
-            set_cache_directory(cache_directory);
-        })) {
-            let panic_message = panic_payload_message(panic_payload.as_ref());
-            error!(
-                "Cache directory configuration panicked for generation {}: {}",
-                next_generation, panic_message
-            );
-            rollback_locator_config(
-                locators,
-                &previous_config,
-                next_generation,
-                configured_locator_count,
-            );
-            return Err(format!(
-                "Cache directory configuration failed for generation {next_generation}: {panic_message}"
-            ));
-        }
-    }
-
-    // Phase C — Publish: re-take the write lock and atomically install the
-    // new config + generation. Refresh threads only ever observe the new
-    // generation after every locator has been configured.
     {
-        let mut state = configuration.write().unwrap();
-        state.config = next_config;
-        state.generation = next_generation;
-        // Reset missing-env reporting so that the next refresh after
-        // reconfiguration can trigger it again (Fixes #395). Done inside the
-        // write lock to avoid a TOCTOU window with concurrent refresh threads
-        // reading the generation.
+        let mut active = previous_state
+            .active
+            .lock()
+            .expect("request snapshot active mutex poisoned");
+        let mut state = published_state
+            .write()
+            .expect("published state lock poisoned");
+        debug_assert!(Arc::ptr_eq(&state, &previous_state));
+        *active = false;
+        *state = Arc::new(PublishedRequestState::new(
+            next_generation,
+            next_config,
+            next_graph,
+        ));
         MISSING_ENVS_REPORTING_STATE.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
     }
 
     Ok(())
-}
-
-fn rollback_locator_config(
-    locators: &Arc<Vec<Arc<dyn Locator>>>,
-    previous_config: &Configuration,
-    failed_generation: u64,
-    configured_locator_count: usize,
-) {
-    if let Err(panic_payload) = panic::catch_unwind(AssertUnwindSafe(|| {
-        for locator in locators.iter().take(configured_locator_count) {
-            locator.configure(previous_config);
-        }
-    })) {
-        error!(
-            "Rollback after failed locator configuration for generation {} also panicked: {}. Aborting process to avoid continuing with inconsistent locator state.",
-            failed_generation,
-            panic_payload_message(panic_payload.as_ref())
-        );
-        std::process::abort();
-    }
 }
 
 fn panic_payload_message(panic_payload: &(dyn std::any::Any + Send)) -> String {
@@ -1000,6 +1066,115 @@ fn panic_payload_message(panic_payload: &(dyn std::any::Any + Send)) -> String {
 fn configure_locators(locators: &Arc<Vec<Arc<dyn Locator>>>, config: &Configuration) {
     for locator in locators.iter() {
         locator.configure(config);
+    }
+}
+
+fn create_initial_locator_graph(environment: &dyn Environment) -> LocatorGraph {
+    let conda_locator = Arc::new(Conda::from(environment));
+    let poetry_locator = Arc::new(Poetry::from(environment));
+    let locators = create_locators(conda_locator.clone(), poetry_locator.clone(), environment);
+    LocatorGraph {
+        locators,
+        conda_locator,
+        poetry_locator,
+    }
+}
+
+fn create_replacement_locator_graph(
+    environment: &dyn Environment,
+    previous_graph: &LocatorGraph,
+    previous_config: &Configuration,
+    next_config: &Configuration,
+) -> LocatorGraph {
+    let conda_changed = previous_config.conda_executable != next_config.conda_executable;
+    let conda_locator = if !conda_changed {
+        previous_graph.conda_locator.clone()
+    } else {
+        Arc::new(Conda::from_shared_environment_cache(
+            environment,
+            previous_graph.conda_locator.as_ref(),
+        ))
+    };
+    let poetry_locator = if previous_config.workspace_directories
+        == next_config.workspace_directories
+        && previous_config.poetry_executable == next_config.poetry_executable
+    {
+        previous_graph.poetry_locator.clone()
+    } else {
+        Arc::new(Poetry::from(environment))
+    };
+    let fresh_locators =
+        create_locators(conda_locator.clone(), poetry_locator.clone(), environment);
+    let locators = fresh_locators
+        .iter()
+        .map(|fresh| {
+            let Some(previous) = previous_graph
+                .locators
+                .iter()
+                .find(|previous| previous.get_kind() == fresh.get_kind())
+            else {
+                return fresh.clone();
+            };
+
+            if conda_changed {
+                match fresh.get_kind() {
+                    pet_core::LocatorKind::PyEnv => {
+                        let previous = previous
+                            .as_any()
+                            .downcast_ref::<PyEnv>()
+                            .expect("PyEnv locator kind must downcast to PyEnv");
+                        return Arc::new(previous.with_conda_locator(conda_locator.clone()))
+                            as Arc<dyn Locator>;
+                    }
+                    #[cfg(windows)]
+                    pet_core::LocatorKind::WindowsRegistry => {
+                        use pet_windows_registry::WindowsRegistry;
+
+                        let previous = previous.as_any().downcast_ref::<WindowsRegistry>().expect(
+                            "WindowsRegistry locator kind must downcast to WindowsRegistry",
+                        );
+                        return Arc::new(previous.with_conda_locator(conda_locator.clone()))
+                            as Arc<dyn Locator>;
+                    }
+                    _ => {}
+                }
+            }
+
+            if should_reuse_locator(fresh.get_kind()) {
+                previous.clone()
+            } else {
+                fresh.clone()
+            }
+        })
+        .collect();
+
+    LocatorGraph {
+        locators: Arc::new(locators),
+        conda_locator,
+        poetry_locator,
+    }
+}
+
+fn should_reuse_locator(kind: pet_core::LocatorKind) -> bool {
+    match kind {
+        pet_core::LocatorKind::Homebrew
+        | pet_core::LocatorKind::LinuxGlobal
+        | pet_core::LocatorKind::MacCommandLineTools
+        | pet_core::LocatorKind::MacPythonOrg
+        | pet_core::LocatorKind::MacXCode
+        | pet_core::LocatorKind::Pixi
+        | pet_core::LocatorKind::PyEnv
+        | pet_core::LocatorKind::Venv
+        | pet_core::LocatorKind::VirtualEnv
+        | pet_core::LocatorKind::VirtualEnvWrapper
+        | pet_core::LocatorKind::WinPython
+        | pet_core::LocatorKind::WindowsRegistry
+        | pet_core::LocatorKind::WindowsStore => true,
+        pet_core::LocatorKind::Conda
+        | pet_core::LocatorKind::Hatch
+        | pet_core::LocatorKind::PipEnv
+        | pet_core::LocatorKind::Poetry
+        | pet_core::LocatorKind::Uv => false,
     }
 }
 
@@ -1062,26 +1237,30 @@ fn refresh_state_sync_scope(search_scope: Option<&SearchScope>) -> RefreshStateS
 }
 
 fn is_current_generation(
-    configuration: &RwLock<ConfigurationState>,
+    published_state: &RwLock<Arc<PublishedRequestState>>,
     refresh_generation: u64,
 ) -> bool {
-    configuration.read().unwrap().generation == refresh_generation
+    published_state
+        .read()
+        .expect("published state lock poisoned")
+        .generation
+        == refresh_generation
 }
 
 fn try_begin_missing_env_reporting(
-    configuration: &RwLock<ConfigurationState>,
+    published_state: &RwLock<Arc<PublishedRequestState>>,
     refresh_generation: u64,
 ) -> bool {
     try_begin_missing_env_reporting_with_state(
         &MISSING_ENVS_REPORTING_STATE,
-        configuration,
+        published_state,
         refresh_generation,
     )
 }
 
 fn try_begin_missing_env_reporting_with_state(
     reporting_state: &AtomicU64,
-    configuration: &RwLock<ConfigurationState>,
+    published_state: &RwLock<Arc<PublishedRequestState>>,
     refresh_generation: u64,
 ) -> bool {
     loop {
@@ -1102,13 +1281,13 @@ fn try_begin_missing_env_reporting_with_state(
             )
             .is_ok()
         {
-            if is_current_generation(configuration, refresh_generation) {
+            if is_current_generation(published_state, refresh_generation) {
                 return true;
             }
 
             release_missing_env_reporting_if_stale_with_state(
                 reporting_state,
-                configuration,
+                published_state,
                 refresh_generation,
             );
             return false;
@@ -1117,22 +1296,22 @@ fn try_begin_missing_env_reporting_with_state(
 }
 
 fn release_missing_env_reporting_if_stale(
-    configuration: &RwLock<ConfigurationState>,
+    published_state: &RwLock<Arc<PublishedRequestState>>,
     refresh_generation: u64,
 ) {
     release_missing_env_reporting_if_stale_with_state(
         &MISSING_ENVS_REPORTING_STATE,
-        configuration,
+        published_state,
         refresh_generation,
     );
 }
 
 fn release_missing_env_reporting_if_stale_with_state(
     reporting_state: &AtomicU64,
-    configuration: &RwLock<ConfigurationState>,
+    published_state: &RwLock<Arc<PublishedRequestState>>,
     refresh_generation: u64,
 ) {
-    if !is_current_generation(configuration, refresh_generation) {
+    if !is_current_generation(published_state, refresh_generation) {
         let _ = reporting_state.compare_exchange(
             refresh_generation,
             MISSING_ENVS_AVAILABLE,
@@ -1157,23 +1336,22 @@ fn complete_missing_env_reporting_with_state(reporting_state: &AtomicU64, refres
 fn execute_refresh(
     context: &Context,
     refresh_options: &RefreshOptions,
-    configuration_state: &ConfigurationState,
+    request_state: &Arc<PublishedRequestState>,
 ) -> RefreshExecution {
     let refresh_id = NEXT_REFRESH_ID.fetch_add(1, Ordering::Relaxed);
     let refresh_locators = create_refresh_locators(
         context.os_environment.deref(),
-        context.conda_locator.as_ref(),
+        request_state.graph.conda_locator.as_ref(),
     );
     let reporter = Arc::new(CacheReporter::new(Arc::new(
         GenerationGuardedReporter::new(
             Arc::new(jsonrpc::create_reporter(refresh_options.search_kind)),
-            context.configuration.clone(),
-            configuration_state.generation,
+            request_state.clone(),
         ),
     )));
 
     let (config, search_scope) =
-        build_refresh_config(refresh_options, configuration_state.config.clone());
+        build_refresh_config(refresh_options, request_state.config.clone());
     if refresh_options.search_paths.is_some() {
         trace!(
             "Expanded search paths to {} workspace dirs, {} executables",
@@ -1190,7 +1368,7 @@ fn execute_refresh(
 
     trace!(
         "Start refreshing environments, generation: {}, config: {:?}",
-        configuration_state.generation,
+        request_state.generation,
         config
     );
     let summary = find_and_report_envs(
@@ -1211,14 +1389,13 @@ fn execute_refresh(
     trace!("Finished refreshing environments in {:?}", summary.total);
 
     // Refresh runs on a transient locator graph, so apply each locator's refresh-state
-    // contract back into the long-lived shared locator graph only if the generation
-    // still matches the configuration snapshot this refresh started with.
+    // contract back into its captured graph only while that snapshot is still active.
     if let Err(current_generation) = sync_refresh_locator_state_if_current(
-        context.configuration.as_ref(),
-        configuration_state.generation,
+        context.published_state.as_ref(),
+        request_state,
         || {
             sync_refresh_locator_state(
-                context.locators.as_ref(),
+                request_state.graph.locators.as_ref(),
                 refresh_locators.locators.as_ref(),
                 search_scope.as_ref(),
             );
@@ -1226,7 +1403,7 @@ fn execute_refresh(
     ) {
         warn!(
             "Skipping refresh state sync for stale generation {} because current generation is {}",
-            configuration_state.generation, current_generation
+            request_state.generation, current_generation
         );
     }
 
@@ -1250,12 +1427,12 @@ fn execute_refresh(
         result: RefreshResult::new(summary.total, refresh_id),
         perf,
         reporter,
-        configuration: context.configuration.clone(),
-        refresh_generation: configuration_state.generation,
+        published_state: context.published_state.clone(),
+        refresh_generation: request_state.generation,
         conda_locator: refresh_locators.conda_locator,
         poetry_locator: refresh_locators.poetry_locator,
-        conda_executable: configuration_state.config.conda_executable.clone(),
-        poetry_executable: configuration_state.config.poetry_executable.clone(),
+        conda_executable: request_state.config.conda_executable.clone(),
+        poetry_executable: request_state.config.poetry_executable.clone(),
     }
 }
 
@@ -1265,7 +1442,7 @@ fn report_refresh_follow_up(execution: RefreshExecution) {
         .report_telemetry(&TelemetryEvent::RefreshPerformance(execution.perf));
 
     if try_begin_missing_env_reporting(
-        execution.configuration.as_ref(),
+        execution.published_state.as_ref(),
         execution.refresh_generation,
     ) {
         let conda_locator = execution.conda_locator.clone();
@@ -1273,25 +1450,34 @@ fn report_refresh_follow_up(execution: RefreshExecution) {
         let poetry_locator = execution.poetry_locator.clone();
         let poetry_executable = execution.poetry_executable.clone();
         let reporter_ref = execution.reporter.clone();
-        let configuration = execution.configuration.clone();
+        let published_state = execution.published_state.clone();
         let refresh_generation = execution.refresh_generation;
         thread::spawn(move || {
-            if !is_current_generation(configuration.as_ref(), refresh_generation) {
-                release_missing_env_reporting_if_stale(configuration.as_ref(), refresh_generation);
+            if !is_current_generation(published_state.as_ref(), refresh_generation) {
+                release_missing_env_reporting_if_stale(
+                    published_state.as_ref(),
+                    refresh_generation,
+                );
                 return Some(());
             }
 
             conda_locator.find_and_report_missing_envs(reporter_ref.as_ref(), conda_executable);
-            if !is_current_generation(configuration.as_ref(), refresh_generation) {
-                release_missing_env_reporting_if_stale(configuration.as_ref(), refresh_generation);
+            if !is_current_generation(published_state.as_ref(), refresh_generation) {
+                release_missing_env_reporting_if_stale(
+                    published_state.as_ref(),
+                    refresh_generation,
+                );
                 return Some(());
             }
 
             poetry_locator.find_and_report_missing_envs(reporter_ref.as_ref(), poetry_executable);
-            if is_current_generation(configuration.as_ref(), refresh_generation) {
+            if is_current_generation(published_state.as_ref(), refresh_generation) {
                 complete_missing_env_reporting(refresh_generation);
             } else {
-                release_missing_env_reporting_if_stale(configuration.as_ref(), refresh_generation);
+                release_missing_env_reporting_if_stale(
+                    published_state.as_ref(),
+                    refresh_generation,
+                );
             }
 
             Some(())
@@ -1320,23 +1506,66 @@ pub struct ResolveOptions {
     pub executable: PathBuf,
 }
 
+struct ResolveExecution {
+    request_state: Arc<PublishedRequestState>,
+    result: pet::resolve::ResolvedEnvironment,
+}
+
+fn report_resolve_inaccuracies(
+    request_state: Arc<PublishedRequestState>,
+    reporter: Arc<dyn Reporter>,
+    discovered: &PythonEnvironment,
+    resolved: &PythonEnvironment,
+) -> Option<pet_core::telemetry::inaccurate_python_info::InaccuratePythonEnvironmentInfo> {
+    with_generation_guarded_resolve_reporter(request_state, reporter, |reporter| {
+        report_inaccuracies_identified_after_resolving(reporter, discovered, resolved)
+    })
+}
+
+fn with_generation_guarded_resolve_reporter<T, F>(
+    request_state: Arc<PublishedRequestState>,
+    reporter: Arc<dyn Reporter>,
+    report: F,
+) -> T
+where
+    F: FnOnce(&dyn Reporter) -> T,
+{
+    let reporter = GenerationGuardedReporter::new(reporter, request_state);
+    report(&reporter)
+}
+
+fn execute_resolve(context: &Context, executable: &PathBuf) -> Option<ResolveExecution> {
+    let request_state = context
+        .published_state
+        .read()
+        .expect("published state lock poisoned")
+        .clone();
+    let result = resolve_environment(
+        executable,
+        &request_state.graph.locators,
+        context.os_environment.as_ref(),
+    )?;
+    Some(ResolveExecution {
+        request_state,
+        result,
+    })
+}
+
 pub fn handle_resolve(context: Arc<Context>, id: RequestId, params: Value) {
     match serde_json::from_value::<ResolveOptions>(params.clone()) {
         Ok(request_options) => {
             let executable = request_options.executable.clone();
             // Start in a new thread, we can have multiple resolve requests.
-            let environment = context.os_environment.clone();
             thread::spawn(move || {
                 let now = SystemTime::now();
                 trace!("Resolving env {:?}", executable);
-                if let Some(result) =
-                    resolve_environment(&executable, &context.locators, environment.deref())
-                {
+                if let Some(execution) = execute_resolve(context.as_ref(), &executable) {
+                    let result = execution.result;
                     if let Some(resolved) = result.resolved {
                         // Gather telemetry of this resolved env and see what we got wrong.
-                        let jsonrpc_reporter = jsonrpc::create_reporter(None);
-                        let _ = report_inaccuracies_identified_after_resolving(
-                            &jsonrpc_reporter,
+                        let _ = report_resolve_inaccuracies(
+                            execution.request_state,
+                            Arc::new(jsonrpc::create_reporter(None)),
                             &result.discovered,
                             &resolved,
                         );
@@ -1413,9 +1642,13 @@ fn spawn_refresh_worker<F>(
         drop(expansion_permit);
 
         loop {
-            let configuration_state = context.configuration.read().unwrap().clone();
+            let request_state = context
+                .published_state
+                .read()
+                .expect("published state lock poisoned")
+                .clone();
             let refresh_key =
-                RefreshKey::from_expanded(&expanded_options, configuration_state.generation);
+                RefreshKey::from_expanded(&expanded_options, request_state.generation);
 
             match context
                 .refresh_coordinator
@@ -1427,7 +1660,7 @@ fn spawn_refresh_worker<F>(
                     let mut safety_guard =
                         RefreshSafetyGuard::new(&context.refresh_coordinator, refresh_key);
                     let refresh_result = panic::catch_unwind(AssertUnwindSafe(|| {
-                        execute_refresh(context.as_ref(), &expanded_options, &configuration_state)
+                        execute_refresh(context.as_ref(), &expanded_options, &request_state)
                     }));
 
                     match refresh_result {
@@ -1444,7 +1677,7 @@ fn spawn_refresh_worker<F>(
                         Err(_) => {
                             error!(
                                 "Refresh panicked for generation {} and options {:?}",
-                                configuration_state.generation, refresh_options
+                                request_state.generation, refresh_options
                             );
                             let mut completion_guard = RefreshCompletionGuard::begin(
                                 &context.refresh_coordinator,
@@ -1476,6 +1709,11 @@ pub struct FindOptions {
 fn execute_find(context: &Context, find_options: &FindOptions) -> Vec<PythonEnvironment> {
     let now = Instant::now();
     trace!("Finding environments in {:?}", find_options.search_path);
+    let request_state = context
+        .published_state
+        .read()
+        .expect("published state lock poisoned")
+        .clone();
     let global_env_search_paths: Vec<PathBuf> =
         get_search_paths_from_env_variables(context.os_environment.as_ref());
 
@@ -1484,22 +1722,16 @@ fn execute_find(context: &Context, find_options: &FindOptions) -> Vec<PythonEnvi
     if find_options.search_path.is_file() {
         identify_python_executables_using_locators(
             vec![find_options.search_path.clone()],
-            &context.locators,
+            &request_state.graph.locators,
             &reporter,
             &global_env_search_paths,
         );
     } else {
-        let environment_directories = context
-            .configuration
-            .read()
-            .expect("configuration lock poisoned")
-            .config
-            .environment_directories
-            .clone();
+        let environment_directories = request_state.config.environment_directories.clone();
         find_python_environments_in_workspace_folder_recursive(
             &find_options.search_path,
             &reporter,
-            &context.locators,
+            &request_state.graph.locators,
             &global_env_search_paths,
             environment_directories.as_deref().unwrap_or(&[]),
         );
@@ -1545,20 +1777,24 @@ pub fn handle_find(context: Arc<Context>, id: RequestId, params: Value) {
 pub fn handle_conda_telemetry(context: Arc<Context>, id: RequestId, _params: Value) {
     thread::spawn(move || {
         trace!("Gathering conda telemetry");
-        let conda_locator = context.conda_locator.clone();
-        let conda_executable = context
-            .configuration
+        let request_state = context
+            .published_state
             .read()
-            .unwrap()
-            .config
-            .conda_executable
+            .expect("published state lock poisoned")
             .clone();
+        let conda_locator = request_state.graph.conda_locator.clone();
+        let conda_executable = request_state.config.conda_executable.clone();
         let info = conda_locator.get_info_for_telemetry(conda_executable);
         trace!("Conda telemetry complete");
         send_reply(&id, info.into());
     });
 }
 
+/// Clears the process-wide resolved-interpreter cache only.
+///
+/// Published request snapshots and locator-owned discovery caches are not
+/// invalidated. Requests already in flight keep using their captured snapshot;
+/// later requests use whichever snapshot is current when they start.
 pub fn handle_clear_cache(_context: Arc<Context>, id: RequestId, _params: Value) {
     thread::spawn(move || {
         if let Err(e) = clear_cache() {
@@ -1664,6 +1900,79 @@ mod tests {
     use std::sync::{mpsc, Barrier, Mutex};
     use std::thread;
 
+    struct PyEnvCondaTestEnvironment {
+        pyenv_root: PathBuf,
+    }
+
+    impl Environment for PyEnvCondaTestEnvironment {
+        fn get_user_home(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_root(&self) -> Option<PathBuf> {
+            None
+        }
+
+        fn get_env_var(&self, key: String) -> Option<String> {
+            match key.as_str() {
+                "PYENV_ROOT" => Some(self.pyenv_root.to_string_lossy().into_owned()),
+                _ => None,
+            }
+        }
+
+        fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+            Vec::new()
+        }
+    }
+
+    fn create_pyenv_conda_install() -> (tempfile::TempDir, PyEnvCondaTestEnvironment, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let pyenv_root = temp.path().join("pyenv");
+        let conda_prefix = pyenv_root.join("versions").join("managed-conda");
+        std::fs::create_dir_all(conda_prefix.join("conda-meta")).unwrap();
+        std::fs::create_dir_all(conda_prefix.join("envs")).unwrap();
+        std::fs::write(conda_prefix.join("conda-meta").join("history"), "").unwrap();
+        std::fs::write(
+            conda_prefix
+                .join("conda-meta")
+                .join("conda-24.1.0-py312_0.json"),
+            r#"{"version":"24.1.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            conda_prefix
+                .join("conda-meta")
+                .join("python-3.12.0-h123_0.json"),
+            r#"{"version":"3.12.0"}"#,
+        )
+        .unwrap();
+
+        #[cfg(windows)]
+        {
+            std::fs::create_dir_all(conda_prefix.join("Scripts")).unwrap();
+            std::fs::write(conda_prefix.join("Scripts").join("conda.bat"), "").unwrap();
+            std::fs::write(conda_prefix.join("python.exe"), "").unwrap();
+        }
+        #[cfg(unix)]
+        {
+            std::fs::create_dir_all(conda_prefix.join("bin")).unwrap();
+            std::fs::write(conda_prefix.join("bin").join("conda"), "").unwrap();
+            std::fs::write(conda_prefix.join("bin").join("python"), "").unwrap();
+        }
+
+        (temp, PyEnvCondaTestEnvironment { pyenv_root }, conda_prefix)
+    }
+
+    fn discover_with_pyenv(graph: &LocatorGraph) {
+        let pyenv = graph
+            .locators
+            .iter()
+            .find(|locator| locator.get_kind() == LocatorKind::PyEnv)
+            .expect("locator graph must contain PyEnv");
+        let reporter = Arc::new(collect::create_reporter());
+        pyenv.find(&CacheReporter::new(reporter));
+    }
+
     #[test]
     fn recursive_environment_pattern_filter_only_returns_recursive_globs() {
         let patterns = vec![
@@ -1720,7 +2029,7 @@ mod tests {
     }
 
     struct LockCheckingReporter {
-        configuration: Arc<RwLock<ConfigurationState>>,
+        published_state: Arc<RwLock<Arc<PublishedRequestState>>>,
         reported: Mutex<bool>,
     }
 
@@ -1736,6 +2045,15 @@ mod tests {
 
     struct RecordingConfigureLocator {
         configured_workspace_directories: Mutex<Option<Vec<PathBuf>>>,
+    }
+
+    struct ConfigurationSnapshotLocator {
+        kind: LocatorKind,
+        configured_workspace: Mutex<PathBuf>,
+        observations: mpsc::Sender<(LocatorKind, PathBuf)>,
+        configure_started: Option<mpsc::Sender<()>>,
+        configure_release: Option<Mutex<mpsc::Receiver<()>>>,
+        identifies_environment: bool,
     }
 
     impl Reporter for RecordingReporter {
@@ -1754,17 +2072,17 @@ mod tests {
 
     impl Reporter for LockCheckingReporter {
         fn report_manager(&self, _manager: &EnvManager) {
-            assert!(self.configuration.try_write().is_err());
+            assert!(self.published_state.try_write().is_ok());
             *self.reported.lock().unwrap() = true;
         }
 
         fn report_environment(&self, _env: &PythonEnvironment) {
-            assert!(self.configuration.try_write().is_err());
+            assert!(self.published_state.try_write().is_ok());
             *self.reported.lock().unwrap() = true;
         }
 
         fn report_telemetry(&self, _event: &TelemetryEvent) {
-            assert!(self.configuration.try_write().is_err());
+            assert!(self.published_state.try_write().is_ok());
             *self.reported.lock().unwrap() = true;
         }
     }
@@ -1837,23 +2155,143 @@ mod tests {
         fn find(&self, _reporter: &dyn Reporter) {}
     }
 
+    impl Locator for ConfigurationSnapshotLocator {
+        fn get_kind(&self) -> LocatorKind {
+            self.kind.clone()
+        }
+
+        fn configure(&self, config: &Configuration) {
+            if let Some(started) = &self.configure_started {
+                started.send(()).unwrap();
+            }
+            if let Some(release) = &self.configure_release {
+                release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("test must release paused locator configuration");
+            }
+            *self.configured_workspace.lock().unwrap() = config
+                .workspace_directories
+                .as_ref()
+                .and_then(|directories| directories.first())
+                .cloned()
+                .expect("test configuration must contain a workspace");
+        }
+
+        fn supported_categories(&self) -> Vec<PythonEnvironmentKind> {
+            vec![PythonEnvironmentKind::Venv]
+        }
+
+        fn try_from(&self, env: &pet_core::env::PythonEnv) -> Option<PythonEnvironment> {
+            let configured_workspace = self.configured_workspace.lock().unwrap().clone();
+            self.observations
+                .send((self.kind.clone(), configured_workspace))
+                .unwrap();
+            self.identifies_environment.then(|| {
+                PythonEnvironment::new(
+                    Some(env.executable.clone()),
+                    Some(PythonEnvironmentKind::Venv),
+                    env.executable.parent().map(PathBuf::from),
+                    None,
+                    None,
+                )
+            })
+        }
+
+        fn find(&self, _reporter: &dyn Reporter) {}
+    }
+
     fn make_refresh_key(generation: u64, options: RefreshOptions) -> RefreshKey {
         RefreshKey::from_expanded(&options, generation)
     }
 
     fn make_test_context() -> Arc<Context> {
         let environment = EnvironmentApi::new();
-        let conda_locator = Arc::new(Conda::from(&environment));
-        let poetry_locator = Arc::new(Poetry::from(&environment));
+        let graph = create_initial_locator_graph(&environment);
         Arc::new(Context {
-            locators: create_locators(conda_locator.clone(), poetry_locator, &environment),
-            conda_locator,
-            configuration: Arc::new(RwLock::new(ConfigurationState::default())),
+            published_state: Arc::new(RwLock::new(Arc::new(PublishedRequestState::new(
+                0,
+                Configuration::default(),
+                graph,
+            )))),
             configure_in_progress: Arc::new(Mutex::new(())),
             os_environment: Arc::new(environment),
             refresh_coordinator: RefreshCoordinator::default(),
             glob_expansion_admission: Arc::new(GlobExpansionAdmission::default()),
         })
+    }
+
+    fn test_published_state(generation: u64, config: Configuration) -> Arc<PublishedRequestState> {
+        let environment = EnvironmentApi::new();
+        Arc::new(PublishedRequestState::new(
+            generation,
+            config,
+            create_initial_locator_graph(&environment),
+        ))
+    }
+
+    fn graph_with_locators(
+        previous: &PublishedRequestState,
+        locators: Arc<Vec<Arc<dyn Locator>>>,
+    ) -> LocatorGraph {
+        LocatorGraph {
+            locators,
+            conda_locator: previous.graph.conda_locator.clone(),
+            poetry_locator: previous.graph.poetry_locator.clone(),
+        }
+    }
+
+    fn assert_active_and_configure_gates_allow_configure(
+        published_state: &RwLock<Arc<PublishedRequestState>>,
+        configure_in_progress: &Mutex<()>,
+        expected_generation: u64,
+    ) {
+        let request_state = published_state.read().unwrap().clone();
+        assert!(request_state.active.try_lock().is_ok());
+        assert!(configure_in_progress.try_lock().is_ok());
+
+        let workspace = PathBuf::from("/workspace-after-callback-panic");
+        apply_configure_options_with_graph(
+            published_state,
+            configure_in_progress,
+            ConfigureOptions {
+                workspace_directories: None,
+                conda_executable: None,
+                pipenv_executable: None,
+                poetry_executable: None,
+                environment_directories: None,
+                cache_directory: None,
+            },
+            Some(vec![workspace.clone()]),
+            None,
+            |previous, _| graph_with_locators(previous, Arc::new(Vec::<Arc<dyn Locator>>::new())),
+        )
+        .unwrap();
+
+        let state = published_state.read().unwrap();
+        assert_eq!(state.generation, expected_generation);
+        assert_eq!(state.config.workspace_directories, Some(vec![workspace]));
+    }
+
+    fn replace_test_graph(
+        context: &Context,
+        locators: Arc<Vec<Arc<dyn Locator>>>,
+        config: Configuration,
+    ) {
+        let previous = context
+            .published_state
+            .read()
+            .expect("published state lock poisoned")
+            .clone();
+        *context
+            .published_state
+            .write()
+            .expect("published state lock poisoned") = Arc::new(PublishedRequestState::new(
+            previous.generation,
+            config,
+            graph_with_locators(previous.as_ref(), locators),
+        ));
     }
 
     struct BlockingFindLocator {
@@ -1913,19 +2351,19 @@ mod tests {
         create_find_test_executable(&new_directory);
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        let mut context = make_test_context();
-        Arc::get_mut(&mut context).unwrap().locators =
+        let context = make_test_context();
+        replace_test_graph(
+            context.as_ref(),
             Arc::new(vec![Arc::new(BlockingFindLocator {
                 blocked_executable: first_executable.clone(),
                 started: started_tx,
                 release: Mutex::new(release_rx),
-            })]);
-        context
-            .configuration
-            .write()
-            .unwrap()
-            .config
-            .environment_directories = Some(vec![old_directory]);
+            })]),
+            Configuration {
+                environment_directories: Some(vec![old_directory]),
+                ..Default::default()
+            },
+        );
 
         let worker_context = context.clone();
         let options = FindOptions {
@@ -1933,9 +2371,14 @@ mod tests {
         };
         let worker = thread::spawn(move || execute_find(&worker_context, &options));
         started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
-        let updated = context.configuration.try_write().map(|mut state| {
-            state.config.environment_directories = Some(vec![new_directory]);
-            state.generation += 1;
+        let updated = context.published_state.try_write().map(|mut state| {
+            let mut config = state.config.clone();
+            config.environment_directories = Some(vec![new_directory]);
+            *state = Arc::new(PublishedRequestState::new(
+                state.generation + 1,
+                config,
+                state.graph.clone(),
+            ));
         });
         release_tx.send(()).unwrap();
         let environments = worker.join().unwrap();
@@ -1964,13 +2407,16 @@ mod tests {
         let executable = create_find_test_executable(directory.path());
         let (started_tx, _started_rx) = mpsc::channel();
         let (_release_tx, release_rx) = mpsc::channel();
-        let mut context = make_test_context();
-        Arc::get_mut(&mut context).unwrap().locators =
+        let context = make_test_context();
+        replace_test_graph(
+            context.as_ref(),
             Arc::new(vec![Arc::new(BlockingFindLocator {
                 blocked_executable: PathBuf::new(),
                 started: started_tx,
                 release: Mutex::new(release_rx),
-            })]);
+            })]),
+            Configuration::default(),
+        );
         let environments = execute_find(
             &context,
             &FindOptions {
@@ -1987,6 +2433,367 @@ mod tests {
                 Some("3.12.0".to_string()),
             )]
         );
+    }
+
+    #[test]
+    fn find_does_not_observe_mixed_locator_configuration() {
+        let old_workspace = PathBuf::from("old-workspace");
+        let new_workspace = PathBuf::from("new-workspace");
+        let directory = tempfile::tempdir().unwrap();
+        let executable = create_find_test_executable(directory.path());
+        let (observations_tx, observations_rx) = mpsc::channel();
+        let (configure_started_tx, configure_started_rx) = mpsc::channel();
+        let (configure_release_tx, configure_release_rx) = mpsc::channel();
+        let (configure_done_tx, configure_done_rx) = mpsc::channel();
+
+        let old_locators: Arc<Vec<Arc<dyn Locator>>> = Arc::new(vec![
+            Arc::new(ConfigurationSnapshotLocator {
+                kind: LocatorKind::Uv,
+                configured_workspace: Mutex::new(old_workspace.clone()),
+                observations: observations_tx.clone(),
+                configure_started: None,
+                configure_release: None,
+                identifies_environment: false,
+            }),
+            Arc::new(ConfigurationSnapshotLocator {
+                kind: LocatorKind::Venv,
+                configured_workspace: Mutex::new(old_workspace.clone()),
+                observations: observations_tx.clone(),
+                configure_started: None,
+                configure_release: None,
+                identifies_environment: true,
+            }),
+        ]);
+        let candidate_locators: Arc<Vec<Arc<dyn Locator>>> = Arc::new(vec![
+            Arc::new(ConfigurationSnapshotLocator {
+                kind: LocatorKind::Uv,
+                configured_workspace: Mutex::new(old_workspace.clone()),
+                observations: observations_tx.clone(),
+                configure_started: None,
+                configure_release: None,
+                identifies_environment: false,
+            }),
+            Arc::new(ConfigurationSnapshotLocator {
+                kind: LocatorKind::Venv,
+                configured_workspace: Mutex::new(old_workspace.clone()),
+                observations: observations_tx,
+                configure_started: Some(configure_started_tx),
+                configure_release: Some(Mutex::new(configure_release_rx)),
+                identifies_environment: true,
+            }),
+        ]);
+        let context = make_test_context();
+        replace_test_graph(
+            context.as_ref(),
+            old_locators,
+            Configuration {
+                workspace_directories: Some(vec![old_workspace.clone()]),
+                ..Default::default()
+            },
+        );
+
+        let configure_context = context.clone();
+        let configure_worker = thread::spawn(move || {
+            let result = apply_configure_options_with_graph(
+                configure_context.published_state.as_ref(),
+                &configure_context.configure_in_progress,
+                ConfigureOptions {
+                    workspace_directories: None,
+                    conda_executable: None,
+                    pipenv_executable: None,
+                    poetry_executable: None,
+                    environment_directories: None,
+                    cache_directory: None,
+                },
+                Some(vec![new_workspace]),
+                None,
+                move |previous, _| graph_with_locators(previous, candidate_locators),
+            );
+            configure_done_tx.send(result).unwrap();
+        });
+
+        configure_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("configure must pause after updating the first locator");
+        assert_eq!(context.published_state.read().unwrap().generation, 0);
+
+        let find_context = context.clone();
+        let (find_done_tx, find_done_rx) = mpsc::channel();
+        let find_worker = thread::spawn(move || {
+            let result = execute_find(
+                &find_context,
+                &FindOptions {
+                    search_path: executable,
+                },
+            );
+            find_done_tx.send(result).unwrap();
+        });
+
+        let find_result = find_done_rx.recv_timeout(Duration::from_secs(10));
+        let observations = [
+            observations_rx.recv_timeout(Duration::from_secs(5)),
+            observations_rx.recv_timeout(Duration::from_secs(5)),
+        ];
+        configure_release_tx.send(()).unwrap();
+        let configure_result = configure_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("configure must finish after release");
+        configure_worker.join().unwrap();
+        find_worker.join().unwrap();
+
+        configure_result.unwrap();
+        assert_eq!(find_result.unwrap().len(), 1);
+        let observations = observations.map(|observation| observation.unwrap());
+        assert_eq!(
+            observations[0].0,
+            LocatorKind::Uv,
+            "find must visit the immediately configured locator first"
+        );
+        assert_eq!(
+            observations[1].0,
+            LocatorKind::Venv,
+            "find must reach the paused locator"
+        );
+        assert_eq!(
+            observations[0].1, observations[1].1,
+            "find observed locator configuration from two different generations"
+        );
+        assert_eq!(observations[0].1, old_workspace);
+
+        assert_eq!(
+            execute_find(
+                context.as_ref(),
+                &FindOptions {
+                    search_path: create_find_test_executable(directory.path()),
+                },
+            )
+            .len(),
+            1
+        );
+        let new_observations = [
+            observations_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            observations_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+        ];
+        assert!(new_observations
+            .iter()
+            .all(|(_, workspace)| workspace == &PathBuf::from("new-workspace")));
+    }
+
+    #[test]
+    fn resolve_does_not_observe_mixed_locator_configuration() {
+        let old_workspace = PathBuf::from("old-workspace");
+        let new_workspace = PathBuf::from("new-workspace");
+        let directory = tempfile::tempdir().unwrap();
+        let executable = create_find_test_executable(directory.path());
+        let (observations_tx, observations_rx) = mpsc::channel();
+        let (configure_started_tx, configure_started_rx) = mpsc::channel();
+        let (configure_release_tx, configure_release_rx) = mpsc::channel();
+        let (configure_done_tx, configure_done_rx) = mpsc::channel();
+
+        let old_locators: Arc<Vec<Arc<dyn Locator>>> = Arc::new(vec![
+            Arc::new(ConfigurationSnapshotLocator {
+                kind: LocatorKind::Uv,
+                configured_workspace: Mutex::new(old_workspace.clone()),
+                observations: observations_tx.clone(),
+                configure_started: None,
+                configure_release: None,
+                identifies_environment: false,
+            }),
+            Arc::new(ConfigurationSnapshotLocator {
+                kind: LocatorKind::Venv,
+                configured_workspace: Mutex::new(old_workspace.clone()),
+                observations: observations_tx.clone(),
+                configure_started: None,
+                configure_release: None,
+                identifies_environment: true,
+            }),
+        ]);
+        let candidate_locators: Arc<Vec<Arc<dyn Locator>>> = Arc::new(vec![
+            Arc::new(ConfigurationSnapshotLocator {
+                kind: LocatorKind::Uv,
+                configured_workspace: Mutex::new(old_workspace.clone()),
+                observations: observations_tx.clone(),
+                configure_started: None,
+                configure_release: None,
+                identifies_environment: false,
+            }),
+            Arc::new(ConfigurationSnapshotLocator {
+                kind: LocatorKind::Venv,
+                configured_workspace: Mutex::new(old_workspace.clone()),
+                observations: observations_tx,
+                configure_started: Some(configure_started_tx),
+                configure_release: Some(Mutex::new(configure_release_rx)),
+                identifies_environment: true,
+            }),
+        ]);
+        let context = make_test_context();
+        replace_test_graph(
+            context.as_ref(),
+            old_locators,
+            Configuration {
+                workspace_directories: Some(vec![old_workspace.clone()]),
+                ..Default::default()
+            },
+        );
+
+        let configure_context = context.clone();
+        let configure_worker = thread::spawn(move || {
+            let result = apply_configure_options_with_graph(
+                configure_context.published_state.as_ref(),
+                &configure_context.configure_in_progress,
+                ConfigureOptions {
+                    workspace_directories: None,
+                    conda_executable: None,
+                    pipenv_executable: None,
+                    poetry_executable: None,
+                    environment_directories: None,
+                    cache_directory: None,
+                },
+                Some(vec![new_workspace]),
+                None,
+                move |previous, _| graph_with_locators(previous, candidate_locators),
+            );
+            configure_done_tx.send(result).unwrap();
+        });
+
+        configure_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("configure must pause after updating the first locator");
+        assert_eq!(context.published_state.read().unwrap().generation, 0);
+
+        let resolve_context = context.clone();
+        let resolve_executable = executable.clone();
+        let (resolve_done_tx, resolve_done_rx) = mpsc::channel();
+        let resolve_worker = thread::spawn(move || {
+            let result = execute_resolve(resolve_context.as_ref(), &resolve_executable);
+            resolve_done_tx.send(result).unwrap();
+        });
+
+        let resolve_result = resolve_done_rx.recv_timeout(Duration::from_secs(10));
+        let observations = [
+            observations_rx.recv_timeout(Duration::from_secs(5)),
+            observations_rx.recv_timeout(Duration::from_secs(5)),
+        ];
+        configure_release_tx.send(()).unwrap();
+        let configure_result = configure_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("configure must finish after release");
+        configure_worker.join().unwrap();
+        resolve_worker.join().unwrap();
+
+        configure_result.unwrap();
+        let resolve_execution = resolve_result
+            .unwrap()
+            .expect("resolve must retain its request snapshot");
+        assert_eq!(resolve_execution.request_state.generation, 0);
+        let observations = observations.map(|observation| observation.unwrap());
+        assert_eq!(
+            observations[0].0,
+            LocatorKind::Uv,
+            "resolve must visit the immediately configured locator first"
+        );
+        assert_eq!(
+            observations[1].0,
+            LocatorKind::Venv,
+            "resolve must reach the paused locator"
+        );
+        assert_eq!(
+            observations[0].1, observations[1].1,
+            "resolve observed locator configuration from two different generations"
+        );
+        assert_eq!(observations[0].1, old_workspace);
+
+        assert!(execute_resolve(context.as_ref(), &executable).is_some());
+        let new_observations = [
+            observations_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            observations_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+        ];
+        assert!(new_observations
+            .iter()
+            .all(|(_, workspace)| workspace == &PathBuf::from("new-workspace")));
+    }
+
+    #[test]
+    fn blocked_resolve_suppresses_telemetry_after_new_generation_publishes() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = create_find_test_executable(directory.path());
+        let (resolve_started_tx, resolve_started_rx) = mpsc::channel();
+        let (resolve_release_tx, resolve_release_rx) = mpsc::channel();
+        let context = make_test_context();
+        replace_test_graph(
+            context.as_ref(),
+            Arc::new(vec![Arc::new(BlockingFindLocator {
+                blocked_executable: executable.clone(),
+                started: resolve_started_tx,
+                release: Mutex::new(resolve_release_rx),
+            })]),
+            Configuration::default(),
+        );
+
+        let resolve_context = context.clone();
+        let resolve_executable = executable.clone();
+        let (resolve_done_tx, resolve_done_rx) = mpsc::channel();
+        let resolve_worker = thread::spawn(move || {
+            resolve_done_tx
+                .send(execute_resolve(
+                    resolve_context.as_ref(),
+                    &resolve_executable,
+                ))
+                .unwrap();
+        });
+        resolve_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("resolve must block in the captured generation");
+
+        apply_configure_options_with_graph(
+            context.published_state.as_ref(),
+            &context.configure_in_progress,
+            ConfigureOptions {
+                workspace_directories: None,
+                conda_executable: None,
+                pipenv_executable: None,
+                poetry_executable: None,
+                environment_directories: None,
+                cache_directory: None,
+            },
+            Some(vec![PathBuf::from("new-workspace")]),
+            None,
+            |previous, _| graph_with_locators(previous, Arc::new(Vec::<Arc<dyn Locator>>::new())),
+        )
+        .unwrap();
+        assert_eq!(context.published_state.read().unwrap().generation, 1);
+
+        resolve_release_tx.send(()).unwrap();
+        let execution = resolve_done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .expect("blocked resolve must complete with its retained snapshot");
+        resolve_worker.join().unwrap();
+        assert_eq!(execution.request_state.generation, 0);
+
+        let telemetry = Arc::new(RecordingReporter::default());
+        with_generation_guarded_resolve_reporter(
+            execution.request_state,
+            telemetry.clone(),
+            |reporter| {
+                reporter.report_telemetry(&TelemetryEvent::RefreshPerformance(
+                    RefreshPerformance {
+                        total: 1,
+                        locators: BTreeMap::new(),
+                        breakdown: BTreeMap::new(),
+                    },
+                ));
+            },
+        );
+        assert!(telemetry.telemetry.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -2084,15 +2891,18 @@ mod tests {
 
     #[test]
     fn saturated_glob_admission_accepts_non_glob_handlers() {
-        let mut context = make_test_context();
+        let context = make_test_context();
         let (configure_started_tx, configure_started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
-        Arc::get_mut(&mut context).unwrap().locators =
+        replace_test_graph(
+            context.as_ref(),
             Arc::new(vec![Arc::new(BlockingConfigureLocator {
                 started: configure_started_tx,
                 release: Mutex::new(release_rx),
                 configured_workspace_directories: Mutex::new(None),
-            })]);
+            })]),
+            Configuration::default(),
+        );
         let _first = context.glob_expansion_admission.try_acquire().unwrap();
         let _second = context.glob_expansion_admission.try_acquire().unwrap();
         handle_configure(context.clone(), 200.into(), json!({}));
@@ -2290,29 +3100,84 @@ mod tests {
 
     #[test]
     fn test_sync_refresh_locator_state_if_current_matches_generation() {
-        let configuration = RwLock::new(ConfigurationState {
-            generation: 4,
-            config: Configuration::default(),
-        });
+        let published_state = RwLock::new(test_published_state(4, Configuration::default()));
+        let request_state = published_state.read().unwrap().clone();
         let mut synced = false;
 
-        let result = sync_refresh_locator_state_if_current(&configuration, 4, || {
-            assert!(configuration.try_write().is_err());
-            synced = true;
-        });
+        let result =
+            sync_refresh_locator_state_if_current(&published_state, &request_state, || {
+                assert!(published_state.try_write().is_ok());
+                synced = true;
+            });
 
         assert!(result.is_ok());
         assert!(synced);
     }
 
     #[test]
-    fn test_generation_guarded_reporter_drops_stale_notifications() {
-        let configuration = Arc::new(RwLock::new(ConfigurationState {
-            generation: 1,
-            config: Configuration::default(),
+    fn refresh_state_sync_panic_does_not_poison_active_or_configure_gates() {
+        let published_state = RwLock::new(test_published_state(4, Configuration::default()));
+        let request_state = published_state.read().unwrap().clone();
+        let configure_in_progress = Mutex::new(());
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            let _ = sync_refresh_locator_state_if_current(&published_state, &request_state, || {
+                panic!("forced refresh-state synchronization panic");
+            });
         }));
+
+        assert!(result.is_err());
+        assert_active_and_configure_gates_allow_configure(
+            &published_state,
+            &configure_in_progress,
+            5,
+        );
+    }
+
+    #[test]
+    fn reporter_panic_does_not_poison_active_or_configure_gates() {
+        struct PanicReporter;
+
+        impl Reporter for PanicReporter {
+            fn report_manager(&self, _manager: &EnvManager) {}
+
+            fn report_environment(&self, _env: &PythonEnvironment) {}
+
+            fn report_telemetry(&self, _event: &TelemetryEvent) {
+                panic!("forced reporter panic");
+            }
+        }
+
+        let published_state = RwLock::new(test_published_state(8, Configuration::default()));
+        let request_state = published_state.read().unwrap().clone();
+        let configure_in_progress = Mutex::new(());
+        let reporter = GenerationGuardedReporter::new(Arc::new(PanicReporter), request_state);
+
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            reporter.report_telemetry(&TelemetryEvent::RefreshPerformance(RefreshPerformance {
+                total: 1,
+                locators: BTreeMap::new(),
+                breakdown: BTreeMap::new(),
+            }));
+        }));
+
+        assert!(result.is_err());
+        assert_active_and_configure_gates_allow_configure(
+            &published_state,
+            &configure_in_progress,
+            9,
+        );
+    }
+
+    #[test]
+    fn test_generation_guarded_reporter_drops_stale_notifications() {
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            1,
+            Configuration::default(),
+        )));
         let inner = Arc::new(RecordingReporter::default());
-        let reporter = GenerationGuardedReporter::new(inner.clone(), configuration.clone(), 1);
+        let request_state = published_state.read().unwrap().clone();
+        let reporter = GenerationGuardedReporter::new(inner.clone(), request_state.clone());
 
         let environment = PythonEnvironment::new(
             Some(PathBuf::from("/tmp/python")),
@@ -2340,7 +3205,8 @@ mod tests {
         assert_eq!(inner.managers.lock().unwrap().len(), 1);
         assert_eq!(inner.telemetry.lock().unwrap().len(), 1);
 
-        configuration.write().unwrap().generation = 2;
+        *request_state.active.lock().unwrap() = false;
+        *published_state.write().unwrap() = test_published_state(2, Configuration::default());
 
         reporter.report_environment(&environment);
         reporter.report_manager(&manager);
@@ -2352,16 +3218,17 @@ mod tests {
     }
 
     #[test]
-    fn test_generation_guarded_reporter_holds_lock_while_reporting() {
-        let configuration = Arc::new(RwLock::new(ConfigurationState {
-            generation: 7,
-            config: Configuration::default(),
-        }));
+    fn test_generation_guarded_reporter_releases_lock_before_reporting() {
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            7,
+            Configuration::default(),
+        )));
         let inner = Arc::new(LockCheckingReporter {
-            configuration: configuration.clone(),
+            published_state: published_state.clone(),
             reported: Mutex::new(false),
         });
-        let reporter = GenerationGuardedReporter::new(inner.clone(), configuration, 7);
+        let request_state = published_state.read().unwrap().clone();
+        let reporter = GenerationGuardedReporter::new(inner.clone(), request_state);
 
         reporter.report_telemetry(&TelemetryEvent::RefreshPerformance(RefreshPerformance {
             total: 1,
@@ -2373,8 +3240,104 @@ mod tests {
     }
 
     #[test]
-    fn test_configure_publishes_state_after_shared_locators_are_configured() {
-        let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+    fn publication_waits_for_committed_old_generation_notification() {
+        struct BlockingReporter {
+            started: mpsc::Sender<()>,
+            release: Mutex<mpsc::Receiver<()>>,
+        }
+
+        impl Reporter for BlockingReporter {
+            fn report_manager(&self, _manager: &EnvManager) {}
+
+            fn report_environment(&self, _env: &PythonEnvironment) {}
+
+            fn report_telemetry(&self, _event: &TelemetryEvent) {
+                self.started.send(()).unwrap();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("test must release committed notification");
+            }
+        }
+
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            0,
+            Configuration::default(),
+        )));
+        let request_state = published_state.read().unwrap().clone();
+        let configure_in_progress = Arc::new(Mutex::new(()));
+        let (report_started_tx, report_started_rx) = mpsc::channel();
+        let (report_release_tx, report_release_rx) = mpsc::channel();
+        let reporter = GenerationGuardedReporter::new(
+            Arc::new(BlockingReporter {
+                started: report_started_tx,
+                release: Mutex::new(report_release_rx),
+            }),
+            request_state,
+        );
+        let report_worker = thread::spawn(move || {
+            reporter.report_telemetry(&TelemetryEvent::RefreshPerformance(RefreshPerformance {
+                total: 1,
+                locators: BTreeMap::new(),
+                breakdown: BTreeMap::new(),
+            }));
+        });
+        report_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("old-generation notification must start");
+
+        let (configure_done_tx, configure_done_rx) = mpsc::channel();
+        let configure_state = published_state.clone();
+        let configure_mutex = configure_in_progress.clone();
+        let configure_worker = thread::spawn(move || {
+            let result = apply_configure_options_with_graph(
+                configure_state.as_ref(),
+                configure_mutex.as_ref(),
+                ConfigureOptions {
+                    workspace_directories: None,
+                    conda_executable: None,
+                    pipenv_executable: None,
+                    poetry_executable: None,
+                    environment_directories: None,
+                    cache_directory: None,
+                },
+                Some(vec![PathBuf::from("/new-workspace")]),
+                None,
+                |previous, _| {
+                    graph_with_locators(previous, Arc::new(Vec::<Arc<dyn Locator>>::new()))
+                },
+            );
+            configure_done_tx.send(result).unwrap();
+        });
+
+        assert_eq!(
+            published_state
+                .read()
+                .expect("published state lock must remain available")
+                .generation,
+            0
+        );
+        assert!(configure_done_rx
+            .recv_timeout(Duration::from_millis(100))
+            .is_err());
+
+        report_release_tx.send(()).unwrap();
+        report_worker.join().unwrap();
+        configure_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        configure_worker.join().unwrap();
+        assert_eq!(published_state.read().unwrap().generation, 1);
+    }
+
+    #[test]
+    fn test_configure_publishes_state_after_replacement_locators_are_configured() {
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            0,
+            Configuration::default(),
+        )));
         let configure_in_progress = Arc::new(Mutex::new(()));
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
@@ -2388,15 +3351,14 @@ mod tests {
         let workspace_directories = vec![PathBuf::from("/workspace")];
 
         let worker = {
-            let configuration = configuration.clone();
+            let published_state = published_state.clone();
             let configure_in_progress = configure_in_progress.clone();
             let locators = locators.clone();
             let workspace_directories = workspace_directories.clone();
             thread::spawn(move || {
-                apply_configure_options(
-                    configuration.as_ref(),
+                apply_configure_options_with_graph(
+                    published_state.as_ref(),
                     &configure_in_progress,
-                    &locators,
                     ConfigureOptions {
                         workspace_directories: None,
                         conda_executable: None,
@@ -2407,6 +3369,7 @@ mod tests {
                     },
                     Some(workspace_directories),
                     None,
+                    move |previous, _| graph_with_locators(previous, locators),
                 )
                 .unwrap();
                 done_tx.send(()).unwrap();
@@ -2421,7 +3384,7 @@ mod tests {
         // configure), but the generation must still report the previous
         // value.
         {
-            let state = configuration.read().unwrap();
+            let state = published_state.read().unwrap();
             assert_eq!(state.generation, 0);
             assert!(state.config.workspace_directories.is_none());
         }
@@ -2430,7 +3393,7 @@ mod tests {
         done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         worker.join().unwrap();
 
-        let state = configuration.read().unwrap();
+        let state = published_state.read().unwrap();
         assert_eq!(state.generation, 1);
         assert_eq!(
             state.config.workspace_directories,
@@ -2444,7 +3407,7 @@ mod tests {
 
     #[test]
     fn test_configure_panic_does_not_publish_state_or_poison_lock() {
-        let configuration = RwLock::new(ConfigurationState::default());
+        let published_state = RwLock::new(test_published_state(0, Configuration::default()));
         let configure_in_progress = Mutex::new(());
         let panic_locator = Arc::new(PanicConfigureLocator {
             configured_workspace_directories: Mutex::new(None),
@@ -2452,10 +3415,9 @@ mod tests {
         let locators = Arc::new(vec![panic_locator.clone() as Arc<dyn Locator>]);
         let workspace_directories = vec![PathBuf::from("/workspace")];
 
-        let result = apply_configure_options(
-            &configuration,
+        let result = apply_configure_options_with_graph(
+            &published_state,
             &configure_in_progress,
-            &locators,
             ConfigureOptions {
                 workspace_directories: None,
                 conda_executable: Some(PathBuf::from("/configured/conda")),
@@ -2466,24 +3428,229 @@ mod tests {
             },
             Some(workspace_directories),
             None,
+            move |previous, _| graph_with_locators(previous, locators),
         );
 
         assert!(result.unwrap_err().contains("configure boom"));
-        let state = configuration.read().unwrap();
+        let state = published_state.read().unwrap();
         assert_eq!(state.generation, 0);
         assert!(state.config.workspace_directories.is_none());
         assert!(state.config.conda_executable.is_none());
-        assert!(panic_locator
-            .configured_workspace_directories
-            .lock()
-            .unwrap()
-            .is_none());
+        assert_eq!(
+            *panic_locator
+                .configured_workspace_directories
+                .lock()
+                .unwrap(),
+            Some(vec![PathBuf::from("/workspace")])
+        );
     }
 
     #[test]
-    fn test_configure_panic_rolls_back_previously_configured_locators() {
-        let configuration = RwLock::new(ConfigurationState::default());
+    fn test_graph_construction_panic_keeps_previous_snapshot_and_allows_retry() {
+        let published_state = RwLock::new(test_published_state(0, Configuration::default()));
         let configure_in_progress = Mutex::new(());
+
+        let failed = apply_configure_options_with_graph(
+            &published_state,
+            &configure_in_progress,
+            ConfigureOptions {
+                workspace_directories: None,
+                conda_executable: None,
+                pipenv_executable: None,
+                poetry_executable: None,
+                environment_directories: None,
+                cache_directory: None,
+            },
+            Some(vec![PathBuf::from("failed-workspace")]),
+            None,
+            |_, _| panic!("graph constructor boom"),
+        );
+
+        assert!(failed
+            .unwrap_err()
+            .contains("Locator graph construction failed"));
+        assert_eq!(published_state.read().unwrap().generation, 0);
+        assert!(published_state
+            .read()
+            .unwrap()
+            .config
+            .workspace_directories
+            .is_none());
+
+        apply_configure_options_with_graph(
+            &published_state,
+            &configure_in_progress,
+            ConfigureOptions {
+                workspace_directories: None,
+                conda_executable: None,
+                pipenv_executable: None,
+                poetry_executable: None,
+                environment_directories: None,
+                cache_directory: None,
+            },
+            Some(vec![PathBuf::from("usable-workspace")]),
+            None,
+            |previous, _| graph_with_locators(previous, Arc::new(Vec::<Arc<dyn Locator>>::new())),
+        )
+        .unwrap();
+
+        let state = published_state.read().unwrap();
+        assert_eq!(state.generation, 1);
+        assert_eq!(
+            state.config.workspace_directories,
+            Some(vec![PathBuf::from("usable-workspace")])
+        );
+    }
+
+    #[test]
+    fn cache_initialization_can_overlap_old_snapshot_before_publication() {
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            0,
+            Configuration::default(),
+        )));
+        let configure_in_progress = Arc::new(Mutex::new(()));
+        let requested_cache = PathBuf::from("first-cache");
+        let (cache_set_tx, cache_set_rx) = mpsc::channel();
+        let (cache_release_tx, cache_release_rx) = mpsc::channel();
+        let worker_state = published_state.clone();
+        let worker_mutex = configure_in_progress.clone();
+        let worker_cache = requested_cache.clone();
+
+        let worker = thread::spawn(move || {
+            apply_configure_options_with_graph_and_cache(
+                worker_state.as_ref(),
+                worker_mutex.as_ref(),
+                ConfigureOptions {
+                    workspace_directories: None,
+                    conda_executable: None,
+                    pipenv_executable: None,
+                    poetry_executable: None,
+                    environment_directories: None,
+                    cache_directory: Some(worker_cache.clone()),
+                },
+                None,
+                None,
+                |previous, _| {
+                    graph_with_locators(previous, Arc::new(Vec::<Arc<dyn Locator>>::new()))
+                },
+                move |requested| {
+                    assert_eq!(requested, worker_cache);
+                    cache_set_tx.send(()).unwrap();
+                    cache_release_rx
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("test must release cache initialization");
+                    requested
+                },
+            )
+        });
+
+        cache_set_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("cache must initialize before publication");
+        let state = published_state.read().unwrap();
+        assert_eq!(state.generation, 0);
+        assert!(state.config.cache_directory.is_none());
+        drop(state);
+
+        cache_release_tx.send(()).unwrap();
+        worker.join().unwrap().unwrap();
+        let state = published_state.read().unwrap();
+        assert_eq!(state.generation, 1);
+        assert_eq!(state.config.cache_directory, Some(requested_cache));
+    }
+
+    #[test]
+    fn later_cache_directory_request_publishes_first_effective_path() {
+        let first_cache = PathBuf::from("cache-a");
+        let later_cache = PathBuf::from("cache-b");
+        let published_state = RwLock::new(test_published_state(
+            0,
+            Configuration {
+                cache_directory: Some(first_cache.clone()),
+                ..Default::default()
+            },
+        ));
+        let configure_in_progress = Mutex::new(());
+        let locator = Arc::new(RecordingConfigureLocator {
+            configured_workspace_directories: Mutex::new(None),
+        });
+
+        apply_configure_options_with_graph_and_cache(
+            &published_state,
+            &configure_in_progress,
+            ConfigureOptions {
+                workspace_directories: None,
+                conda_executable: None,
+                pipenv_executable: None,
+                poetry_executable: None,
+                environment_directories: None,
+                cache_directory: Some(later_cache),
+            },
+            Some(vec![PathBuf::from("new-workspace")]),
+            None,
+            |previous, _| {
+                graph_with_locators(
+                    previous,
+                    Arc::new(vec![locator.clone() as Arc<dyn Locator>]),
+                )
+            },
+            |_| first_cache.clone(),
+        )
+        .unwrap();
+
+        let state = published_state.read().unwrap();
+        assert_eq!(state.generation, 1);
+        assert_eq!(state.config.cache_directory, Some(first_cache));
+        assert_eq!(
+            *locator.configured_workspace_directories.lock().unwrap(),
+            Some(vec![PathBuf::from("new-workspace")])
+        );
+    }
+
+    #[test]
+    fn clearing_resolved_cache_does_not_change_snapshot_or_locator_state() {
+        let context = make_test_context();
+        let request_state = context.published_state.read().unwrap().clone();
+        let prefix = PathBuf::from("cached-conda-prefix");
+        request_state.graph.conda_locator.environments.insert(
+            prefix.clone(),
+            PythonEnvironment::new(
+                Some(prefix.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(prefix.clone()),
+                None,
+                Some("3.12.0".to_string()),
+            ),
+        );
+
+        clear_cache().unwrap();
+
+        let current = context.published_state.read().unwrap().clone();
+        assert!(Arc::ptr_eq(&request_state, &current));
+        assert_eq!(current.generation, 0);
+        assert!(current
+            .graph
+            .conda_locator
+            .environments
+            .contains_key(&prefix));
+    }
+
+    #[test]
+    fn test_configure_panic_discards_partially_configured_replacement_graph() {
+        let published_state = RwLock::new(test_published_state(0, Configuration::default()));
+        let configure_in_progress = Mutex::new(());
+        let old_locator = Arc::new(RecordingConfigureLocator {
+            configured_workspace_directories: Mutex::new(None),
+        });
+        let old_locators = Arc::new(vec![old_locator.clone() as Arc<dyn Locator>]);
+        {
+            let previous = published_state.read().unwrap().clone();
+            *published_state.write().unwrap() = Arc::new(PublishedRequestState::new(
+                0,
+                Configuration::default(),
+                graph_with_locators(previous.as_ref(), old_locators),
+            ));
+        }
         let recording_locator = Arc::new(RecordingConfigureLocator {
             configured_workspace_directories: Mutex::new(None),
         });
@@ -2495,10 +3662,9 @@ mod tests {
             panic_locator.clone() as Arc<dyn Locator>,
         ]);
 
-        let result = apply_configure_options(
-            &configuration,
+        let result = apply_configure_options_with_graph(
+            &published_state,
             &configure_in_progress,
-            &locators,
             ConfigureOptions {
                 workspace_directories: None,
                 conda_executable: None,
@@ -2509,32 +3675,39 @@ mod tests {
             },
             Some(vec![PathBuf::from("/workspace")]),
             None,
+            move |previous, _| graph_with_locators(previous, locators),
         );
 
         assert!(result.is_err());
-        assert!(recording_locator
+        assert_eq!(
+            *recording_locator
+                .configured_workspace_directories
+                .lock()
+                .unwrap(),
+            Some(vec![PathBuf::from("/workspace")])
+        );
+        assert!(old_locator
             .configured_workspace_directories
             .lock()
             .unwrap()
             .is_none());
-        assert!(panic_locator
-            .configured_workspace_directories
-            .lock()
-            .unwrap()
-            .is_none());
+        assert_eq!(
+            *panic_locator
+                .configured_workspace_directories
+                .lock()
+                .unwrap(),
+            Some(vec![PathBuf::from("/workspace")])
+        );
     }
 
     #[test]
     fn test_stale_generation_does_not_begin_missing_env_reporting() {
         let reporting_state = AtomicU64::new(MISSING_ENVS_AVAILABLE);
-        let configuration = RwLock::new(ConfigurationState {
-            generation: 2,
-            config: Configuration::default(),
-        });
+        let published_state = RwLock::new(test_published_state(2, Configuration::default()));
 
         assert!(!try_begin_missing_env_reporting_with_state(
             &reporting_state,
-            &configuration,
+            &published_state,
             1,
         ));
         assert_eq!(
@@ -2546,12 +3719,9 @@ mod tests {
     #[test]
     fn test_stale_generation_releases_missing_env_reporting_slot() {
         let reporting_state = AtomicU64::new(2);
-        let configuration = RwLock::new(ConfigurationState {
-            generation: 3,
-            config: Configuration::default(),
-        });
+        let published_state = RwLock::new(test_published_state(3, Configuration::default()));
 
-        release_missing_env_reporting_if_stale_with_state(&reporting_state, &configuration, 2);
+        release_missing_env_reporting_if_stale_with_state(&reporting_state, &published_state, 2);
 
         assert_eq!(
             reporting_state.load(Ordering::Acquire),
@@ -2562,14 +3732,11 @@ mod tests {
     #[test]
     fn test_newer_generation_can_claim_missing_env_reporting_after_older_reservation() {
         let reporting_state = AtomicU64::new(1);
-        let configuration = RwLock::new(ConfigurationState {
-            generation: 2,
-            config: Configuration::default(),
-        });
+        let published_state = RwLock::new(test_published_state(2, Configuration::default()));
 
         assert!(try_begin_missing_env_reporting_with_state(
             &reporting_state,
-            &configuration,
+            &published_state,
             2,
         ));
         assert_eq!(reporting_state.load(Ordering::Acquire), 2);
@@ -2815,15 +3982,15 @@ mod tests {
 
     #[test]
     fn test_stale_generation_does_not_sync_refresh_state() {
-        let configuration = RwLock::new(ConfigurationState {
-            generation: 2,
-            config: Configuration::default(),
-        });
+        let request_state = test_published_state(1, Configuration::default());
+        *request_state.active.lock().unwrap() = false;
+        let published_state = RwLock::new(test_published_state(2, Configuration::default()));
         let mut synced = false;
 
-        let result = sync_refresh_locator_state_if_current(&configuration, 1, || {
-            synced = true;
-        });
+        let result =
+            sync_refresh_locator_state_if_current(&published_state, &request_state, || {
+                synced = true;
+            });
 
         assert_eq!(result, Err(2));
         assert!(!synced);
@@ -2901,6 +4068,183 @@ mod tests {
         ];
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn replacement_graph_reuses_only_configuration_independent_locators() {
+        let environment = EnvironmentApi::new();
+        let previous = create_initial_locator_graph(&environment);
+        let config = Configuration::default();
+        let replacement =
+            create_replacement_locator_graph(&environment, &previous, &config, &config);
+
+        assert!(Arc::ptr_eq(
+            &previous.conda_locator,
+            &replacement.conda_locator
+        ));
+        for previous_locator in previous.locators.iter() {
+            let replacement_locator = replacement
+                .locators
+                .iter()
+                .find(|locator| locator.get_kind() == previous_locator.get_kind())
+                .expect("replacement graph must preserve every locator kind");
+            let should_be_reused = !matches!(
+                previous_locator.get_kind(),
+                LocatorKind::Hatch | LocatorKind::PipEnv | LocatorKind::Uv
+            );
+            assert_eq!(
+                Arc::ptr_eq(previous_locator, replacement_locator),
+                should_be_reused,
+                "unexpected reuse for {:?}",
+                previous_locator.get_kind()
+            );
+        }
+    }
+
+    #[test]
+    fn replacement_graph_same_conda_config_registers_pyenv_discovery_with_shared_conda() {
+        let (_temp, environment, conda_prefix) = create_pyenv_conda_install();
+        let previous = create_initial_locator_graph(&environment);
+        let config = Configuration::default();
+        let replacement =
+            create_replacement_locator_graph(&environment, &previous, &config, &config);
+
+        discover_with_pyenv(&replacement);
+
+        assert!(Arc::ptr_eq(
+            &previous.conda_locator,
+            &replacement.conda_locator
+        ));
+        assert!(replacement
+            .conda_locator
+            .environments
+            .contains_key(&conda_prefix));
+    }
+
+    #[test]
+    fn replacement_graph_changed_conda_config_rebinds_pyenv_discovery() {
+        let (_temp, environment, conda_prefix) = create_pyenv_conda_install();
+        let previous = create_initial_locator_graph(&environment);
+        let previous_pyenv = previous
+            .locators
+            .iter()
+            .find(|locator| locator.get_kind() == LocatorKind::PyEnv)
+            .unwrap();
+        let changed_config = Configuration {
+            conda_executable: Some(PathBuf::from("different-conda")),
+            ..Default::default()
+        };
+        let replacement = create_replacement_locator_graph(
+            &environment,
+            &previous,
+            &Configuration::default(),
+            &changed_config,
+        );
+        let replacement_pyenv = replacement
+            .locators
+            .iter()
+            .find(|locator| locator.get_kind() == LocatorKind::PyEnv)
+            .unwrap();
+
+        discover_with_pyenv(&replacement);
+
+        assert!(!Arc::ptr_eq(previous_pyenv, replacement_pyenv));
+        assert!(replacement
+            .conda_locator
+            .environments
+            .contains_key(&conda_prefix));
+        assert!(!previous
+            .conda_locator
+            .environments
+            .contains_key(&conda_prefix));
+    }
+
+    #[test]
+    fn replacement_graph_replaces_poetry_only_when_its_inputs_change() {
+        let environment = EnvironmentApi::new();
+        let previous = create_initial_locator_graph(&environment);
+        let previous_config = Configuration {
+            workspace_directories: Some(vec![PathBuf::from("workspace-a")]),
+            poetry_executable: Some(PathBuf::from("poetry-a")),
+            ..Default::default()
+        };
+
+        let identical = create_replacement_locator_graph(
+            &environment,
+            &previous,
+            &previous_config,
+            &previous_config,
+        );
+        assert!(Arc::ptr_eq(
+            &previous.poetry_locator,
+            &identical.poetry_locator
+        ));
+
+        let changed = create_replacement_locator_graph(
+            &environment,
+            &previous,
+            &previous_config,
+            &Configuration {
+                workspace_directories: Some(vec![PathBuf::from("workspace-b")]),
+                poetry_executable: previous_config.poetry_executable.clone(),
+                ..Default::default()
+            },
+        );
+        assert!(!Arc::ptr_eq(
+            &previous.poetry_locator,
+            &changed.poetry_locator
+        ));
+    }
+
+    #[test]
+    fn conda_discovery_is_reused_only_for_compatible_configuration() {
+        let environment = EnvironmentApi::new();
+        let previous = create_initial_locator_graph(&environment);
+        let cached_prefix = PathBuf::from("cached-conda-prefix");
+        previous.conda_locator.environments.insert(
+            cached_prefix.clone(),
+            PythonEnvironment::new(
+                Some(cached_prefix.join("python")),
+                Some(PythonEnvironmentKind::Conda),
+                Some(cached_prefix.clone()),
+                None,
+                Some("3.12.0".to_string()),
+            ),
+        );
+
+        let compatible = create_replacement_locator_graph(
+            &environment,
+            &previous,
+            &Configuration::default(),
+            &Configuration::default(),
+        );
+        assert!(Arc::ptr_eq(
+            &previous.conda_locator,
+            &compatible.conda_locator
+        ));
+        assert!(compatible
+            .conda_locator
+            .environments
+            .contains_key(&cached_prefix));
+
+        let changed_config = Configuration {
+            conda_executable: Some(PathBuf::from("different-conda")),
+            ..Default::default()
+        };
+        let incompatible = create_replacement_locator_graph(
+            &environment,
+            &previous,
+            &Configuration::default(),
+            &changed_config,
+        );
+        assert!(!Arc::ptr_eq(
+            &previous.conda_locator,
+            &incompatible.conda_locator
+        ));
+        assert!(!incompatible
+            .conda_locator
+            .environments
+            .contains_key(&cached_prefix));
     }
 
     #[test]
@@ -3284,32 +4628,31 @@ mod tests {
     #[test]
     fn test_configure_resets_completed_missing_env_reporting() {
         let reporting_state = AtomicU64::new(MISSING_ENVS_AVAILABLE);
-        let configuration = Arc::new(RwLock::new(ConfigurationState {
-            generation: 1,
-            config: Configuration::default(),
-        }));
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            1,
+            Configuration::default(),
+        )));
 
         assert!(try_begin_missing_env_reporting_with_state(
             &reporting_state,
-            configuration.as_ref(),
+            published_state.as_ref(),
             1,
         ));
         complete_missing_env_reporting_with_state(&reporting_state, 1);
         assert!(!try_begin_missing_env_reporting_with_state(
             &reporting_state,
-            configuration.as_ref(),
+            published_state.as_ref(),
             1,
         ));
 
         {
-            let mut state = configuration.write().unwrap();
-            state.generation = 2;
+            *published_state.write().unwrap() = test_published_state(2, Configuration::default());
             reporting_state.store(MISSING_ENVS_AVAILABLE, Ordering::Release);
         }
 
         assert!(try_begin_missing_env_reporting_with_state(
             &reporting_state,
-            configuration.as_ref(),
+            published_state.as_ref(),
             2,
         ));
     }
@@ -3317,7 +4660,10 @@ mod tests {
     /// block on the configure thread while it iterates `locator.configure()`.
     #[test]
     fn test_refresh_not_blocked_by_in_flight_configure() {
-        let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            0,
+            Configuration::default(),
+        )));
         let configure_in_progress = Arc::new(Mutex::new(()));
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
@@ -3330,14 +4676,13 @@ mod tests {
         let locators = Arc::new(vec![locator.clone() as Arc<dyn Locator>]);
 
         let worker = {
-            let configuration = configuration.clone();
+            let published_state = published_state.clone();
             let configure_in_progress = configure_in_progress.clone();
             let locators = locators.clone();
             thread::spawn(move || {
-                apply_configure_options(
-                    configuration.as_ref(),
+                apply_configure_options_with_graph(
+                    published_state.as_ref(),
                     &configure_in_progress,
-                    &locators,
                     ConfigureOptions {
                         workspace_directories: None,
                         conda_executable: None,
@@ -3348,6 +4693,7 @@ mod tests {
                     },
                     Some(vec![PathBuf::from("/workspace")]),
                     None,
+                    move |previous, _| graph_with_locators(previous, locators),
                 )
                 .unwrap();
                 done_tx.send(()).unwrap();
@@ -3355,31 +4701,35 @@ mod tests {
         };
 
         // Wait for the configure thread to enter the locator's `configure()`.
-        // At this point Phase B is in progress with no `configuration` lock
-        // held.
+        // The replacement locator is being configured with no published-state
+        // lock held.
         started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
 
         let (read_done_tx, read_done_rx) = mpsc::channel();
         let read_worker = {
-            let configuration = configuration.clone();
+            let published_state = published_state.clone();
             thread::spawn(move || {
-                // Exercise the three read sites called out in #461 from another
-                // thread. If a regression holds `configuration.write()` during
-                // Phase B, this worker blocks and the main test thread can fail
+                // Exercise the request snapshot, refresh-state sync, and
+                // generation-guarded reporting paths from another thread. If
+                // configure holds the published-state write lock while preparing
+                // the graph, this worker blocks and the main test thread fails
                 // with a bounded timeout instead of deadlocking.
                 let read_start = Instant::now();
                 {
                     // `execute_refresh` snapshot read path.
-                    let _state = configuration.read().unwrap();
+                    let _state = published_state.read().unwrap();
                 }
                 // `sync_refresh_locator_state_if_current` read path.
-                let _ = sync_refresh_locator_state_if_current(configuration.as_ref(), 0, || {});
-                // `GenerationGuardedReporter::report_if_current` read path. The
-                // generation here matches the still-old generation (0) so the
-                // inner report is invoked, exercising the full read-lock-then-call
-                // path.
+                let request_state = published_state.read().unwrap().clone();
+                let _ = sync_refresh_locator_state_if_current(
+                    published_state.as_ref(),
+                    &request_state,
+                    || {},
+                );
+                // The old snapshot is still active, so the inner report runs
+                // without holding the published-state lock.
                 let inner = Arc::new(RecordingReporter::default());
-                let reporter = GenerationGuardedReporter::new(inner.clone(), configuration, 0);
+                let reporter = GenerationGuardedReporter::new(inner.clone(), request_state);
                 let env = PythonEnvironment::new(
                     Some(PathBuf::from("/tmp/python")),
                     Some(PythonEnvironmentKind::Venv),
@@ -3420,7 +4770,7 @@ mod tests {
         done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         worker.join().unwrap();
 
-        let state = configuration.read().unwrap();
+        let state = published_state.read().unwrap();
         assert_eq!(state.generation, 1);
     }
 
@@ -3461,7 +4811,10 @@ mod tests {
             fn find(&self, _reporter: &dyn Reporter) {}
         }
 
-        let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            0,
+            Configuration::default(),
+        )));
         let configure_in_progress = Arc::new(Mutex::new(()));
         let events = Arc::new(Mutex::new(Vec::<Event>::new()));
         let (entered_tx, entered_rx) = mpsc::channel();
@@ -3482,15 +4835,14 @@ mod tests {
         let locators_b = make_locators(2);
 
         let worker_a = {
-            let configuration = configuration.clone();
+            let published_state = published_state.clone();
             let configure_in_progress = configure_in_progress.clone();
             let start_barrier = start_barrier.clone();
             thread::spawn(move || {
                 start_barrier.wait();
-                apply_configure_options(
-                    configuration.as_ref(),
+                apply_configure_options_with_graph(
+                    published_state.as_ref(),
                     &configure_in_progress,
-                    &locators_a,
                     ConfigureOptions {
                         workspace_directories: None,
                         conda_executable: None,
@@ -3501,20 +4853,20 @@ mod tests {
                     },
                     Some(vec![PathBuf::from("/workspace/a")]),
                     None,
+                    move |previous, _| graph_with_locators(previous, locators_a),
                 )
                 .unwrap();
             })
         };
         let worker_b = {
-            let configuration = configuration.clone();
+            let published_state = published_state.clone();
             let configure_in_progress = configure_in_progress.clone();
             let start_barrier = start_barrier.clone();
             thread::spawn(move || {
                 start_barrier.wait();
-                apply_configure_options(
-                    configuration.as_ref(),
+                apply_configure_options_with_graph(
+                    published_state.as_ref(),
                     &configure_in_progress,
-                    &locators_b,
                     ConfigureOptions {
                         workspace_directories: None,
                         conda_executable: None,
@@ -3525,6 +4877,7 @@ mod tests {
                     },
                     Some(vec![PathBuf::from("/workspace/b")]),
                     None,
+                    move |previous, _| graph_with_locators(previous, locators_b),
                 )
                 .unwrap();
             })
@@ -3564,19 +4917,18 @@ mod tests {
         );
 
         // Both publishes occurred.
-        let state = configuration.read().unwrap();
+        let state = published_state.read().unwrap();
         assert_eq!(state.generation, 2);
     }
 
-    /// Test for #461: rollback after a panicking locator must leave the
+    /// Test for #461: a panicking replacement locator must leave the
     /// published config unchanged and release configure serialization.
     #[test]
     fn test_configure_panic_leaves_state_unchanged_and_releases_mutex() {
-        // The panic locator panics when `workspace_directories` is set.
-        // Place a recording locator first so it is configured, then panics
-        // happen on the second locator; rollback must re-configure the
-        // first locator with the previous (empty) config.
-        let configuration = Arc::new(RwLock::new(ConfigurationState::default()));
+        let published_state = Arc::new(RwLock::new(test_published_state(
+            0,
+            Configuration::default(),
+        )));
         let configure_in_progress = Arc::new(Mutex::new(()));
         let recording = Arc::new(RecordingConfigureLocator {
             configured_workspace_directories: Mutex::new(None),
@@ -3589,10 +4941,9 @@ mod tests {
             panic_locator.clone() as Arc<dyn Locator>,
         ]);
 
-        let result = apply_configure_options(
-            configuration.as_ref(),
+        let result = apply_configure_options_with_graph(
+            published_state.as_ref(),
             &configure_in_progress,
-            &locators,
             ConfigureOptions {
                 workspace_directories: None,
                 conda_executable: None,
@@ -3603,21 +4954,21 @@ mod tests {
             },
             Some(vec![PathBuf::from("/workspace")]),
             None,
+            move |previous, _| graph_with_locators(previous, locators),
         );
         assert!(result.is_err());
 
         // Generation and config are unchanged.
-        let state = configuration.read().unwrap();
+        let state = published_state.read().unwrap();
         assert_eq!(state.generation, 0);
         assert!(state.config.workspace_directories.is_none());
 
-        // The recording locator was configured forward then rolled back
-        // (final observed config has no workspace_directories).
-        assert!(recording
-            .configured_workspace_directories
-            .lock()
-            .unwrap()
-            .is_none());
+        // The replacement graph can be partially configured, but it was never
+        // published and therefore cannot affect subsequent requests.
+        assert_eq!(
+            *recording.configured_workspace_directories.lock().unwrap(),
+            Some(vec![PathBuf::from("/workspace")])
+        );
 
         // The configure mutex is released, so a subsequent configure can
         // acquire it without blocking.

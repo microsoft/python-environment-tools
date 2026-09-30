@@ -47,6 +47,14 @@ impl PyEnv {
             versions_dir: Arc::new(Mutex::new(None)),
         }
     }
+    pub fn with_conda_locator(&self, conda_locator: Arc<dyn CondaLocator>) -> PyEnv {
+        PyEnv {
+            env_vars: self.env_vars.clone(),
+            conda_locator,
+            manager: self.manager.clone(),
+            versions_dir: self.versions_dir.clone(),
+        }
+    }
     fn clear(&self) {
         self.manager.lock().expect("manager mutex poisoned").take();
         self.versions_dir
