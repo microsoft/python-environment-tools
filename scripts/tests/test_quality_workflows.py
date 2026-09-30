@@ -71,6 +71,36 @@ class QualityWorkflowTests(unittest.TestCase):
             ),
         )
 
+    def test_coverage_proof_and_source_reports_are_required_and_uploaded(self) -> None:
+        for workflow in ("coverage.yml", "coverage-baseline.yml", "coverage-macos.yml"):
+            with self.subTest(workflow=workflow):
+                path = ".github/workflows/" + workflow
+                text = (ROOT / path).read_text(encoding="utf-8")
+                steps = workflow_steps(path)
+                self.assertIn("PET_SUBPROCESS_COVERAGE_PROOF:", text)
+                self.assertIn("fetch-depth: 0", text)
+                for name in ("Verify Isolated Server Coverage", "Report Production and Changed Coverage"):
+                    self.assertEqual(step_property(steps[name], "if"), "always()")
+                    self.assertIsNone(step_property(steps[name], "continue-on-error"))
+                upload = next(value for value in steps.values() if "actions/upload-artifact@" in value)
+                for artifact in ("lcov.info", "production-coverage/", "subprocess-coverage/", "subprocess-coverage.json"):
+                    self.assertIn(artifact, upload)
+
+    def test_macos_coverage_measures_the_exact_base_without_a_schema_bypass(self) -> None:
+        steps = workflow_steps(".github/workflows/coverage-macos.yml")
+        measure = steps["Measure Exact PR Base on the Same Runner"]
+        self.assertIn("github.event.pull_request.base.sha", measure)
+        self.assertIn("git worktree add --detach", measure)
+        self.assertIn("PET_SUBPROCESS_COVERAGE_PROOF: ${{ runner.temp }}/base-subprocess-coverage.json", measure)
+        self.assertNotIn("${{ github.workspace }}/subprocess-coverage.json", measure)
+        self.assertIn("cargo llvm-cov --workspace", measure)
+        self.assertNotIn("--features", measure)
+        self.assertIn("cargo llvm-cov --workspace", steps["Collect Native macOS Coverage"])
+        compare = steps["Compare Exact Base Coverage"]
+        self.assertIn("--baseline baseline-lcov.info", compare)
+        self.assertIn("always()", step_property(compare, "if"))
+        self.assertIsNone(step_property(compare, "continue-on-error"))
+
     def test_report_artifacts_are_uploaded_after_comparison(self) -> None:
         cases = (
             (
