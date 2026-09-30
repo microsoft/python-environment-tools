@@ -4,6 +4,7 @@
 use pet_fs::path::norm_case;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,7 +15,9 @@ use tempfile::TempDir;
 
 #[allow(dead_code)]
 mod jsonrpc_client;
-use jsonrpc_client::{EnvironmentNotification, JsonRpcNotification, PetJsonRpcClient};
+use jsonrpc_client::{
+    EnvironmentNotification, JsonRpcNotification, PendingRequest, PetJsonRpcClient,
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const FAST_SIZES: &[usize] = &[1, 10, 100];
@@ -50,10 +53,25 @@ struct Fixture {
     cache: PathBuf,
     barrier: PathBuf,
     python_path: PathBuf,
+    resolve_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolveFixtureIdentity {
+    executable: PathBuf,
+    prefix: PathBuf,
+    version: String,
+}
+
+struct PendingFixtureResolve {
+    request: PendingRequest,
+    expected: ResolveFixtureIdentity,
 }
 
 impl Fixture {
     fn new() -> Self {
+        let resolve_python = session_python();
+        let resolve_version = runtime_version(&resolve_python);
         let root = tempfile::tempdir().expect("failed to create session fixture root");
         let workspace = root.path().join("workspace");
         let cache = root.path().join("cache");
@@ -77,6 +95,7 @@ impl Fixture {
             cache,
             barrier,
             python_path,
+            resolve_version,
         }
     }
 
@@ -126,7 +145,7 @@ impl Fixture {
         }
     }
 
-    fn create_resolve_environments(&self, count: usize) -> Vec<PathBuf> {
+    fn create_resolve_environments(&self, count: usize) -> Vec<ResolveFixtureIdentity> {
         (0..count)
             .map(|index| {
                 self.create_resolve_environment(
@@ -136,14 +155,8 @@ impl Fixture {
             .collect()
     }
 
-    fn create_resolve_environment(&self, prefix: &Path) -> PathBuf {
-        let python = std::env::var_os("PET_SESSION_PYTHON").unwrap_or_else(|| {
-            if cfg!(windows) {
-                "python".into()
-            } else {
-                "python3".into()
-            }
-        });
+    fn create_resolve_environment(&self, prefix: &Path) -> ResolveFixtureIdentity {
+        let python = session_python();
         let output = Command::new(&python)
             .args(["-m", "venv", "--without-pip", "--copies"])
             .arg(prefix)
@@ -155,7 +168,11 @@ impl Fixture {
             prefix.display(),
             String::from_utf8_lossy(&output.stderr)
         );
-        python_executable(&bin_directory(prefix), false)
+        ResolveFixtureIdentity {
+            executable: resolve_fixture_path(&python_executable(&bin_directory(prefix), false)),
+            prefix: resolve_fixture_path(prefix),
+            version: self.resolve_version.clone(),
+        }
     }
 
     fn resolve_root(&self) -> PathBuf {
@@ -213,6 +230,43 @@ impl Fixture {
             self.entered_count()
         );
     }
+}
+
+fn session_python() -> OsString {
+    std::env::var_os("PET_SESSION_PYTHON").unwrap_or_else(|| {
+        if cfg!(windows) {
+            "python".into()
+        } else {
+            "python3".into()
+        }
+    })
+}
+
+fn runtime_version(python: &OsString) -> String {
+    let output = Command::new(python)
+        .args([
+            "-I",
+            "-c",
+            "import sys; print('.'.join(str(part) for part in sys.version_info))",
+        ])
+        .output()
+        .expect("failed to query Python fixture runtime version");
+    assert!(
+        output.status.success(),
+        "failed to query Python fixture runtime version: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("Python fixture runtime version was not UTF-8")
+        .trim()
+        .to_string()
+}
+
+fn resolve_fixture_path(path: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    let path = fs::canonicalize(path).expect("failed to resolve macOS fixture path");
+
+    norm_case(path)
 }
 
 struct BarrierReleaseGuard {
@@ -517,44 +571,161 @@ fn cache_json((files, bytes): (usize, u64)) -> serde_json::Value {
     })
 }
 
-fn resolve_and_measure(
+fn extract_resolved_fixture(
+    result: serde_json::Value,
+    expected: &ResolveFixtureIdentity,
+) -> Result<EnvironmentIdentity, String> {
+    let environment: EnvironmentNotification = serde_json::from_value(result)
+        .map_err(|error| format!("resolve returned an invalid environment: {error}"))?;
+    if let Some(error) = environment.error {
+        return Err(format!("resolve reported an error: {error}"));
+    }
+    let executable = environment
+        .executable
+        .ok_or_else(|| "resolved environment had no executable".to_string())?;
+    let prefix = environment
+        .prefix
+        .ok_or_else(|| "resolved environment had no prefix".to_string())?;
+    let kind = environment
+        .kind
+        .ok_or_else(|| "resolved environment had no classification".to_string())?;
+    let version = environment
+        .version
+        .ok_or_else(|| "resolved environment had no version".to_string())?;
+    let identity = EnvironmentIdentity {
+        executable: resolve_fixture_path(Path::new(&executable)),
+        prefix: resolve_fixture_path(Path::new(&prefix)),
+        kind,
+        name: environment.name,
+        version: Some(version),
+    };
+    if identity.executable != expected.executable {
+        return Err("resolve returned a different fixture executable".to_string());
+    }
+    if identity.prefix != expected.prefix {
+        return Err("resolve returned a different fixture prefix".to_string());
+    }
+    if identity.kind != "Venv" {
+        return Err(format!(
+            "resolve returned kind {}, expected Venv",
+            identity.kind
+        ));
+    }
+    if identity.version.as_deref() != Some(expected.version.as_str()) {
+        return Err("resolve returned an unexpected runtime version".to_string());
+    }
+    Ok(identity)
+}
+
+fn submit_fixture_resolve(
     client: &PetJsonRpcClient,
-    executable: &Path,
-) -> (EnvironmentIdentity, u128) {
-    let executable = executable
+    expected: &ResolveFixtureIdentity,
+) -> PendingFixtureResolve {
+    let executable = expected
+        .executable
         .to_str()
         .expect("resolve fixture path was not UTF-8");
-    let (result, latency) = client
-        .submit_resolve(executable)
-        .expect("failed to submit cache-control resolve")
-        .wait(REQUEST_TIMEOUT)
-        .expect("cache-control resolve failed");
-    let environment: EnvironmentNotification =
-        serde_json::from_value(result).expect("resolve returned an invalid environment");
-    assert_eq!(
-        environment.error, None,
-        "cache-control resolve reported an error"
+    PendingFixtureResolve {
+        request: client
+            .submit_resolve(executable)
+            .expect("failed to submit fixture resolve"),
+        expected: expected.clone(),
+    }
+}
+
+impl PendingFixtureResolve {
+    fn submitted_at(&self) -> Instant {
+        self.request.submitted_at()
+    }
+
+    fn wait(self, context: &str) -> (EnvironmentIdentity, Duration) {
+        let (result, latency) = self
+            .request
+            .wait(REQUEST_TIMEOUT)
+            .unwrap_or_else(|error| panic!("{context} failed: {error}"));
+        let identity = extract_resolved_fixture(result, &self.expected)
+            .unwrap_or_else(|error| panic!("{context} returned the wrong environment: {error}"));
+        (identity, latency)
+    }
+}
+
+fn resolve_and_measure(
+    client: &PetJsonRpcClient,
+    expected: &ResolveFixtureIdentity,
+) -> (EnvironmentIdentity, u128) {
+    let (identity, latency) =
+        submit_fixture_resolve(client, expected).wait("cache-control resolve");
+    (identity, latency.as_micros())
+}
+
+#[test]
+fn resolved_fixture_validation_enforces_request_identity_and_response_shape() {
+    let root = tempfile::tempdir().expect("failed to create resolve validation fixture");
+    let create_expected = |name: &str, version: &str| {
+        let prefix = root.path().join(name);
+        let executable = python_executable(&bin_directory(&prefix), false);
+        fs::create_dir_all(executable.parent().unwrap())
+            .expect("failed to create resolve validation environment");
+        fs::write(&executable, b"fixture").expect("failed to create resolve validation executable");
+        ResolveFixtureIdentity {
+            executable: resolve_fixture_path(&executable),
+            prefix: resolve_fixture_path(&prefix),
+            version: version.to_string(),
+        }
+    };
+    let first = create_expected("first", "3.12.10.final.0");
+    let second = create_expected("second", "3.13.2.final.0");
+    let response = |expected: &ResolveFixtureIdentity| {
+        json!({
+            "executable": expected.executable,
+            "prefix": expected.prefix,
+            "kind": "Venv",
+            "name": "fixture",
+            "version": expected.version,
+            "error": null,
+        })
+    };
+
+    let valid = extract_resolved_fixture(response(&first), &first)
+        .expect("valid resolve response was rejected");
+    assert_eq!(valid.executable, first.executable);
+    assert_eq!(valid.prefix, first.prefix);
+    assert_eq!(valid.kind, "Venv");
+    assert_eq!(valid.version.as_deref(), Some(first.version.as_str()));
+
+    assert!(
+        extract_resolved_fixture(response(&second), &first).is_err(),
+        "a response assigned to the wrong requested fixture was accepted"
     );
-    (
-        EnvironmentIdentity {
-            executable: norm_case(
-                environment
-                    .executable
-                    .expect("resolved environment had no executable"),
-            ),
-            prefix: norm_case(
-                environment
-                    .prefix
-                    .expect("resolved environment had no prefix"),
-            ),
-            kind: environment
-                .kind
-                .expect("resolved environment had no classification"),
-            name: environment.name,
-            version: environment.version,
-        },
-        latency.as_micros(),
-    )
+    assert!(
+        extract_resolved_fixture(json!(["not", "an", "environment"]), &first).is_err(),
+        "malformed resolve JSON was accepted"
+    );
+    assert!(
+        extract_resolved_fixture(json!({ "error": null }), &first).is_err(),
+        "a resolve response with missing identity fields was accepted"
+    );
+
+    let mut errored = response(&first);
+    errored["error"] = json!("probe failed");
+    assert!(
+        extract_resolved_fixture(errored, &first).is_err(),
+        "a resolve response containing an error was accepted"
+    );
+
+    let mut wrong_kind = response(&first);
+    wrong_kind["kind"] = json!("VirtualEnv");
+    assert!(
+        extract_resolved_fixture(wrong_kind, &first).is_err(),
+        "a resolve response with the wrong kind was accepted"
+    );
+
+    let mut wrong_version = response(&first);
+    wrong_version["version"] = json!("3.12.10");
+    assert!(
+        extract_resolved_fixture(wrong_version, &first).is_err(),
+        "a resolve response with the wrong runtime version was accepted"
+    );
 }
 
 fn shutdown_client(client: &PetJsonRpcClient, context: &str) {
@@ -935,18 +1106,10 @@ fn long_lived_session_benchmark() {
         .next()
         .expect("resolve fixture omitted warm-up interpreter");
     let mut warmup_release = BarrierReleaseGuard::new(&fixture.barrier);
-    let warmup = client
-        .submit_resolve(
-            warmup_executable
-                .to_str()
-                .expect("warm-up resolve fixture path was not UTF-8"),
-        )
-        .expect("failed to submit warm-up resolve");
+    let warmup = submit_fixture_resolve(&client, &warmup_executable);
     fixture.wait_for_entered(1);
     warmup_release.release();
-    warmup
-        .wait(REQUEST_TIMEOUT)
-        .expect("warm-up resolve failed");
+    warmup.wait("warm-up resolve");
     assert_eq!(fixture.released_count(), 1);
     assert_eq!(fixture.failed_count(), 0);
 
@@ -969,15 +1132,7 @@ fn long_lived_session_benchmark() {
     let mut overlap_release = BarrierReleaseGuard::new(&fixture.barrier);
     let overlap_pending = overlap_executables
         .iter()
-        .map(|executable| {
-            client
-                .submit_resolve(
-                    executable
-                        .to_str()
-                        .expect("resolve fixture path was not UTF-8"),
-                )
-                .expect("failed to submit concurrent resolve")
-        })
+        .map(|expected| submit_fixture_resolve(&client, expected))
         .collect::<Vec<_>>();
     fixture.wait_for_entered(resolve_concurrency);
     assert_eq!(
@@ -1048,10 +1203,7 @@ fn long_lived_session_benchmark() {
     );
     overlap_release.release();
     for request in overlap_pending {
-        let (result, _) = request
-            .wait(REQUEST_TIMEOUT)
-            .expect("barrier-proven concurrent resolve failed");
-        assert!(!result.is_null(), "resolve returned no environment");
+        request.wait("barrier-proven concurrent resolve");
     }
     assert_eq!(
         fixture.released_count(),
@@ -1078,21 +1230,10 @@ fn long_lived_session_benchmark() {
         assert_eq!(latency_executables.len(), resolve_concurrency);
         let latency_pending = latency_executables
             .iter()
-            .map(|executable| {
-                client
-                    .submit_resolve(
-                        executable
-                            .to_str()
-                            .expect("resolve fixture path was not UTF-8"),
-                    )
-                    .expect("failed to submit resolve latency request")
-            })
+            .map(|expected| submit_fixture_resolve(&client, expected))
             .collect::<Vec<_>>();
         resolve_latency_us.extend(latency_pending.into_iter().map(|request| {
-            let (result, latency) = request
-                .wait(REQUEST_TIMEOUT)
-                .expect("concurrent resolve failed");
-            assert!(!result.is_null(), "resolve returned no environment");
+            let (_, latency) = request.wait("concurrent resolve");
             latency.as_micros()
         }));
         assert_eq!(

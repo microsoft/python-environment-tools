@@ -14,7 +14,10 @@ start exactly one instrumented interpreter and write a nonempty persistent
 cache entry before a normal bounded shutdown. A new PET process then resolves
 the unchanged interpreter from the same cache without starting an interpreter,
 and a same-process warm resolve must do the same. All three resolved identities
-must match. The artifact labels their latencies `cold`, `diskWarm`, and
+must match the submitted fixture's exact executable, prefix, `Venv` kind, and
+full runtime `sys.version_info` string. The expected version is queried once
+from the Python used to create the copied venvs, outside measured PET
+operations. The artifact labels their latencies `cold`, `diskWarm`, and
 `sameProcessWarm` and records one sample and the observed probe count for each.
 
 The benchmark also measures request-relative time to first fixture environment (excluding ambient host results),
@@ -77,6 +80,9 @@ identities, validates that fixture-scoped managers remain empty, and records
 only counts of unrelated global discoveries and managers, never their paths.
 Two fast or five stress pre-released batches then use fresh, distinct
 interpreters for unobstructed client-latency and resource-cycling samples.
+Every warm-up, overlap, and latency response is paired with its submitted
+fixture and must return that same exact identity and runtime version; merely
+returning non-null JSON is not sufficient.
 Process creation is therefore intentional cold-resolve work; refresh timings
 create no fixture process. Resource snapshots are taken after each inventory
 size and resolve batch, outside request timing. The reported observed peak is

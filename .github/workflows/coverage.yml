@@ -32,6 +32,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Post Coverage Started Comment
         if: github.event.pull_request.head.repo.full_name == github.repository
@@ -200,6 +203,21 @@ jobs:
         env:
           RUST_BACKTRACE: 1
           RUST_LOG: trace
+          PET_SUBPROCESS_COVERAGE_PROOF: ${{ github.workspace }}/subprocess-coverage.json
+        shell: bash
+
+      - name: Verify Isolated Server Coverage
+        if: always()
+        run: python scripts/coverage_detail.py proof --manifest subprocess-coverage.json --output subprocess-coverage
+        shell: bash
+
+      - name: Report Production and Changed Coverage
+        if: always()
+        run: >-
+          python scripts/coverage_detail.py report
+          --lcov lcov.info
+          --base "${{ github.event.pull_request.base.sha }}"
+          --output production-coverage
         shell: bash
 
       - name: Wait for Exact PR Base Coverage
@@ -248,6 +266,9 @@ jobs:
           path: |
             lcov.info
             coverage-report.md
+            production-coverage/
+            subprocess-coverage/
+            subprocess-coverage.json
           if-no-files-found: ignore
 
       - name: Post Coverage Comment
