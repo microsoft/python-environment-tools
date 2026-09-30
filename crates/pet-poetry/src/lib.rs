@@ -375,6 +375,8 @@ impl Locator for Poetry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pet_core::env::PythonEnv;
+    use pet_core::manager::{EnvManager, EnvManagerType};
     use pet_core::os_environment::EnvironmentApi;
 
     fn path_from_components(components: &[&str]) -> PathBuf {
@@ -597,5 +599,65 @@ mod tests {
         poetry.configure(&Configuration::default());
 
         assert!(poetry.poetry_executable.read().unwrap().is_none());
+    }
+
+    #[test]
+    fn identical_configure_preserves_cached_identification_fidelity() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let prefix = temp_dir.path().join("project-env");
+        let executable = prefix.join(if cfg!(windows) {
+            "Scripts/python.exe"
+        } else {
+            "bin/python"
+        });
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(prefix.join("pyvenv.cfg"), "version = 3.12.0").unwrap();
+        std::fs::write(&executable, "").unwrap();
+        std::fs::write(executable.parent().unwrap().join("activate"), "").unwrap();
+
+        let environment = EnvironmentApi::new();
+        let poetry = Poetry::from(&environment);
+        let workspace = temp_dir.path().join("removed-project");
+        let manager = EnvManager::new(
+            temp_dir.path().join("removed-poetry"),
+            EnvManagerType::Poetry,
+            Some("1.8.0".to_string()),
+        );
+        let config = Configuration {
+            workspace_directories: Some(vec![workspace.clone()]),
+            poetry_executable: Some(manager.executable.clone()),
+            ..Default::default()
+        };
+        poetry.configure(&config);
+        poetry
+            .search_result
+            .write()
+            .unwrap()
+            .replace(LocatorResult {
+                managers: vec![manager.clone()],
+                environments: vec![PythonEnvironment {
+                    executable: Some(executable.clone()),
+                    prefix: Some(prefix.clone()),
+                    kind: Some(PythonEnvironmentKind::Poetry),
+                    manager: Some(manager.clone()),
+                    project: Some(workspace.clone()),
+                    symlinks: Some(vec![executable.clone()]),
+                    ..Default::default()
+                }],
+            });
+
+        assert!(!workspace.exists());
+        assert!(!manager.executable.exists());
+        poetry.configure(&config);
+
+        let identified = poetry
+            .try_from(&PythonEnv::new(
+                executable,
+                Some(prefix),
+                Some("3.12.0".to_string()),
+            ))
+            .expect("cached Poetry environment must remain identifiable");
+        assert_eq!(identified.manager, Some(manager));
+        assert_eq!(identified.project, Some(workspace));
     }
 }
