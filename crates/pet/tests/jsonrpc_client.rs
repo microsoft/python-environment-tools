@@ -57,6 +57,7 @@ pub struct EnvironmentNotification {
     pub kind: Option<String>,
     pub name: Option<String>,
     pub prefix: Option<String>,
+    pub version: Option<String>,
     pub error: Option<String>,
 }
 
@@ -70,10 +71,78 @@ pub struct ManagerNotification {
 pub struct JsonRpcNotification {
     pub method: String,
     pub params: Value,
+    pub received_at: Instant,
+}
+
+pub struct PendingRequest {
+    id: u32,
+    method: String,
+    submitted_at: Instant,
+    receiver: mpsc::Receiver<TimedResponse>,
+    client: PetJsonRpcClient,
+}
+
+struct TimedResponse {
+    result: Result<Value, String>,
+    received_at: Instant,
+}
+
+pub struct TimedRefresh {
+    pub result: RefreshResult,
+    pub submitted_at: Instant,
+    pub round_trip: Duration,
+}
+
+impl PendingRequest {
+    pub fn submitted_at(&self) -> Instant {
+        self.submitted_at
+    }
+
+    pub fn wait(self, timeout: Duration) -> Result<(Value, Duration), String> {
+        let remaining = timeout.saturating_sub(self.submitted_at.elapsed());
+        let response = match self.receiver.recv_timeout(remaining) {
+            Ok(response) => response,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err(format!(
+                    "Timed out waiting for {} response after {timeout:?}",
+                    self.method
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(format!(
+                    "Response channel disconnected while waiting for {}; stderr: {}",
+                    self.method,
+                    self.client.stderr_output()
+                ));
+            }
+        };
+        let round_trip = response
+            .received_at
+            .saturating_duration_since(self.submitted_at);
+        if round_trip > timeout {
+            return Err(format!(
+                "Timed out waiting for {} response after {timeout:?}",
+                self.method
+            ));
+        }
+        response.result.map(|result| (result, round_trip))
+    }
+}
+
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        self.client
+            .inner
+            .state
+            .pending
+            .lock()
+            .unwrap()
+            .remove(&self.id);
+    }
 }
 
 struct ClientState {
-    pending: Mutex<HashMap<u32, mpsc::Sender<Result<Value, String>>>>,
+    pending: Mutex<HashMap<u32, mpsc::Sender<TimedResponse>>>,
     notifications: Mutex<Vec<JsonRpcNotification>>,
     stderr_lines: Mutex<Vec<String>>,
 }
@@ -189,6 +258,10 @@ impl PetJsonRpcClient {
         Ok(status)
     }
 
+    pub fn process_id(&self) -> u32 {
+        self.inner.child.lock().unwrap().id()
+    }
+
     pub fn configure(&self, config: Value) -> Result<(), String> {
         self.send_request_value("configure", config, DEFAULT_REQUEST_TIMEOUT)
             .map(|_| ())
@@ -202,6 +275,19 @@ impl PetJsonRpcClient {
         )
     }
 
+    pub fn refresh_with_timing(&self, params: Option<Value>) -> Result<TimedRefresh, String> {
+        let pending = self.submit_request_value("refresh", params.unwrap_or_else(|| json!({})))?;
+        let submitted_at = pending.submitted_at();
+        let (result, round_trip) = pending.wait(DEFAULT_REQUEST_TIMEOUT)?;
+        let result = serde_json::from_value(result)
+            .map_err(|e| format!("Failed to deserialize response for refresh: {e}"))?;
+        Ok(TimedRefresh {
+            result,
+            submitted_at,
+            round_trip,
+        })
+    }
+
     pub fn info(&self) -> Result<PetInfoResponse, String> {
         self.send_request("info", json!({}), DEFAULT_REQUEST_TIMEOUT)
     }
@@ -213,6 +299,10 @@ impl PetJsonRpcClient {
             json!({ "executable": executable }),
             DEFAULT_REQUEST_TIMEOUT,
         )
+    }
+
+    pub fn submit_resolve(&self, executable: &str) -> Result<PendingRequest, String> {
+        self.submit_request_value("resolve", json!({ "executable": executable }))
     }
 
     pub fn clear_notifications(&self) {
@@ -327,6 +417,13 @@ impl PetJsonRpcClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, String> {
+        self.submit_request_value(method, params)?
+            .wait(timeout)
+            .map(|(value, _)| value)
+    }
+
+    fn submit_request_value(&self, method: &str, params: Value) -> Result<PendingRequest, String> {
+        let submitted_at = Instant::now();
         let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
         let request = json!({
             "jsonrpc": "2.0",
@@ -363,19 +460,13 @@ impl PetJsonRpcClient {
             return Err(err);
         }
 
-        match rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                self.inner.state.pending.lock().unwrap().remove(&id);
-                Err(format!(
-                    "Timed out waiting for {method} response after {timeout:?}"
-                ))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
-                "Response channel disconnected while waiting for {method}; stderr: {}",
-                self.stderr_output()
-            )),
-        }
+        Ok(PendingRequest {
+            id,
+            method: method.to_string(),
+            submitted_at,
+            receiver: rx,
+            client: self.clone(),
+        })
     }
 }
 
@@ -385,6 +476,7 @@ fn spawn_stdout_reader(stdout: ChildStdout, state: Arc<ClientState>) -> JoinHand
         let read_result = loop {
             match read_message(&mut reader) {
                 Ok(Some(message)) => {
+                    let received_at = Instant::now();
                     if let Some(method) = message.get("method").and_then(|value| value.as_str()) {
                         state
                             .notifications
@@ -393,20 +485,23 @@ fn spawn_stdout_reader(stdout: ChildStdout, state: Arc<ClientState>) -> JoinHand
                             .push(JsonRpcNotification {
                                 method: method.to_string(),
                                 params: message.get("params").cloned().unwrap_or(Value::Null),
+                                received_at,
                             });
                         continue;
                     }
 
                     if let Some(id) = message.get("id").and_then(|value| value.as_u64()) {
-                        if let Some(sender) = state.pending.lock().unwrap().remove(&(id as u32)) {
-                            if let Some(error) = message.get("error") {
-                                let _ = sender.send(Err(format!("JSONRPC error: {error:?}")));
+                        let sender = { state.pending.lock().unwrap().remove(&(id as u32)) };
+                        if let Some(sender) = sender {
+                            let result = if let Some(error) = message.get("error") {
+                                Err(format!("JSONRPC error: {error:?}"))
                             } else {
-                                let _ = sender.send(Ok(message
-                                    .get("result")
-                                    .cloned()
-                                    .unwrap_or(Value::Null)));
-                            }
+                                Ok(message.get("result").cloned().unwrap_or(Value::Null))
+                            };
+                            let _ = sender.send(TimedResponse {
+                                result,
+                                received_at,
+                            });
                         }
                     }
                 }
@@ -419,11 +514,66 @@ fn spawn_stdout_reader(stdout: ChildStdout, state: Arc<ClientState>) -> JoinHand
             Ok(()) => "PET stdout closed".to_string(),
             Err(err) => format!("Failed to read PET stdout: {err}"),
         };
+        let received_at = Instant::now();
         let pending = std::mem::take(&mut *state.pending.lock().unwrap());
         for (_, sender) in pending {
-            let _ = sender.send(Err(failure.clone()));
+            let _ = sender.send(TimedResponse {
+                result: Err(failure.clone()),
+                received_at,
+            });
         }
     })
+}
+
+#[cfg(test)]
+pub(crate) fn controlled_pending_request(
+    client: &PetJsonRpcClient,
+    submitted_at: Instant,
+) -> (PendingRequest, impl FnOnce(Result<Value, String>, Instant)) {
+    let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
+    let (sender, receiver) = mpsc::channel();
+    client
+        .inner
+        .state
+        .pending
+        .lock()
+        .unwrap()
+        .insert(id, sender.clone());
+    let request = PendingRequest {
+        id,
+        method: "controlled".to_string(),
+        submitted_at,
+        receiver,
+        client: client.clone(),
+    };
+    let send = move |result, received_at| {
+        sender
+            .send(TimedResponse {
+                result,
+                received_at,
+            })
+            .expect("controlled pending receiver should remain connected");
+    };
+    (request, send)
+}
+
+#[cfg(test)]
+pub(crate) fn pending_request_registered(
+    client: &PetJsonRpcClient,
+    request: &PendingRequest,
+) -> bool {
+    client
+        .inner
+        .state
+        .pending
+        .lock()
+        .unwrap()
+        .contains_key(&request.id)
+}
+
+#[cfg(test)]
+pub(crate) fn pending_request_count(client: &PetJsonRpcClient) -> usize {
+    client.inner.state.pending.lock().unwrap().len()
 }
 
 fn spawn_stderr_reader(
