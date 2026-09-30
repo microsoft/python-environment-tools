@@ -19,11 +19,11 @@ from session_metrics import (MetricsError, ensure_failure_metrics, extract_metri
                              failed_metrics, write_json)  # noqa: E402
 
 
-def resource():
+def resource(resident=100, threads=2, descriptors=3):
     return {
-        "residentBytes": 100,
-        "threads": 2,
-        "handlesOrDescriptors": 3,
+        "residentBytes": resident,
+        "threads": threads,
+        "handlesOrDescriptors": descriptors,
     }
 
 
@@ -100,11 +100,11 @@ def valid_metrics():
         "resolveBatchResourceSamples": [
             {"batch": batch, "resources": resource()} for batch in range(2)
         ],
-        "preResolveResources": resource(),
+        "preResolveResources": resource(resident=100),
         "barrierObservedResources": resource(),
         "postOverlapResources": resource(),
         "observedResourcePeak": resource(),
-        "resourceAfter": resource(),
+        "resourceAfter": resource(resident=90),
         "rssDeltaFromPreResolveBytes": -10,
     }
 
@@ -162,6 +162,13 @@ class SessionMetricsTests(unittest.TestCase):
 
     def artifact(self):
         return json.loads(self.output.read_text(encoding="utf-8"))
+
+    def assert_metrics_rejected(self, metrics, message):
+        self.write_payloads(json.dumps(metrics))
+        with self.assertRaisesRegex(MetricsError, message):
+            extract_metrics(self.input, self.output, 0, "fast")
+        self.assertEqual(self.artifact()["status"], "failed")
+        self.assertFalse(self.artifact()["metricsProduced"])
 
     def test_no_metrics_fails_closed_and_persists_failure(self):
         self.input.write_text("benchmark output only\n", encoding="utf-8")
@@ -223,6 +230,83 @@ class SessionMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["status"], "passed")
         self.assertTrue(metrics["metricsProduced"])
         self.assertEqual(len(metrics["refreshScenarioSamples"]), 9)
+
+    def test_resource_peak_rejects_low_and_high_values_for_every_field(self):
+        for field in ("residentBytes", "threads", "handlesOrDescriptors"):
+            for difference in (-1, 1):
+                with self.subTest(field=field, difference=difference):
+                    metrics = valid_metrics()
+                    metrics["observedResourcePeak"][field] += difference
+                    self.assert_metrics_rejected(metrics, "observedResourcePeak")
+
+    def test_resource_peak_includes_every_sample_category(self):
+        categories = (
+            ("inventory", lambda metrics: metrics["inventoryResourceSamples"][0]["resources"]),
+            ("pre-resolve", lambda metrics: metrics["preResolveResources"]),
+            ("barrier", lambda metrics: metrics["barrierObservedResources"]),
+            ("post-overlap", lambda metrics: metrics["postOverlapResources"]),
+            ("resolve-batch", lambda metrics: metrics["resolveBatchResourceSamples"][0]["resources"]),
+            ("after", lambda metrics: metrics["resourceAfter"]),
+        )
+        for name, select_sample in categories:
+            with self.subTest(category=name):
+                metrics = valid_metrics()
+                sample = select_sample(metrics)
+                sample.update(
+                    residentBytes=1000,
+                    threads=1001,
+                    handlesOrDescriptors=1002,
+                )
+                metrics["observedResourcePeak"] = resource(1000, 1001, 1002)
+                metrics["rssDeltaFromPreResolveBytes"] = (
+                    metrics["resourceAfter"]["residentBytes"]
+                    - metrics["preResolveResources"]["residentBytes"]
+                )
+                self.write_payloads(json.dumps(metrics))
+                extract_metrics(self.input, self.output, 0, "fast")
+
+    def test_resource_peak_optional_fields_support_all_null_and_mixed_samples(self):
+        metrics = valid_metrics()
+        samples = [
+            *(entry["resources"] for entry in metrics["inventoryResourceSamples"]),
+            metrics["preResolveResources"],
+            metrics["barrierObservedResources"],
+            metrics["postOverlapResources"],
+            *(entry["resources"] for entry in metrics["resolveBatchResourceSamples"]),
+            metrics["resourceAfter"],
+        ]
+        for sample in samples:
+            sample["threads"] = None
+            sample["handlesOrDescriptors"] = None
+        metrics["observedResourcePeak"]["threads"] = None
+        metrics["observedResourcePeak"]["handlesOrDescriptors"] = None
+        self.write_payloads(json.dumps(metrics))
+        extract_metrics(self.input, self.output, 0, "fast")
+
+        samples[0]["threads"] = 7
+        samples[-1]["threads"] = 5
+        samples[1]["handlesOrDescriptors"] = 8
+        samples[-2]["handlesOrDescriptors"] = 6
+        metrics["observedResourcePeak"]["threads"] = 7
+        metrics["observedResourcePeak"]["handlesOrDescriptors"] = 8
+        self.write_payloads(json.dumps(metrics))
+        extract_metrics(self.input, self.output, 0, "fast")
+
+    def test_rss_delta_accepts_positive_negative_and_zero_values(self):
+        for after, expected_delta in ((110, 10), (90, -10), (100, 0)):
+            with self.subTest(expected_delta=expected_delta):
+                metrics = valid_metrics()
+                metrics["resourceAfter"]["residentBytes"] = after
+                metrics["rssDeltaFromPreResolveBytes"] = expected_delta
+                if after > metrics["observedResourcePeak"]["residentBytes"]:
+                    metrics["observedResourcePeak"]["residentBytes"] = after
+                self.write_payloads(json.dumps(metrics))
+                extract_metrics(self.input, self.output, 0, "fast")
+
+    def test_inconsistent_rss_delta_fails_closed_with_failure_artifact(self):
+        metrics = valid_metrics()
+        metrics["rssDeltaFromPreResolveBytes"] = -9
+        self.assert_metrics_rejected(metrics, "rssDeltaFromPreResolveBytes")
 
     def test_malformed_nested_types_fail_closed_with_failure_artifacts(self):
         fields = [

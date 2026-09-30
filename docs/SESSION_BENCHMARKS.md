@@ -53,8 +53,11 @@ The workflow keeps Cargo output in a target directory inside its checkout and
 uploads only the privacy-safe `session-metrics.json` artifact, never fixture
 paths or raw benchmark output. A dedicated parser rejects missing, malformed,
 duplicate, mode-inconsistent, count-inconsistent, or shape-inconsistent
-payloads. Artifact writes are atomic, and the timeout fallback replaces corrupt
-artifacts rather than uploading invalid JSON. Failed runs retain validated
+payloads. It also recomputes the observed resource peak from every reported
+snapshot and the RSS delta from the pre-resolve and final snapshots, rejecting
+either derived value unless it matches exactly. Artifact writes are atomic, and
+the timeout fallback replaces corrupt artifacts rather than uploading invalid
+JSON. Failed runs retain validated
 measurements when available; failures without usable metrics have explicit failed
 status and zero counts. The workflow preserves the original benchmark failure.
 
@@ -64,8 +67,10 @@ real paths keep macOS temporary-directory aliases equivalent, while ambient
 interpreters bypass it. During the proof pass,
 every distinct interpreter process records entry before the client issues
 `info`, reconfigures to a new workspace while retaining the process's original
-cache directory, and refreshes that known inventory. The barrier remains held
-until those responsiveness checks complete.
+cache directory, and refreshes that known inventory. Every cache file captured
+before reconfiguration must still exist with identical bytes afterward; cache
+files added for unrelated global discoveries are allowed. The barrier remains
+held until those responsiveness checks complete.
 Platform-global locators may also report host installations and managers. The
 benchmark converts only configured workspace entries to strict fixture
 identities, validates that fixture-scoped managers remain empty, and records

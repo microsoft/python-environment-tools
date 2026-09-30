@@ -3,7 +3,9 @@
 
 use pet_fs::path::norm_case;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
@@ -420,6 +422,55 @@ fn directory_usage(root: &Path) -> (usize, u64) {
     (files, bytes)
 }
 
+fn cache_contents(root: &Path) -> io::Result<BTreeMap<PathBuf, Vec<u8>>> {
+    let mut pending = vec![(PathBuf::new(), root.to_path_buf())];
+    let mut contents = BTreeMap::new();
+    while let Some((relative_directory, directory)) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let relative_path = relative_directory.join(entry.file_name());
+            if file_type.is_dir() {
+                pending.push((relative_path, entry.path()));
+            } else if file_type.is_file() {
+                contents.insert(relative_path, fs::read(entry.path())?);
+            }
+        }
+    }
+    Ok(contents)
+}
+
+fn original_cache_entries_unchanged(
+    original: &BTreeMap<PathBuf, Vec<u8>>,
+    current: &BTreeMap<PathBuf, Vec<u8>>,
+) -> bool {
+    original
+        .iter()
+        .all(|(path, bytes)| current.get(path) == Some(bytes))
+}
+
+#[test]
+fn cache_preservation_allows_additions_but_rejects_original_entry_changes() {
+    let original = BTreeMap::from([
+        (PathBuf::from("flat.json"), b"original".to_vec()),
+        (
+            PathBuf::from("nested").join("entry.json"),
+            b"nested".to_vec(),
+        ),
+    ]);
+    let mut with_addition = original.clone();
+    with_addition.insert(PathBuf::from("ambient.json"), b"ambient".to_vec());
+    assert!(original_cache_entries_unchanged(&original, &with_addition));
+
+    let mut changed = with_addition.clone();
+    changed.insert(PathBuf::from("flat.json"), b"modified".to_vec());
+    assert!(!original_cache_entries_unchanged(&original, &changed));
+
+    let mut deleted = with_addition;
+    deleted.remove(&PathBuf::from("nested").join("entry.json"));
+    assert!(!original_cache_entries_unchanged(&original, &deleted));
+}
+
 fn observe_resources(pid: u32) -> ResourceSample {
     let samples = (0..3)
         .map(|_| {
@@ -534,8 +585,8 @@ fn sample_process(pid: u32) -> ResourceSample {
         descriptors: Some(
             fs::read_dir(format!("/proc/{pid}/fd"))
                 .expect("failed to read process-specific descriptor directory")
-                .map(|entry| entry.expect("failed to read process descriptor entry"))
-                .count(),
+                .try_fold(0, |count, entry| entry.map(|_| count + 1))
+                .expect("failed to read process descriptor entry"),
         ),
     }
 }
@@ -901,9 +952,10 @@ fn long_lived_session_benchmark() {
 
     fixture.clear_barrier();
     let pre_resolve_resources = observe_resources(client.process_id());
-    let original_cache_before_overlap = directory_usage(&fixture.cache);
+    let original_cache_before_overlap =
+        cache_contents(&fixture.cache).expect("failed to capture pre-overlap cache contents");
     assert!(
-        original_cache_before_overlap.0 > 0 && original_cache_before_overlap.1 > 0,
+        !original_cache_before_overlap.is_empty(),
         "warm-up resolve did not populate the original process cache"
     );
     let overlap_workspace = fixture._root.path().join("overlap-workspace");
@@ -972,10 +1024,11 @@ fn long_lived_session_benchmark() {
     max_ambient_environment_count =
         max_ambient_environment_count.max(overlap_ambient_environment_count);
     max_ambient_manager_count = max_ambient_manager_count.max(overlap_ambient_manager_count);
-    assert_eq!(
-        directory_usage(&fixture.cache),
-        original_cache_before_overlap,
-        "overlap reconfiguration did not retain the original cache contents"
+    let cache_after_overlap =
+        cache_contents(&fixture.cache).expect("failed to capture post-overlap cache contents");
+    assert!(
+        original_cache_entries_unchanged(&original_cache_before_overlap, &cache_after_overlap),
+        "overlap reconfiguration modified or deleted an original cache entry"
     );
     assert_eq!(
         fixture.released_count(),

@@ -91,7 +91,7 @@ def require_integer_list(value: Any, name: str, expected_length: int) -> list[in
     return [require_integer(item, f"{name}[{index}]") for index, item in enumerate(value)]
 
 
-def validate_resource(value: Any, name: str) -> None:
+def validate_resource(value: Any, name: str) -> dict[str, Any]:
     resource = require_object(
         value, name, {"residentBytes", "threads", "handlesOrDescriptors"}
     )
@@ -99,6 +99,19 @@ def validate_resource(value: Any, name: str) -> None:
     for key in ("threads", "handlesOrDescriptors"):
         if resource[key] is not None:
             require_integer(resource[key], f"{name}.{key}")
+    return resource
+
+
+def observed_resource_peak(samples: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    def optional_max(key: str) -> int | None:
+        known = [sample[key] for sample in samples if sample[key] is not None]
+        return max(known) if known else None
+
+    return {
+        "residentBytes": max(sample["residentBytes"] for sample in samples),
+        "threads": optional_max("threads"),
+        "handlesOrDescriptors": optional_max("handlesOrDescriptors"),
+    }
 
 
 def validate_cache_value(value: Any, name: str) -> dict[str, Any]:
@@ -299,6 +312,7 @@ def validate_success_metrics(value: Any, expected_mode: str) -> dict[str, Any]:
     if not isinstance(inventory_resources, list) or len(inventory_resources) != len(expected_sizes):
         raise MetricsError("inventoryResourceSamples must contain one entry per size")
     seen_resource_sizes = set()
+    resource_samples = []
     for index, value in enumerate(inventory_resources):
         sample = require_object(
             value,
@@ -311,7 +325,11 @@ def validate_success_metrics(value: Any, expected_mode: str) -> dict[str, Any]:
                 f"inventoryResourceSamples[{index}] has an invalid or duplicate size"
             )
         seen_resource_sizes.add(size)
-        validate_resource(sample["resources"], f"inventoryResourceSamples[{index}].resources")
+        resource_samples.append(
+            validate_resource(
+                sample["resources"], f"inventoryResourceSamples[{index}].resources"
+            )
+        )
 
     batch_resources = metrics["resolveBatchResourceSamples"]
     if not isinstance(batch_resources, list) or len(batch_resources) != expected_batches:
@@ -329,17 +347,42 @@ def validate_success_metrics(value: Any, expected_mode: str) -> dict[str, Any]:
                 f"resolveBatchResourceSamples[{index}] has an invalid or duplicate batch"
             )
         seen_batches.add(batch)
-        validate_resource(sample["resources"], f"resolveBatchResourceSamples[{index}].resources")
+        resource_samples.append(
+            validate_resource(
+                sample["resources"], f"resolveBatchResourceSamples[{index}].resources"
+            )
+        )
 
     for name in (
         "preResolveResources",
         "barrierObservedResources",
         "postOverlapResources",
-        "observedResourcePeak",
         "resourceAfter",
     ):
-        validate_resource(metrics[name], name)
-    require_integer(metrics["rssDeltaFromPreResolveBytes"], "rssDeltaFromPreResolveBytes", minimum=-(2**63))
+        resource_samples.append(validate_resource(metrics[name], name))
+    reported_peak = validate_resource(
+        metrics["observedResourcePeak"], "observedResourcePeak"
+    )
+    expected_peak = observed_resource_peak(resource_samples)
+    if reported_peak != expected_peak:
+        raise MetricsError(
+            f"observedResourcePeak must equal {expected_peak}, got {reported_peak}"
+        )
+
+    reported_delta = require_integer(
+        metrics["rssDeltaFromPreResolveBytes"],
+        "rssDeltaFromPreResolveBytes",
+        minimum=-(2**63),
+    )
+    expected_delta = (
+        metrics["resourceAfter"]["residentBytes"]
+        - metrics["preResolveResources"]["residentBytes"]
+    )
+    if reported_delta != expected_delta:
+        raise MetricsError(
+            "rssDeltaFromPreResolveBytes must equal "
+            f"{expected_delta}, got {reported_delta}"
+        )
     return metrics
 
 
