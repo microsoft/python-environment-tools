@@ -47,6 +47,19 @@ struct RefreshMeasurement {
     ambient_manager_count: usize,
 }
 
+#[derive(Default)]
+struct AmbientCountPeak {
+    environment_count: usize,
+    manager_count: usize,
+}
+
+impl AmbientCountPeak {
+    fn observe(&mut self, environment_count: usize, manager_count: usize) {
+        self.environment_count = self.environment_count.max(environment_count);
+        self.manager_count = self.manager_count.max(manager_count);
+    }
+}
+
 struct Fixture {
     _root: TempDir,
     workspace: PathBuf,
@@ -426,7 +439,11 @@ fn first_result_timing_ignores_ambient_environments_and_managers() {
     );
 }
 
-fn refresh_and_measure(client: &PetJsonRpcClient, workspace: &Path) -> RefreshMeasurement {
+fn refresh_and_measure(
+    client: &PetJsonRpcClient,
+    workspace: &Path,
+    ambient_count_peak: &mut AmbientCountPeak,
+) -> RefreshMeasurement {
     client.clear_notifications();
     let timing = client
         .refresh_with_timing(Some(json!({ "searchPaths": [workspace] })))
@@ -448,13 +465,30 @@ fn refresh_and_measure(client: &PetJsonRpcClient, workspace: &Path) -> RefreshMe
         fixture_manager_count, 0,
         "fixture workspace unexpectedly reported an environment manager"
     );
-    RefreshMeasurement {
+    let measurement = RefreshMeasurement {
         inventory,
         round_trip_us: timing.round_trip.as_micros(),
         ttfe_us: ttfe.as_micros(),
         ambient_environment_count,
         ambient_manager_count,
-    }
+    };
+    ambient_count_peak.observe(
+        measurement.ambient_environment_count,
+        measurement.ambient_manager_count,
+    );
+    measurement
+}
+
+#[test]
+fn ambient_count_peak_retains_middle_refresh_maximum() {
+    let mut peak = AmbientCountPeak::default();
+    peak.observe(1, 2);
+    peak.observe(7, 6);
+    peak.observe(3, 4);
+    peak.observe(2, 1);
+
+    assert_eq!(peak.environment_count, 7);
+    assert_eq!(peak.manager_count, 6);
 }
 
 fn directory_usage(root: &Path) -> (usize, u64) {
@@ -830,8 +864,7 @@ fn long_lived_session_benchmark() {
     let mut refresh_scenario_samples = Vec::new();
     let mut cache_usage = Vec::new();
     let mut inventory_resource_samples: Vec<(usize, ResourceSample)> = Vec::new();
-    let mut max_ambient_environment_count = 0;
-    let mut max_ambient_manager_count = 0;
+    let mut ambient_count_peak = AmbientCountPeak::default();
 
     let barrier = fixture.barrier.as_os_str();
     let python_path = fixture.python_path.as_os_str();
@@ -940,14 +973,12 @@ fn long_lived_session_benchmark() {
                 "cacheDirectory": &fixture.cache,
             }))
             .expect("failed to configure first-process scenario server");
-        let first = refresh_and_measure(&first_process, &fixture.workspace);
+        let first =
+            refresh_and_measure(&first_process, &fixture.workspace, &mut ambient_count_peak);
         assert_eq!(
             first.inventory, expected,
             "first-process refresh changed fixture identities at size {size}"
         );
-        max_ambient_environment_count =
-            max_ambient_environment_count.max(first.ambient_environment_count);
-        max_ambient_manager_count = max_ambient_manager_count.max(first.ambient_manager_count);
         refresh_scenario_samples.push(json!({
             "scenario": "firstProcessEmptyDiskCache",
             "inventorySize": size,
@@ -966,14 +997,11 @@ fn long_lived_session_benchmark() {
                 "cacheDirectory": &fixture.cache,
             }))
             .expect("failed to configure reused-cache scenario server");
-        let reused = refresh_and_measure(&new_process, &fixture.workspace);
+        let reused = refresh_and_measure(&new_process, &fixture.workspace, &mut ambient_count_peak);
         assert_eq!(
             reused.inventory, expected,
             "new-process refresh changed fixture identities at size {size}"
         );
-        max_ambient_environment_count =
-            max_ambient_environment_count.max(reused.ambient_environment_count);
-        max_ambient_manager_count = max_ambient_manager_count.max(reused.ambient_manager_count);
         refresh_scenario_samples.push(json!({
             "scenario": "newProcessAfterFirstRefresh",
             "inventorySize": size,
@@ -985,14 +1013,12 @@ fn long_lived_session_benchmark() {
         let mut warm_round_trip_us = Vec::with_capacity(samples_per_size);
         let mut warm_ttfe_us = Vec::with_capacity(samples_per_size);
         for _ in 0..samples_per_size {
-            let warm = refresh_and_measure(&new_process, &fixture.workspace);
+            let warm =
+                refresh_and_measure(&new_process, &fixture.workspace, &mut ambient_count_peak);
             assert_eq!(
                 warm.inventory, expected,
                 "same-process warm refresh changed fixture identities at size {size}"
             );
-            max_ambient_environment_count =
-                max_ambient_environment_count.max(warm.ambient_environment_count);
-            max_ambient_manager_count = max_ambient_manager_count.max(warm.ambient_manager_count);
             warm_round_trip_us.push(warm.round_trip_us);
             warm_ttfe_us.push(warm.ttfe_us);
         }
@@ -1031,11 +1057,8 @@ fn long_lived_session_benchmark() {
 
     let mut churn_expected = fixture.reset_inventory(10);
     churn_expected.sort_unstable();
-    let initial = refresh_and_measure(&client, &fixture.workspace);
+    let initial = refresh_and_measure(&client, &fixture.workspace, &mut ambient_count_peak);
     assert_eq!(initial.inventory, churn_expected);
-    max_ambient_environment_count =
-        max_ambient_environment_count.max(initial.ambient_environment_count);
-    max_ambient_manager_count = max_ambient_manager_count.max(initial.ambient_manager_count);
 
     let removed_prefix = fixture.workspace.join("env-0000");
     let removed_index = churn_expected
@@ -1046,7 +1069,7 @@ fn long_lived_session_benchmark() {
     churn_expected.remove(removed_index);
     churn_expected.push(fixture.create_fake_environment("replacement", "3.12.1"));
     churn_expected.sort_unstable();
-    let replaced = refresh_and_measure(&client, &fixture.workspace);
+    let replaced = refresh_and_measure(&client, &fixture.workspace, &mut ambient_count_peak);
     assert_eq!(replaced.inventory.len(), initial.inventory.len());
     assert_ne!(
         &replaced.inventory, &initial.inventory,
@@ -1074,7 +1097,7 @@ fn long_lived_session_benchmark() {
         version: Some("3.13.2".to_string()),
     });
     churn_expected.sort_unstable();
-    let edited = refresh_and_measure(&client, &fixture.workspace);
+    let edited = refresh_and_measure(&client, &fixture.workspace, &mut ambient_count_peak);
     assert_eq!(edited.inventory, churn_expected);
 
     let alias_prefix = fixture.workspace.join("env-0002");
@@ -1095,7 +1118,7 @@ fn long_lived_session_benchmark() {
         ..previous
     });
     churn_expected.sort_unstable();
-    let aliased = refresh_and_measure(&client, &fixture.workspace);
+    let aliased = refresh_and_measure(&client, &fixture.workspace, &mut ambient_count_peak);
     assert_eq!(aliased.inventory, churn_expected);
 
     fixture.clear_barrier();
@@ -1176,9 +1199,10 @@ fn long_lived_session_benchmark() {
         fixture_manager_count, 0,
         "overlap fixture unexpectedly reported an environment manager"
     );
-    max_ambient_environment_count =
-        max_ambient_environment_count.max(overlap_ambient_environment_count);
-    max_ambient_manager_count = max_ambient_manager_count.max(overlap_ambient_manager_count);
+    ambient_count_peak.observe(
+        overlap_ambient_environment_count,
+        overlap_ambient_manager_count,
+    );
     let cache_after_overlap =
         cache_contents(&fixture.cache).expect("failed to capture post-overlap cache contents");
     assert!(
@@ -1325,8 +1349,8 @@ fn long_lived_session_benchmark() {
             "overlapProcessesStarted": resolve_concurrency,
             "overlapAmbientEnvironmentCount": overlap_ambient_environment_count,
             "overlapAmbientManagerCount": overlap_ambient_manager_count,
-            "maxAmbientEnvironmentCount": max_ambient_environment_count,
-            "maxAmbientManagerCount": max_ambient_manager_count,
+            "maxAmbientEnvironmentCount": ambient_count_peak.environment_count,
+            "maxAmbientManagerCount": ambient_count_peak.manager_count,
             "latencyProcessesStarted": resolve_concurrency * cold_resolve_batches,
             "inventoryResourceSamples": inventory_resource_samples
                 .iter()

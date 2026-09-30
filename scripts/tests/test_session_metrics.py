@@ -231,6 +231,28 @@ class SessionMetricsTests(unittest.TestCase):
         self.assertTrue(metrics["metricsProduced"])
         self.assertEqual(len(metrics["refreshScenarioSamples"]), 9)
 
+    def test_ambient_overlap_counts_allow_equal_or_larger_maxima(self):
+        for maximum_offset in (0, 1):
+            with self.subTest(maximum_offset=maximum_offset):
+                metrics = valid_metrics()
+                metrics["maxAmbientEnvironmentCount"] += maximum_offset
+                metrics["maxAmbientManagerCount"] += maximum_offset
+                self.write_payloads(json.dumps(metrics))
+                extract_metrics(self.input, self.output, 0, "fast")
+
+    def test_ambient_overlap_counts_reject_smaller_maxima(self):
+        for overlap_name, maximum_name in (
+            ("overlapAmbientEnvironmentCount", "maxAmbientEnvironmentCount"),
+            ("overlapAmbientManagerCount", "maxAmbientManagerCount"),
+        ):
+            with self.subTest(overlap_name=overlap_name):
+                metrics = valid_metrics()
+                metrics[overlap_name] = 2
+                metrics[maximum_name] = 1
+                self.assert_metrics_rejected(
+                    metrics, f"{overlap_name} must not exceed {maximum_name}"
+                )
+
     def test_resource_peak_rejects_low_and_high_values_for_every_field(self):
         for field in ("residentBytes", "threads", "handlesOrDescriptors"):
             for difference in (-1, 1):

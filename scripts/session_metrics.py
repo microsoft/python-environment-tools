@@ -307,6 +307,15 @@ def validate_success_metrics(value: Any, expected_mode: str) -> dict[str, Any]:
         raise MetricsError("overlapProcessesStarted does not match resolveConcurrency")
     if metrics["latencyProcessesStarted"] != expected_concurrency * expected_batches:
         raise MetricsError("latencyProcessesStarted does not match resolve batch work")
+    for overlap_name, maximum_name in (
+        ("overlapAmbientEnvironmentCount", "maxAmbientEnvironmentCount"),
+        ("overlapAmbientManagerCount", "maxAmbientManagerCount"),
+    ):
+        if metrics[overlap_name] > metrics[maximum_name]:
+            raise MetricsError(
+                f"{overlap_name} must not exceed {maximum_name}; "
+                f"got {metrics[overlap_name]} and {metrics[maximum_name]}"
+            )
 
     inventory_resources = metrics["inventoryResourceSamples"]
     if not isinstance(inventory_resources, list) or len(inventory_resources) != len(expected_sizes):

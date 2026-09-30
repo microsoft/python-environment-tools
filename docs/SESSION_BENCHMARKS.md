@@ -78,6 +78,8 @@ Platform-global locators may also report host installations and managers. The
 benchmark converts only configured workspace entries to strict fixture
 identities, validates that fixture-scoped managers remain empty, and records
 only counts of unrelated global discoveries and managers, never their paths.
+The reported ambient maxima include every timed, churn, and overlap refresh;
+artifact validation rejects overlap counts above those maxima.
 Two fast or five stress pre-released batches then use fresh, distinct
 interpreters for unobstructed client-latency and resource-cycling samples.
 Every warm-up, overlap, and latency response is paired with its submitted
