@@ -137,6 +137,22 @@ class DetailCoverageTests(unittest.TestCase):
         self.assertEqual(detail.test_lines(source), set(range(3, 10)))
         self.assertEqual(detail.code_mask(source).count('\n'), source.count('\n'))
 
+    def test_literal_scanning_matches_at_offsets_without_copying_source_suffixes(self):
+        class NoSlices(str):
+            def __getitem__(self, key):
+                if isinstance(key, slice):
+                    raise AssertionError('scanner copied a source suffix')
+                return super().__getitem__(key)
+
+        prefix = "fn real<'a>(x: &'a str) { "
+        literals = ['r"text"', 'br##"}\\n{"##', 'cr#"text"#',
+                    "'{'", r"'\u{7b}'", r"'\x7b'", r"'\''"]
+        source = prefix + '; '.join(literals) + '; }\n'
+        expected = prefix + '; '.join(' ' * len(value) for value in literals) + '; }\n'
+        for copies in [1, 1000]:
+            with self.subTest(copies=copies):
+                self.assertEqual(detail.code_mask(NoSlices(source * copies)), expected * copies)
+
     def test_cfg_test_function_and_external_module_are_test_code(self):
         source = '#[cfg(test)]\nfn helper() {}\n#[cfg(test)]\nmod fixtures;\nfn real() {}\n'
         self.assertEqual(detail.test_lines(source), {1, 2, 3, 4})

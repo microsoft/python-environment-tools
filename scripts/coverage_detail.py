@@ -15,6 +15,10 @@ from pathlib import Path
 
 from quality_snapshot import SnapshotError, parse_lcov
 
+RAW_STRING_START = re.compile(r'(?:br|cr|r)(#*)"')
+CHARACTER_LITERAL = re.compile(r"'(?:[^'\\\n]|\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.))'")
+ITEM_ATTRIBUTE = re.compile(r'\s*#\s*\[')
+
 
 def run(*args: str, cwd: Path) -> str:
     return subprocess.check_output(args, cwd=cwd, text=True, encoding='utf-8')
@@ -112,10 +116,10 @@ def code_mask(source: str) -> str:
             if depth:
                 raise SnapshotError('Unterminated Rust block comment')
         else:
-            raw = re.match(r'(?:br|cr|r)(#*)"', source[i:])
+            raw = RAW_STRING_START.match(source, i)
             if raw:
                 close = '"' + raw[1]
-                end = source.find(close, i + raw.end())
+                end = source.find(close, raw.end())
                 if end == -1:
                     raise SnapshotError('Unterminated Rust raw string')
                 end += len(close)
@@ -132,9 +136,9 @@ def code_mask(source: str) -> str:
                 else:
                     raise SnapshotError('Unterminated Rust string')
             elif source[i] == "'":
-                char = re.match(r"'(?:[^'\\\n]|\\(?:u\{[0-9a-fA-F_]+\}|x[0-9a-fA-F]{2}|.))'", source[i:])
+                char = CHARACTER_LITERAL.match(source, i)
                 if char:
-                    end = i + char.end()
+                    end = char.end()
         if end > i:
             for n in range(i, end):
                 if chars[n] != '\n':
@@ -153,10 +157,10 @@ def test_lines(source: str) -> set[int]:
         end = match.end()
         # Other attributes belong to this same item, not its body.
         while True:
-            attr = re.match(r'\s*#\s*\[', masked[end:])
+            attr = ITEM_ATTRIBUTE.match(masked, end)
             if not attr:
                 break
-            end += attr.end()
+            end = attr.end()
             depth = 1
             while depth and end < len(masked):
                 depth += (masked[end] == '[') - (masked[end] == ']')
