@@ -1,0 +1,108 @@
+name: Session Benchmarks
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release*
+      - release/*
+      - release-*
+  schedule:
+    - cron: "23 7 * * 2"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Workload size
+        required: true
+        default: stress
+        type: choice
+        options:
+          - fast
+          - stress
+
+permissions:
+  contents: read
+
+jobs:
+  session:
+    name: ${{ github.event_name == 'pull_request' && 'Fast' || inputs.mode || 'Stress' }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.target-session-benchmarks
+      PET_SESSION_STRESS: ${{ (github.event_name == 'schedule' || inputs.mode == 'stress') && '1' || '' }}
+      RUST_BACKTRACE: 1
+      RUST_LOG: warn
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python fixture
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Test session metrics parser
+        run: python -B -m unittest scripts.tests.test_session_metrics -v
+
+      - name: Run session benchmark
+        id: benchmark
+        timeout-minutes: 35
+        run: |
+          mode=fast
+          if [ "${PET_SESSION_STRESS}" = "1" ]; then
+            mode=stress
+          fi
+
+          set +e
+          cargo test --release --features ci-perf -p pet --test session_performance long_lived_session_benchmark -- --nocapture 2>&1 | tee session-output.txt
+          benchmark_status=${PIPESTATUS[0]}
+          python -B scripts/session_metrics.py extract \
+            --input session-output.txt \
+            --output session-metrics.json \
+            --benchmark-status "$benchmark_status" \
+            --mode "$mode"
+          metrics_status=$?
+          set -e
+          rm -f session-output.txt
+          if [ "$benchmark_status" -ne 0 ]; then
+            exit "$benchmark_status"
+          fi
+          exit "$metrics_status"
+        shell: bash
+
+      - name: Ensure failure metrics
+        if: always()
+        run: |
+          mode=fast
+          if [ "${PET_SESSION_STRESS}" = "1" ]; then
+            mode=stress
+          fi
+          python -B scripts/session_metrics.py ensure-failure \
+            --output session-metrics.json \
+            --mode "$mode" \
+            --reason benchmark-timeout-or-interruption
+          rm -f session-output.txt
+        shell: bash
+
+      - name: Upload session metrics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: session-metrics-${{ matrix.os }}
+          path: session-metrics.json
+          if-no-files-found: error

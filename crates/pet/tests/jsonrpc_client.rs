@@ -57,6 +57,7 @@ pub struct EnvironmentNotification {
     pub kind: Option<String>,
     pub name: Option<String>,
     pub prefix: Option<String>,
+    pub version: Option<String>,
     pub error: Option<String>,
 }
 
@@ -70,10 +71,78 @@ pub struct ManagerNotification {
 pub struct JsonRpcNotification {
     pub method: String,
     pub params: Value,
+    pub received_at: Instant,
+}
+
+pub struct PendingRequest {
+    id: u32,
+    method: String,
+    submitted_at: Instant,
+    receiver: mpsc::Receiver<TimedResponse>,
+    client: PetJsonRpcClient,
+}
+
+struct TimedResponse {
+    result: Result<Value, String>,
+    received_at: Instant,
+}
+
+pub struct TimedRefresh {
+    pub result: RefreshResult,
+    pub submitted_at: Instant,
+    pub round_trip: Duration,
+}
+
+impl PendingRequest {
+    pub fn submitted_at(&self) -> Instant {
+        self.submitted_at
+    }
+
+    pub fn wait(self, timeout: Duration) -> Result<(Value, Duration), String> {
+        let remaining = timeout.saturating_sub(self.submitted_at.elapsed());
+        let response = match self.receiver.recv_timeout(remaining) {
+            Ok(response) => response,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err(format!(
+                    "Timed out waiting for {} response after {timeout:?}",
+                    self.method
+                ));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(format!(
+                    "Response channel disconnected while waiting for {}; stderr: {}",
+                    self.method,
+                    self.client.stderr_output()
+                ));
+            }
+        };
+        let round_trip = response
+            .received_at
+            .saturating_duration_since(self.submitted_at);
+        if round_trip > timeout {
+            return Err(format!(
+                "Timed out waiting for {} response after {timeout:?}",
+                self.method
+            ));
+        }
+        response.result.map(|result| (result, round_trip))
+    }
+}
+
+impl Drop for PendingRequest {
+    fn drop(&mut self) {
+        self.client
+            .inner
+            .state
+            .pending
+            .lock()
+            .unwrap()
+            .remove(&self.id);
+    }
 }
 
 struct ClientState {
-    pending: Mutex<HashMap<u32, mpsc::Sender<Result<Value, String>>>>,
+    pending: Mutex<HashMap<u32, mpsc::Sender<TimedResponse>>>,
     notifications: Mutex<Vec<JsonRpcNotification>>,
     stderr_lines: Mutex<Vec<String>>,
 }
@@ -189,6 +258,10 @@ impl PetJsonRpcClient {
         Ok(status)
     }
 
+    pub fn process_id(&self) -> u32 {
+        self.inner.child.lock().unwrap().id()
+    }
+
     pub fn configure(&self, config: Value) -> Result<(), String> {
         self.send_request_value("configure", config, DEFAULT_REQUEST_TIMEOUT)
             .map(|_| ())
@@ -202,6 +275,19 @@ impl PetJsonRpcClient {
         )
     }
 
+    pub fn refresh_with_timing(&self, params: Option<Value>) -> Result<TimedRefresh, String> {
+        let pending = self.submit_request_value("refresh", params.unwrap_or_else(|| json!({})))?;
+        let submitted_at = pending.submitted_at();
+        let (result, round_trip) = pending.wait(DEFAULT_REQUEST_TIMEOUT)?;
+        let result = serde_json::from_value(result)
+            .map_err(|e| format!("Failed to deserialize response for refresh: {e}"))?;
+        Ok(TimedRefresh {
+            result,
+            submitted_at,
+            round_trip,
+        })
+    }
+
     pub fn info(&self) -> Result<PetInfoResponse, String> {
         self.send_request("info", json!({}), DEFAULT_REQUEST_TIMEOUT)
     }
@@ -213,6 +299,10 @@ impl PetJsonRpcClient {
             json!({ "executable": executable }),
             DEFAULT_REQUEST_TIMEOUT,
         )
+    }
+
+    pub fn submit_resolve(&self, executable: &str) -> Result<PendingRequest, String> {
+        self.submit_request_value("resolve", json!({ "executable": executable }))
     }
 
     pub fn clear_notifications(&self) {
@@ -327,6 +417,13 @@ impl PetJsonRpcClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, String> {
+        self.submit_request_value(method, params)?
+            .wait(timeout)
+            .map(|(value, _)| value)
+    }
+
+    fn submit_request_value(&self, method: &str, params: Value) -> Result<PendingRequest, String> {
+        let submitted_at = Instant::now();
         let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
         let request = json!({
             "jsonrpc": "2.0",
@@ -363,19 +460,13 @@ impl PetJsonRpcClient {
             return Err(err);
         }
 
-        match rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                self.inner.state.pending.lock().unwrap().remove(&id);
-                Err(format!(
-                    "Timed out waiting for {method} response after {timeout:?}"
-                ))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(format!(
-                "Response channel disconnected while waiting for {method}; stderr: {}",
-                self.stderr_output()
-            )),
-        }
+        Ok(PendingRequest {
+            id,
+            method: method.to_string(),
+            submitted_at,
+            receiver: rx,
+            client: self.clone(),
+        })
     }
 }
 
@@ -385,6 +476,7 @@ fn spawn_stdout_reader(stdout: ChildStdout, state: Arc<ClientState>) -> JoinHand
         let read_result = loop {
             match read_message(&mut reader) {
                 Ok(Some(message)) => {
+                    let received_at = Instant::now();
                     if let Some(method) = message.get("method").and_then(|value| value.as_str()) {
                         state
                             .notifications
@@ -393,20 +485,23 @@ fn spawn_stdout_reader(stdout: ChildStdout, state: Arc<ClientState>) -> JoinHand
                             .push(JsonRpcNotification {
                                 method: method.to_string(),
                                 params: message.get("params").cloned().unwrap_or(Value::Null),
+                                received_at,
                             });
                         continue;
                     }
 
                     if let Some(id) = message.get("id").and_then(|value| value.as_u64()) {
-                        if let Some(sender) = state.pending.lock().unwrap().remove(&(id as u32)) {
-                            if let Some(error) = message.get("error") {
-                                let _ = sender.send(Err(format!("JSONRPC error: {error:?}")));
+                        let sender = { state.pending.lock().unwrap().remove(&(id as u32)) };
+                        if let Some(sender) = sender {
+                            let result = if let Some(error) = message.get("error") {
+                                Err(format!("JSONRPC error: {error:?}"))
                             } else {
-                                let _ = sender.send(Ok(message
-                                    .get("result")
-                                    .cloned()
-                                    .unwrap_or(Value::Null)));
-                            }
+                                Ok(message.get("result").cloned().unwrap_or(Value::Null))
+                            };
+                            let _ = sender.send(TimedResponse {
+                                result,
+                                received_at,
+                            });
                         }
                     }
                 }
@@ -419,9 +514,13 @@ fn spawn_stdout_reader(stdout: ChildStdout, state: Arc<ClientState>) -> JoinHand
             Ok(()) => "PET stdout closed".to_string(),
             Err(err) => format!("Failed to read PET stdout: {err}"),
         };
+        let received_at = Instant::now();
         let pending = std::mem::take(&mut *state.pending.lock().unwrap());
         for (_, sender) in pending {
-            let _ = sender.send(Err(failure.clone()));
+            let _ = sender.send(TimedResponse {
+                result: Err(failure.clone()),
+                received_at,
+            });
         }
     })
 }
@@ -498,4 +597,114 @@ pub(crate) fn read_message(reader: &mut BufReader<ChildStdout>) -> io::Result<Op
         )
     })?;
     Ok(Some(message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn controlled_pending_request(
+        client: &PetJsonRpcClient,
+        submitted_at: Instant,
+    ) -> (PendingRequest, impl FnOnce(Result<Value, String>, Instant)) {
+        let id = REQUEST_ID.fetch_add(1, Ordering::SeqCst);
+        let (sender, receiver) = mpsc::channel();
+        client
+            .inner
+            .state
+            .pending
+            .lock()
+            .unwrap()
+            .insert(id, sender.clone());
+        let request = PendingRequest {
+            id,
+            method: "controlled".to_string(),
+            submitted_at,
+            receiver,
+            client: client.clone(),
+        };
+        let send = move |result, received_at| {
+            sender
+                .send(TimedResponse {
+                    result,
+                    received_at,
+                })
+                .expect("controlled pending receiver should remain connected");
+        };
+        (request, send)
+    }
+
+    fn pending_request_registered(client: &PetJsonRpcClient, request: &PendingRequest) -> bool {
+        client
+            .inner
+            .state
+            .pending
+            .lock()
+            .unwrap()
+            .contains_key(&request.id)
+    }
+
+    fn pending_request_count(client: &PetJsonRpcClient) -> usize {
+        client.inner.state.pending.lock().unwrap().len()
+    }
+
+    #[test]
+    fn pending_request_uses_receipt_time_and_operation_deadline() {
+        let client = PetJsonRpcClient::spawn().expect("failed to spawn idle PET client");
+
+        let submitted_at = Instant::now() - Duration::from_secs(10);
+        let received_at = submitted_at + Duration::from_millis(125);
+        let (received, send_received) = controlled_pending_request(&client, submitted_at);
+        send_received(Ok(json!({ "ok": true })), received_at);
+        let (result, latency) = received
+            .wait(Duration::from_secs(30))
+            .expect("recorded response should be returned");
+        assert_eq!(result, json!({ "ok": true }));
+        assert_eq!(latency, Duration::from_millis(125));
+        assert_eq!(pending_request_count(&client), 0);
+
+        let consumed_after_deadline_at = Instant::now() - Duration::from_secs(31);
+        let (consumed_after_deadline, send_timely) =
+            controlled_pending_request(&client, consumed_after_deadline_at);
+        send_timely(
+            Ok(json!({ "timely": true })),
+            consumed_after_deadline_at + Duration::from_secs(29),
+        );
+        let (result, latency) = consumed_after_deadline
+            .wait(Duration::from_secs(30))
+            .expect("a timely received response remains valid when consumed after the deadline");
+        assert_eq!(result, json!({ "timely": true }));
+        assert_eq!(latency, Duration::from_secs(29));
+
+        let received_after_deadline_at = Instant::now() - Duration::from_secs(31);
+        let (received_after_deadline, send_late) =
+            controlled_pending_request(&client, received_after_deadline_at);
+        send_late(
+            Ok(json!({ "late": true })),
+            received_after_deadline_at + Duration::from_secs(30) + Duration::from_millis(1),
+        );
+        let error = received_after_deadline
+            .wait(Duration::from_secs(30))
+            .expect_err("a response received after the operation deadline must time out");
+        assert!(error.contains("Timed out waiting for controlled response"));
+        assert_eq!(pending_request_count(&client), 0);
+
+        let expired_at = Instant::now() - Duration::from_secs(31);
+        let (expired, _keep_sender_connected) = controlled_pending_request(&client, expired_at);
+        assert!(pending_request_registered(&client, &expired));
+        let error = expired
+            .wait(Duration::from_secs(30))
+            .expect_err("an expired operation must not receive a fresh wait budget");
+        assert!(error.contains("Timed out waiting for controlled response"));
+        assert_eq!(pending_request_count(&client), 0);
+
+        let (dropped, _keep_sender_connected) = controlled_pending_request(&client, Instant::now());
+        assert!(pending_request_registered(&client, &dropped));
+        drop(dropped);
+        assert_eq!(
+            pending_request_count(&client),
+            0,
+            "dropping a pending request must remove its map entry"
+        );
+    }
 }

@@ -13,7 +13,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
-mod jsonrpc_client;
+pub mod jsonrpc_client;
 
 use jsonrpc_client::{EnvironmentNotification, PetJsonRpcClient};
 
