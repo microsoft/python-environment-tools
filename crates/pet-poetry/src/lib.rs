@@ -615,6 +615,30 @@ mod tests {
         std::fs::write(&executable, "").unwrap();
         std::fs::write(executable.parent().unwrap().join("activate"), "").unwrap();
 
+        let cached_identity = PythonEnv::new(
+            executable.clone(),
+            Some(prefix.clone()),
+            Some("3.12.0".to_string()),
+        );
+        #[cfg(windows)]
+        let requested_identity = {
+            let case_alias_prefix = temp_dir.path().join("project-env");
+            let case_alias_executable = case_alias_prefix.join("scripts").join("PYTHON.EXE");
+            assert_ne!(case_alias_executable, executable);
+
+            let identity = PythonEnv::new(
+                case_alias_executable,
+                Some(case_alias_prefix),
+                Some("3.12.0".to_string()),
+            );
+            assert_eq!(identity.executable, cached_identity.executable);
+            assert_eq!(identity.prefix, cached_identity.prefix);
+            identity
+        };
+        #[cfg(not(windows))]
+        let requested_identity =
+            PythonEnv::new(executable, Some(prefix), Some("3.12.0".to_string()));
+
         let environment = EnvironmentApi::new();
         let poetry = Poetry::from(&environment);
         let workspace = temp_dir.path().join("removed-project");
@@ -636,12 +660,12 @@ mod tests {
             .replace(LocatorResult {
                 managers: vec![manager.clone()],
                 environments: vec![PythonEnvironment {
-                    executable: Some(executable.clone()),
-                    prefix: Some(prefix.clone()),
+                    executable: Some(cached_identity.executable.clone()),
+                    prefix: cached_identity.prefix.clone(),
                     kind: Some(PythonEnvironmentKind::Poetry),
                     manager: Some(manager.clone()),
                     project: Some(workspace.clone()),
-                    symlinks: Some(vec![executable.clone()]),
+                    symlinks: Some(vec![cached_identity.executable]),
                     ..Default::default()
                 }],
             });
@@ -651,11 +675,7 @@ mod tests {
         poetry.configure(&config);
 
         let identified = poetry
-            .try_from(&PythonEnv::new(
-                executable,
-                Some(prefix),
-                Some("3.12.0".to_string()),
-            ))
+            .try_from(&requested_identity)
             .expect("cached Poetry environment must remain identifiable");
         assert_eq!(identified.manager, Some(manager));
         assert_eq!(identified.project, Some(workspace));
