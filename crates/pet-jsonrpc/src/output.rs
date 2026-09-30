@@ -500,10 +500,39 @@ mod tests {
     use super::*;
     use serde::Serializer;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::mpsc::{self, Receiver, Sender};
+    use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
     use std::time::{Duration, Instant};
 
     const TIMEOUT: Duration = Duration::from_secs(5);
+
+    struct WaitBoundary {
+        observed: SyncSender<()>,
+        resume: Receiver<()>,
+    }
+
+    impl WaitBoundary {
+        fn observe(self) {
+            self.observed
+                .send(())
+                .expect("wait observation receiver dropped");
+            self.resume
+                .recv_timeout(TIMEOUT)
+                .expect("timed out resuming wait helper");
+        }
+    }
+
+    fn wait_boundary() -> (WaitBoundary, Receiver<()>, SyncSender<()>) {
+        let (observed_tx, observed_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(1);
+        (
+            WaitBoundary {
+                observed: observed_tx,
+                resume: resume_rx,
+            },
+            observed_rx,
+            resume_tx,
+        )
+    }
 
     #[derive(Clone, Default)]
     struct CapturedWriter {
@@ -618,10 +647,15 @@ mod tests {
         }
     }
 
-    fn wait_for_error(output: &Output) -> io::Error {
+    fn wait_for_error(output: &Output, boundary: Option<WaitBoundary>) -> io::Error {
         let deadline = Instant::now() + TIMEOUT;
+        let mut boundary = boundary;
         loop {
-            if let Some(error) = output.error() {
+            let error = output.error();
+            if let Some(boundary) = boundary.take() {
+                boundary.observe();
+            }
+            if let Some(error) = error {
                 return error;
             }
             assert!(Instant::now() < deadline, "timed out waiting for error");
@@ -629,15 +663,65 @@ mod tests {
         }
     }
 
-    fn wait_for_len(bytes: &Arc<Mutex<Vec<u8>>>, expected: usize) {
+    fn wait_for_len(bytes: &Arc<Mutex<Vec<u8>>>, expected: usize, boundary: Option<WaitBoundary>) {
         let deadline = Instant::now() + TIMEOUT;
+        let mut boundary = boundary;
         loop {
-            if bytes.lock().expect("captured output lock poisoned").len() >= expected {
+            let len = bytes.lock().expect("captured output lock poisoned").len();
+            if let Some(boundary) = boundary.take() {
+                boundary.observe();
+            }
+            if len >= expected {
                 return;
             }
             assert!(Instant::now() < deadline, "timed out waiting for output");
             thread::yield_now();
         }
+    }
+
+    #[test]
+    fn wait_helpers_complete_after_observed_pending_state() {
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let (boundary, observed, resume) = wait_boundary();
+        let waiting_bytes = Arc::clone(&bytes);
+        let length_waiter = thread::spawn(move || wait_for_len(&waiting_bytes, 1, Some(boundary)));
+
+        observed
+            .recv_timeout(TIMEOUT)
+            .expect("length wait was not observed");
+        bytes.lock().expect("captured output lock poisoned").push(1);
+        resume.send(()).expect("length wait helper dropped");
+        length_waiter.join().expect("length wait helper panicked");
+
+        let output = Output::new(CapturedWriter::default()).expect("failed to create test output");
+        let (boundary, observed, resume) = wait_boundary();
+        let waiting_output = output.clone();
+        let error_waiter = thread::spawn(move || wait_for_error(&waiting_output, Some(boundary)));
+
+        observed
+            .recv_timeout(TIMEOUT)
+            .expect("error wait was not observed");
+        output.fail(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "observed failure",
+        ));
+        resume.send(()).expect("error wait helper dropped");
+        let error = error_waiter.join().expect("error wait helper panicked");
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn wait_helpers_complete_from_initially_ready_state() {
+        let bytes = Arc::new(Mutex::new(vec![1]));
+        wait_for_len(&bytes, 1, None);
+
+        let output = Output::new(CapturedWriter::default()).expect("failed to create test output");
+        output.fail(io::Error::new(
+            io::ErrorKind::ConnectionReset,
+            "initial failure",
+        ));
+        let error = wait_for_error(&output, None);
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
     }
 
     fn frames(bytes: &[u8]) -> Vec<&[u8]> {
@@ -719,7 +803,7 @@ mod tests {
             + 2 * (HEADER_PREFIX.len() + HEADER_SUFFIX.len())
             + expected_first.len().to_string().len()
             + expected_second.len().to_string().len();
-        wait_for_len(&bytes, expected_len);
+        wait_for_len(&bytes, expected_len, None);
         output.close();
 
         let bytes = bytes.lock().expect("captured output lock poisoned");
@@ -896,7 +980,7 @@ mod tests {
         .expect("failed to create output");
 
         output.send(&"message");
-        let first = wait_for_error(&output);
+        let first = wait_for_error(&output, None);
         assert_eq!(first.kind(), io::ErrorKind::BrokenPipe);
         assert!(first.to_string().contains("deliberate write failure"));
 
@@ -919,7 +1003,7 @@ mod tests {
         .expect("failed to create output");
 
         output.send(&"message");
-        let error = wait_for_error(&output);
+        let error = wait_for_error(&output, None);
         assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
         assert!(error.to_string().contains("failed to flush JSONRPC output"));
         assert!(error.to_string().contains("deliberate flush failure"));
@@ -1092,7 +1176,7 @@ mod tests {
             .sum();
         let minimum_len =
             expected_payload_len + messages * (HEADER_PREFIX.len() + HEADER_SUFFIX.len() + 1);
-        wait_for_len(&bytes, minimum_len);
+        wait_for_len(&bytes, minimum_len, None);
         output.close();
 
         let bytes = bytes.lock().expect("captured output lock poisoned");
