@@ -156,7 +156,7 @@ jobs:
         shell: bash
 
       - name: Install Pixi
-        uses: prefix-dev/setup-pixi@f00437f565399d418b0acc85936d12c1fb668347 # v0.10.1
+        uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e # v0.10.2
         with:
           run-install: false
 
@@ -237,7 +237,7 @@ jobs:
 
       - name: Download Exact PR Base Coverage
         if: always() && steps.wait_for_base_coverage.outcome == 'success'
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
+        uses: dawidd6/action-download-artifact@27e4ae67c24b67d3b54bc6d6a45475be1e28031b # v26
         with:
           workflow: coverage-baseline.yml
           commit: ${{ github.event.pull_request.base.sha }}
