@@ -51,7 +51,7 @@ extends:
 
     preBuildSteps:
       - pwsh: |
-          if ("$(Build.SourceBranch)" -notmatch '^refs/tags/release/\d{4}\.\d+$') {
+          if ($env:BUILD_SOURCEBRANCH -notmatch '^refs/tags/release/\d{4}\.\d+$') {
             Write-Error "Stable release tag must match release/<year>.<build>, where <year> is four digits and <build> is numeric."
             exit 1
           }
