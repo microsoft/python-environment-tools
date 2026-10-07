@@ -13,6 +13,7 @@ use pet_core::telemetry::refresh_progress::{
 use pet_core::telemetry::TelemetryEvent;
 use pet_core::{Configuration, Locator, LocatorKind};
 use pet_env_var_path::get_search_paths_from_env_variables;
+use pet_fs::path::resolve_dot_venv;
 use pet_global_virtualenvs::list_global_virtual_envs_paths;
 use pet_pixi::is_pixi_env;
 use pet_python_utils::executable::{
@@ -398,12 +399,14 @@ pub fn find_python_environments_in_workspace_folder_recursive(
     let mut paths_to_search_first = vec![
         // Possible this is a virtual env
         workspace_folder.to_path_buf(),
-        // Optimize for finding these first.
-        workspace_folder.join(".venv"),
         workspace_folder.join(".conda"),
         workspace_folder.join(".virtualenv"),
         workspace_folder.join("venv"),
     ];
+    // Optimize for finding .venv first (supports PEP 832 file-based .venv).
+    if let Some(dot_venv) = resolve_dot_venv(workspace_folder) {
+        paths_to_search_first.insert(1, dot_venv);
+    }
 
     // Add all subdirectories of .pixi/envs/**
     if let Ok(reader) = fs::read_dir(workspace_folder.join(".pixi").join("envs")) {
