@@ -1,6 +1,11 @@
-trigger: none
+trigger:
+  branches:
+    exclude:
+      - "*"
+  tags:
+    include:
+      - "release/*"
 pr: none
-# Should only ever be manually run.
 
 resources:
   repositories:
@@ -45,5 +50,11 @@ extends:
         target: x86_64-pc-windows-msvc
 
     preBuildSteps:
+      - pwsh: |
+          if ($env:BUILD_SOURCEBRANCH -notmatch '^refs/tags/release/\d{4}\.\d+$') {
+            Write-Error "Stable release tag must match release/<year>.<build>, where <year> is four digits and <build> is numeric."
+            exit 1
+          }
+        displayName: "Validate stable release tag"
       - pwsh: Rename-Item -Path "./.cargo/config.toml.disabled" -NewName "config.toml"
         displayName: "Enable Azure Build config for Rust"
