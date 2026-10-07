@@ -142,7 +142,7 @@ jobs:
         if: >-
           always() && github.event_name == 'pull_request' &&
           steps.wait_for_base_performance.outcome == 'success'
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
+        uses: dawidd6/action-download-artifact@27e4ae67c24b67d3b54bc6d6a45475be1e28031b # v26
         with:
           workflow: perf-baseline.yml
           commit: ${{ github.event.pull_request.base.sha }}
@@ -154,7 +154,7 @@ jobs:
 
       - name: Download Main Performance for Manual Run
         if: always() && github.event_name == 'workflow_dispatch'
-        uses: dawidd6/action-download-artifact@b6e2e70617bc3265edd6dab6c906732b2f1ae151 # v21
+        uses: dawidd6/action-download-artifact@27e4ae67c24b67d3b54bc6d6a45475be1e28031b # v26
         with:
           workflow: perf-baseline.yml
           branch: main
