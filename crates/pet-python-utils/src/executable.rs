@@ -11,10 +11,11 @@ use std::{
 };
 
 lazy_static! {
-    static ref WINDOWS_EXE: Regex =
-        Regex::new(r"python(\d+\.?)*\.exe$").expect("error parsing Windows executable regex");
+    // `python`, `python3`, `python3.13`, and free-threaded builds such as `python3.13t`.
+    static ref WINDOWS_EXE: Regex = Regex::new(r"python(\d+(\.\d+)*t?)?\.exe$")
+        .expect("error parsing Windows executable regex");
     static ref UNIX_EXE: Regex =
-        Regex::new(r"python(\d+\.?)*$").expect("error parsing Unix executable regex");
+        Regex::new(r"python(\d+(\.\d+)*t?)?$").expect("error parsing Unix executable regex");
 }
 
 /// Checks if a path is a broken symlink (symlink that points to a non-existent target).
@@ -301,6 +302,15 @@ mod tests {
         assert!(is_python_executable_name(
             PathBuf::from("python4.10").as_path()
         ));
+        // Free-threaded builds.
+        #[cfg(unix)]
+        assert!(is_python_executable_name(
+            PathBuf::from("python3.13t").as_path()
+        ));
+        #[cfg(unix)]
+        assert!(is_python_executable_name(
+            PathBuf::from("python3t").as_path()
+        ));
 
         #[cfg(windows)]
         assert!(is_python_executable_name(
@@ -322,6 +332,11 @@ mod tests {
         assert!(is_python_executable_name(
             PathBuf::from("python4.10.exe").as_path()
         ));
+        // Free-threaded builds.
+        #[cfg(windows)]
+        assert!(is_python_executable_name(
+            PathBuf::from("python3.14t.exe").as_path()
+        ));
     }
     #[test]
     fn is_not_python_executable_test() {
@@ -333,6 +348,18 @@ mod tests {
         assert!(!is_python_executable_name(
             PathBuf::from("pythonw3").as_path()
         ));
+        #[cfg(unix)]
+        assert!(!is_python_executable_name(
+            PathBuf::from("pythont").as_path()
+        ));
+        #[cfg(unix)]
+        assert!(!is_python_executable_name(
+            PathBuf::from("python3.13t-config").as_path()
+        ));
+        #[cfg(unix)]
+        assert!(!is_python_executable_name(
+            PathBuf::from("python3.13-config").as_path()
+        ));
 
         #[cfg(windows)]
         assert!(!is_python_executable_name(
@@ -341,6 +368,10 @@ mod tests {
         #[cfg(windows)]
         assert!(!is_python_executable_name(
             PathBuf::from("pythonw3.exe").as_path()
+        ));
+        #[cfg(windows)]
+        assert!(!is_python_executable_name(
+            PathBuf::from("pythonw3.14t.exe").as_path()
         ));
         #[cfg(windows)]
         assert!(!is_python_executable_name(
