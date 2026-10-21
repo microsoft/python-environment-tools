@@ -46,6 +46,10 @@ pub fn get_cache_directory() -> Option<PathBuf> {
 }
 
 pub fn set_cache_directory(cache_dir: PathBuf) {
+    CACHE.set_cache_directory(cache_dir);
+}
+
+pub fn set_cache_directory_and_get_effective(cache_dir: PathBuf) -> PathBuf {
     CACHE.set_cache_directory(cache_dir)
 }
 
@@ -75,24 +79,18 @@ impl CacheImpl {
 
     /// Once a cache directory has been set, you cannot change it.
     /// No point supporting such a scenario.
-    fn set_cache_directory(&self, cache_dir: PathBuf) {
-        if let Some(cache_dir) = self
-            .cache_dir
-            .lock()
-            .expect("cache_dir mutex poisoned")
-            .clone()
-        {
+    fn set_cache_directory(&self, cache_dir: PathBuf) -> PathBuf {
+        let mut effective = self.cache_dir.lock().expect("cache_dir mutex poisoned");
+        if let Some(existing) = effective.as_ref() {
             warn!(
                 "Cache directory has already been set to {:?}. Cannot change it now.",
-                cache_dir
+                existing
             );
-            return;
+            return existing.clone();
         }
         trace!("Setting cache directory to {:?}", cache_dir);
-        self.cache_dir
-            .lock()
-            .expect("cache_dir mutex poisoned")
-            .replace(cache_dir);
+        effective.replace(cache_dir.clone());
+        cache_dir
     }
     fn clear(&self) -> io::Result<()> {
         trace!("Clearing cache");
@@ -389,7 +387,11 @@ impl CacheEntry for CacheEntryImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Barrier,
+    };
+    use std::time::Duration;
     use tempfile::tempdir_in;
 
     fn environment(executable: PathBuf, aliases: Vec<PathBuf>) -> ResolvedPythonEnv {
@@ -522,5 +524,76 @@ mod tests {
         std::fs::remove_file(&absolute).unwrap();
 
         assert!(entry.get().is_none());
+    }
+
+    #[test]
+    fn concurrent_first_cache_directory_set_has_one_effective_path() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(CacheImpl::new(None));
+        let barrier = Arc::new(Barrier::new(3));
+        let (result_tx, result_rx) = mpsc::channel();
+        let mut workers = Vec::new();
+
+        for name in ["cache-a", "cache-b"] {
+            let cache = cache.clone();
+            let barrier = barrier.clone();
+            let result_tx = result_tx.clone();
+            let requested = temp_dir.path().join(name);
+            workers.push(std::thread::spawn(move || {
+                barrier.wait();
+                result_tx
+                    .send(cache.set_cache_directory(requested))
+                    .unwrap();
+            }));
+        }
+
+        barrier.wait();
+        let first = result_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let second = result_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        assert_eq!(first, second);
+        assert_eq!(cache.get_cache_directory(), Some(first));
+    }
+
+    #[test]
+    fn in_flight_entry_can_repopulate_persistent_cache_after_clear() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_directory = temp_dir.path().join("cache");
+        std::fs::create_dir_all(&cache_directory).unwrap();
+        let executable = temp_dir.path().join("python");
+        std::fs::write(&executable, "python").unwrap();
+        let cache = Arc::new(CacheImpl::new(Some(cache_directory)));
+        let entry = cache.create_cache(executable.clone());
+        let entry_guard = entry.lock().unwrap();
+        let (clear_done_tx, clear_done_rx) = mpsc::channel();
+        let clear_cache = cache.clone();
+
+        let clear_worker = std::thread::spawn(move || {
+            clear_done_tx.send(clear_cache.clear()).unwrap();
+        });
+        clear_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("clear must complete while the old entry is held")
+            .unwrap();
+
+        let expected = environment(executable.clone(), vec![executable.clone()]);
+        entry_guard.store(expected.clone());
+        drop(entry_guard);
+        clear_worker.join().unwrap();
+
+        let next_entry = cache.create_cache(executable);
+        assert!(!Arc::ptr_eq(&entry, &next_entry));
+        let repopulated = next_entry
+            .lock()
+            .unwrap()
+            .get()
+            .expect("post-clear write must be visible to the next entry");
+        assert_eq!(repopulated.executable, expected.executable);
+        assert_eq!(repopulated.prefix, expected.prefix);
+        assert_eq!(repopulated.version, expected.version);
+        assert_eq!(repopulated.symlinks, expected.symlinks);
     }
 }
