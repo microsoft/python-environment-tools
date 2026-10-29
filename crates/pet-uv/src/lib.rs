@@ -188,45 +188,82 @@ impl Locator for Uv {
 
 impl Uv {
     /// Check if a Python executable is from a uv-managed global installation.
+    ///
+    /// Besides executables inside an installation, this recognizes entry points whose spawned
+    /// `sys.prefix` is a uv-managed installation, such as the trampolines `uv python install`
+    /// creates in `~/.local/bin` on Windows (`python3.13.exe`). They report the minor-version
+    /// alias directory (e.g. `cpython-3.13-*`) as their prefix, which is resolved to the
+    /// patch-version installation it points to, so every entry point is reported as that same
+    /// environment instead of as separate global installations.
     fn try_from_managed_install(&self, env: &PythonEnv) -> Option<PythonEnvironment> {
         let install_dir = self.uv_install_dir.as_ref()?;
-        let executable = &env.executable;
 
-        // Check if the executable lives under the uv install directory.
+        // Check if the executable (or, for trampolines and other launchers, the prefix reported
+        // by the spawned interpreter) lives under the uv install directory.
         // Both paths are normalized (install_dir via norm_case at construction,
-        // executable via PythonEnv normalization), but symlinks/junctions that
+        // executable and prefix via PythonEnv normalization), but symlinks/junctions that
         // resolve outside install_dir won't match — consistent with other locators.
-        if !executable.starts_with(install_dir) {
-            return None;
-        }
+        let managed_path = if env.executable.starts_with(install_dir) {
+            &env.executable
+        } else {
+            env.prefix
+                .as_ref()
+                .filter(|prefix| prefix.starts_with(install_dir))?
+        };
 
         // Determine the version-specific subdirectory.
         // Path: <install_dir>/<cpython-X.Y.Z-os-arch-libc>/bin/python
-        let relative = executable.strip_prefix(install_dir).ok()?;
+        let relative = managed_path.strip_prefix(install_dir).ok()?;
         let version_dir_name = relative.iter().next()?.to_string_lossy();
-        let version = parse_version_from_uv_dir_name(&version_dir_name)?;
-        let prefix = install_dir.join(version_dir_name.as_ref());
+        parse_version_from_uv_dir_name(&version_dir_name)?;
+        let mut prefix = install_dir.join(version_dir_name.as_ref());
 
-        // Skip minor-version junction/symlink directories (e.g., cpython-3.12-*)
-        // to avoid duplicating the actual patch-version directories they point to.
+        // Minor-version junctions/symlinks (e.g., cpython-3.12-*) alias a patch-version
+        // directory. Report that installation so aliases don't duplicate it.
         if is_symlink_or_junction(&prefix) {
-            return None;
+            prefix = resolve_minor_version_alias(install_dir, &prefix)?;
         }
+        let version = parse_version_from_uv_dir_name(&prefix.file_name()?.to_string_lossy())?;
+
+        // Keep the executable when it belongs to the installation itself; otherwise
+        // (trampolines, alias paths) report the installation's own interpreter. The original
+        // entry point is intentionally not added to `symlinks`: the builder reports the shortest
+        // known path as the executable, which would make each trampoline a separate environment.
+        let executable = if env.executable.starts_with(&prefix) {
+            env.executable.clone()
+        } else {
+            find_executable(&prefix)?
+        };
 
         trace!(
-            "uv-managed Python {} found at {}",
+            "uv-managed Python {} found at {} (via {})",
             version,
-            executable.display()
+            executable.display(),
+            env.executable.display()
         );
 
         Some(
             PythonEnvironmentBuilder::new(Some(PythonEnvironmentKind::Uv))
-                .executable(Some(executable.clone()))
+                .executable(Some(executable))
                 .version(Some(version))
                 .prefix(Some(prefix.clone()))
                 .symlinks(Some(find_executables(&prefix)))
                 .build(),
         )
+    }
+}
+
+/// Resolves a uv minor-version alias directory (e.g. `cpython-3.12-*`, a junction on Windows or
+/// a symlink on Unix) to the patch-version installation directory it points to.
+///
+/// Only the target's directory name is used, and it must be a real (non-alias) sibling within
+/// `install_dir`. This avoids comparing the verbatim (`\\?\`) paths returned for junctions.
+fn resolve_minor_version_alias(install_dir: &Path, alias: &Path) -> Option<PathBuf> {
+    let target = install_dir.join(fs::read_link(alias).ok()?.file_name()?);
+    if target.is_dir() && !is_symlink_or_junction(&target) {
+        Some(target)
+    } else {
+        None
     }
 }
 
@@ -1353,6 +1390,144 @@ exclude = ["packages/legacy"]"#;
         assert!(
             result.is_none(),
             "Should not identify Python outside uv install dir"
+        );
+    }
+
+    /// Creates `alias` as a directory alias (junction on Windows, symlink on Unix) of `target`,
+    /// the way uv links minor versions. Returns `false` when the platform does not allow it.
+    fn create_dir_alias(target: &Path, alias: &Path) -> bool {
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .args([
+                    "/C",
+                    "mklink",
+                    "/J",
+                    &alias.to_string_lossy(),
+                    &target.to_string_lossy(),
+                ])
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false)
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, alias).is_ok()
+        }
+    }
+
+    /// Lays out a uv install directory with a patch-version installation and the
+    /// minor-version alias uv maintains for it. Returns `None` if the alias can't be created.
+    fn create_install_with_minor_alias(root: &Path) -> Option<(Uv, PathBuf, PathBuf, PathBuf)> {
+        // Normalize only after the directory exists: norm_case expands Windows short names
+        // (e.g. CI's RUNNER~1 temp dir) for existing paths only.
+        let install_dir = root.join("uv_python");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        let install_dir = norm_case(install_dir);
+        let real_dir = install_dir.join("cpython-3.13.15-windows-x86_64-none");
+        let real_exe = if cfg!(windows) {
+            real_dir.join("python.exe")
+        } else {
+            real_dir.join("bin").join("python")
+        };
+        std::fs::create_dir_all(real_exe.parent().unwrap()).unwrap();
+        std::fs::File::create(&real_exe).unwrap();
+        let alias_dir = install_dir.join("cpython-3.13-windows-x86_64-none");
+        if !create_dir_alias(&real_dir, &alias_dir) {
+            eprintln!("Skipping: could not create a directory alias");
+            return None;
+        }
+        let uv = Uv {
+            workspace_directories: Arc::new(Mutex::new(Vec::new())),
+            uv_install_dir: Some(install_dir),
+        };
+        Some((uv, real_dir, real_exe, alias_dir))
+    }
+
+    #[test]
+    fn test_try_from_managed_install_maps_trampoline_to_patch_install() {
+        use pet_core::env::PythonEnv;
+
+        let temp_dir = TempDir::new().unwrap();
+        let Some((uv, real_dir, real_exe, alias_dir)) =
+            create_install_with_minor_alias(temp_dir.path())
+        else {
+            return;
+        };
+        // uv's Windows trampoline (e.g. ~/.local/bin/python3.13.exe) lives outside the install
+        // directory; once spawned it reports the minor-version alias as its prefix.
+        let trampoline = temp_dir.path().join("bin").join("python3.13.exe");
+        std::fs::create_dir_all(trampoline.parent().unwrap()).unwrap();
+        std::fs::File::create(&trampoline).unwrap();
+        let alias_exe = alias_dir.join(real_exe.strip_prefix(&real_dir).unwrap());
+        let mut python_env = PythonEnv::new(trampoline.clone(), Some(alias_dir), None);
+        python_env.symlinks = Some(vec![norm_case(&trampoline), alias_exe]);
+
+        let env = uv
+            .try_from_managed_install(&python_env)
+            .expect("trampoline should map to the uv-managed installation");
+
+        // Same identity as the installation reported by `find_managed_python_installs`, so the
+        // reporter deduplicates every trampoline into that one environment.
+        let installs = find_managed_python_installs(uv.uv_install_dir.as_ref().unwrap());
+        assert_eq!(installs.len(), 1);
+        assert_eq!(env.kind, Some(PythonEnvironmentKind::Uv));
+        assert_eq!(env.executable, Some(real_exe));
+        assert_eq!(env.executable, installs[0].executable);
+        assert_eq!(env.prefix, Some(real_dir));
+        assert_eq!(env.version, Some("3.13.15".to_string()));
+    }
+
+    #[test]
+    fn test_try_from_managed_install_maps_alias_executable_to_patch_install() {
+        use pet_core::env::PythonEnv;
+
+        let temp_dir = TempDir::new().unwrap();
+        let Some((uv, real_dir, real_exe, alias_dir)) =
+            create_install_with_minor_alias(temp_dir.path())
+        else {
+            return;
+        };
+        let alias_exe = alias_dir.join(real_exe.strip_prefix(&real_dir).unwrap());
+
+        let env = uv
+            .try_from_managed_install(&PythonEnv::new(alias_exe, None, None))
+            .expect("alias executable should map to the uv-managed installation");
+
+        assert_eq!(env.executable, Some(real_exe));
+        assert_eq!(env.prefix, Some(real_dir));
+        assert_eq!(env.version, Some("3.13.15".to_string()));
+    }
+
+    #[test]
+    fn test_try_from_managed_install_rejects_alias_to_unmanaged_dir() {
+        use pet_core::env::PythonEnv;
+
+        let temp_dir = TempDir::new().unwrap();
+        let install_dir = temp_dir.path().join("uv_python");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        let install_dir = norm_case(install_dir);
+        // An alias whose target is not an installation inside the uv install directory.
+        let outside = temp_dir
+            .path()
+            .join("elsewhere-3.13.15-windows-x86_64-none");
+        std::fs::create_dir_all(&outside).unwrap();
+        let alias_dir = install_dir.join("cpython-3.13-windows-x86_64-none");
+        if !create_dir_alias(&outside, &alias_dir) {
+            return;
+        }
+        let uv = Uv {
+            workspace_directories: Arc::new(Mutex::new(Vec::new())),
+            uv_install_dir: Some(install_dir),
+        };
+        let trampoline = temp_dir.path().join("python3.13.exe");
+
+        let result =
+            uv.try_from_managed_install(&PythonEnv::new(trampoline, Some(alias_dir), None));
+
+        assert!(
+            result.is_none(),
+            "alias outside uv installs must not be claimed"
         );
     }
 }
