@@ -232,7 +232,7 @@ fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
     // We use canonicalize to get the real path of the symlink.
     // Only used in this case, see notes for resolve_symlink.
 
-    use pet_fs::path::resolve_symlink;
+    use pet_fs::path::{is_same_file, resolve_symlink};
     use pet_python_utils::executable::find_executables;
     use std::fs;
 
@@ -248,7 +248,9 @@ fn find_symlinks(executable: &PathBuf) -> Option<Vec<PathBuf>> {
     let mut symlinks = vec![];
     for exe in find_executables(bin) {
         let symlink = resolve_symlink(&exe).or(fs::canonicalize(&exe).ok());
-        if symlink == real_exe {
+        // Hard links resolve to different paths but are the same file, for example python3.13 and
+        // the free-threaded python3.13t from CPython's `make install`.
+        if symlink == real_exe || is_same_file(&exe, executable) {
             symlinks.push(exe);
         }
     }
@@ -290,5 +292,30 @@ mod tests {
 
         assert!(result.is_none());
         assert_eq!(calls.get(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn find_symlinks_includes_hard_linked_free_threaded_executable() {
+        // CPython's `make install` of a free-threaded build hard-links python3.13 to python3.13t
+        // and symlinks python3 to python3.13.
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let free_threaded = bin.join("python3.13t");
+        let versioned = bin.join("python3.13");
+        let python3 = bin.join("python3");
+        let other = bin.join("python3.12");
+        std::fs::write(&free_threaded, "").unwrap();
+        std::fs::write(&other, "").unwrap();
+        std::fs::hard_link(&free_threaded, &versioned).unwrap();
+        std::os::unix::fs::symlink("python3.13", &python3).unwrap();
+
+        let symlinks = find_symlinks(&python3).unwrap();
+
+        assert!(symlinks.contains(&python3));
+        assert!(symlinks.contains(&versioned));
+        assert!(symlinks.contains(&free_threaded));
+        assert!(!symlinks.contains(&other));
     }
 }
