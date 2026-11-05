@@ -669,6 +669,37 @@ mod tests {
 
     struct ReleaseDescendant(tempfile::TempDir);
 
+    fn wait_for_descendant_lease(try_lock: &mut dyn FnMut() -> Result<(), fs::TryLockError>) {
+        let started = Instant::now();
+        loop {
+            match try_lock() {
+                Ok(()) => break,
+                Err(fs::TryLockError::WouldBlock) => {
+                    assert!(
+                        started.elapsed() < CLEANUP_TIMEOUT,
+                        "descendant still holds its lease"
+                    );
+                    thread::sleep(POLL_INTERVAL);
+                }
+                Err(error) => panic!("failed to inspect descendant lease: {error}"),
+            }
+        }
+    }
+
+    #[test]
+    fn descendant_lease_wait_retries_contention() {
+        let mut attempts = 0;
+        wait_for_descendant_lease(&mut || {
+            attempts += 1;
+            if attempts == 1 {
+                Err(fs::TryLockError::WouldBlock)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(attempts, 2);
+    }
+
     impl ReleaseDescendant {
         fn assert_terminated(&self) {
             assert!(
@@ -676,20 +707,7 @@ mod tests {
                 "descendant never started"
             );
             let lease = fs::File::open(self.0.path().join("lease")).unwrap();
-            let started = Instant::now();
-            loop {
-                match lease.try_lock() {
-                    Ok(()) => break,
-                    Err(fs::TryLockError::WouldBlock) => {
-                        assert!(
-                            started.elapsed() < CLEANUP_TIMEOUT,
-                            "descendant still holds its lease"
-                        );
-                        thread::sleep(POLL_INTERVAL);
-                    }
-                    Err(error) => panic!("failed to inspect descendant lease: {error}"),
-                }
-            }
+            wait_for_descendant_lease(&mut || lease.try_lock());
             assert!(
                 !self.0.path().join("done").exists(),
                 "descendant exited on its own instead of being terminated"
