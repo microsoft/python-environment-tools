@@ -14,6 +14,7 @@ target/
 
 # Testing directories
 ./.venv/
+__pycache__/
 tmp/
 temp/
 docs/node_modules/
