@@ -52,7 +52,7 @@ jobs:
             Running performance tests against baseline `${{ github.event.pull_request.base.sha }}`.
 
       - name: Set Python to PATH
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -88,7 +88,7 @@ jobs:
         shell: bash
 
       - name: Rust Tool Chain setup
-        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -142,7 +142,7 @@ jobs:
         if: >-
           always() && github.event_name == 'pull_request' &&
           steps.wait_for_base_performance.outcome == 'success'
-        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
+        uses: dawidd6/action-download-artifact@a92c7ae74cf1df8810783758581e485ac3aaa309 # v28
         with:
           workflow: perf-baseline.yml
           commit: ${{ github.event.pull_request.base.sha }}
@@ -154,7 +154,7 @@ jobs:
 
       - name: Download Main Performance for Manual Run
         if: always() && github.event_name == 'workflow_dispatch'
-        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
+        uses: dawidd6/action-download-artifact@a92c7ae74cf1df8810783758581e485ac3aaa309 # v28
         with:
           workflow: perf-baseline.yml
           branch: main
