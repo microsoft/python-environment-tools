@@ -33,7 +33,9 @@ jobs:
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+        with:
+          tool: cargo-llvm-cov
 
       - name: Validate Coverage Reporting
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
