@@ -12,6 +12,18 @@ sequentially against shared mutable fixtures: the Unix Conda CI tests create env
 install Mamba into the base installation. Native ARM64 macOS coverage retains its separate
 default-feature workload and same-runner base measurement.
 
+`scripts/quality_measurement.py` provides argument-driven staging, context capture, and
+provenance validation for both workloads, delegating numerical gates to `quality_snapshot.py`.
+Coverage still requires its additional llvm-cov/Pipenv/Pyenv/Pixi tools and fixture interpreters;
+performance uses its own smaller context and shared discovery workspace.
+Before selecting the measured coverage revision, the job stages only the tested workflow's
+two helper script blobs and a revision marker outside the discovery tree in `RUNNER_TEMP`.
+It then checks out the exact base or tested head and provisions fixtures there. An old base need
+not contain the new helper: `source-revision.txt` identifies the measured Rust checkout, while
+`helper_revision` records the separately staged control code and must match the tested workflow.
+Missing helpers, marker, or provenance fail closed; this does not copy head Rust source or binaries
+into the base measurement, or introduce another discoverable environment.
+
 Coverage measurement artifacts include `source-revision.txt` and `measurement-context.json`,
 LCOV, production reports, and subprocess proof. Artifact names distinguish revision and workflow
 attempt; partial reruns cannot silently reuse the other revision's earlier measurement. The gate
@@ -32,8 +44,11 @@ the report retains both actual snapshots, source/context evidence, and benchmark
 Manual performance runs resolve the default branch's exact SHA once and measure it the same way.
 
 Linux fixture jobs explicitly provision Miniconda without creating or activating an additional
-environment. macOS x86_64 installed-manager/performance jobs use `macos-15-intel`; existing ARM64
-jobs use `macos-15`, with matching native Conda installers. Host-image inventory changes are
+environment. macOS x86_64 installed-manager/performance jobs use `macos-15-intel`; ARM64
+jobs use `macos-15`, with matching native Conda installers. Both PR and baseline performance
+matrices retain Intel and include a separate native ARM64 lane. Each architecture measures its
+own exact base, uses distinct artifacts/comments, and retains the existing macOS budgets.
+Host-image inventory changes are
 measured on both revisions, never normalized away or accepted by changing inventory schemas.
 
 The push/manual coverage and performance baseline workflows remain publishers for inspection
@@ -44,7 +59,7 @@ budgets, sample requirements, inventory checks, and required coverage evidence r
 ## Performance gate
 
 The performance workflow runs 10 paired cache-cold/cache-warm JSON-RPC iterations on Linux,
-Windows, and macOS, plus 10 untimed cache-cold diagnostic iterations. A comparison is valid only
+Windows, Intel macOS, and ARM64 macOS, plus 10 untimed cache-cold diagnostic iterations. A comparison is valid only
 when every required distribution has at least five samples, inventories match within the same
 inventory schema, and both benchmark execution and JSON extraction succeed.
 

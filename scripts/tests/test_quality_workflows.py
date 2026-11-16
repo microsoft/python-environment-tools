@@ -5,17 +5,23 @@ import copy
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
-import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from test_quality_snapshot import performance_snapshot, write_lcov
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+import quality_measurement as measurement  # noqa: E402
+from quality_snapshot import SnapshotError  # noqa: E402
+
 SAME_REPOSITORY_PR = (
     "github.event.pull_request.head.repo.full_name == github.repository"
 )
@@ -47,9 +53,12 @@ def step_property(step: str, name: str) -> str | None:
     return None
 
 
-def workflow_python(step: str) -> str:
-    source = step.split("          python - <<'PY'\n", 1)[1]
-    return textwrap.dedent(source.split("\n          PY", 1)[0])
+def copy_measurement_helpers(directory: Path, revision: str) -> Path:
+    directory.mkdir()
+    for filename in ("quality_measurement.py", "quality_snapshot.py"):
+        shutil.copyfile(ROOT / "scripts" / filename, directory / filename)
+    (directory / "helper-revision.txt").write_text(revision + "\n", encoding="utf-8")
+    return directory / "quality_measurement.py"
 
 
 class QualityWorkflowTests(unittest.TestCase):
@@ -80,8 +89,14 @@ class QualityWorkflowTests(unittest.TestCase):
                 ("macos-15-intel", "x86_64-apple-darwin"),
                 ("macos-15", "aarch64-apple-darwin"),
             ],
-            "perf-tests.yml": [("macos-15-intel", "x86_64-apple-darwin")],
-            "perf-baseline.yml": [("macos-15-intel", "x86_64-apple-darwin")],
+            "perf-tests.yml": [
+                ("macos-15-intel", "x86_64-apple-darwin"),
+                ("macos-15", "aarch64-apple-darwin"),
+            ],
+            "perf-baseline.yml": [
+                ("macos-15-intel", "x86_64-apple-darwin"),
+                ("macos-15", "aarch64-apple-darwin"),
+            ],
         }
         for workflow, targets in expected.items():
             with self.subTest(workflow=workflow):
@@ -110,6 +125,24 @@ class QualityWorkflowTests(unittest.TestCase):
         )
         self.assertIn("needs: measurements", text)
         self.assertIn("MEASUREMENTS_RESULT: ${{ needs.measurements.result }}", text)
+        self.assertIn("ref: ${{ github.sha }}", steps["Checkout Workflow"])
+        self.assertLess(
+            text.index("- name: Stage Coverage Measurement Helper"),
+            text.index("- name: Checkout Measurement Source"),
+        )
+        self.assertIn(
+            '--output-dir "$RUNNER_TEMP/quality-tools"', steps["Stage Coverage Measurement Helper"],
+        )
+        self.assertIn(
+            '--revision "$GITHUB_SHA"', steps["Stage Coverage Measurement Helper"],
+        )
+        self.assertIn(
+            '"$RUNNER_TEMP/quality-tools/quality_measurement.py" capture coverage',
+            steps["Capture Coverage Measurement Context"],
+        )
+        self.assertIn('--expected-source "$MEASURED_SHA"', steps["Capture Coverage Measurement Context"])
+        self.assertIn('--workflow-revision "$GITHUB_SHA"', steps["Capture Coverage Measurement Context"])
+        self.assertNotIn("python - <<", text)
         self.assertIn('prefix="$(pipenv --venv)"', steps["Create a Pipenv Environment"])
         self.assertLess(
             text.index("- name: Create a Pipenv Environment"),
@@ -152,6 +185,12 @@ class QualityWorkflowTests(unittest.TestCase):
         self.assertNotIn("GITHUB_WORKSPACE:", text)
         self.assertNotIn("wait_for_baseline.py", text)
         self.assertNotIn("dawidd6/action-download-artifact", text)
+        self.assertIn("comment_header: perf-macos-arm64", text)
+        self.assertIn("comment_header: perf-macos\n", text)
+        self.assertIn("capture performance", steps["Capture Performance Measurement Context"])
+        self.assertIn('--source-dir "$RUNNER_TEMP/perf-base"', steps["Capture Performance Measurement Context"])
+        self.assertIn('--expected-source "$BASE_SHA"', steps["Capture Performance Measurement Context"])
+        self.assertNotIn("python - <<", text)
         for step in ("Extract Performance Metrics", "Extract Exact Base Performance Metrics"):
             self.assertIn("always()", step_property(steps[step], "if"))
             self.assertIn("python -m json.tool", steps[step])
@@ -252,11 +291,11 @@ class QualityWorkflowTests(unittest.TestCase):
 class MeasurementComparisonTests(unittest.TestCase):
     def run_measurement(self, kind, *, regression=False, invalid=None, outcomes=None):
         baseline_name = "baseline-coverage" if kind == "coverage" else "baseline-perf"
-        workflow = "coverage.yml" if kind == "coverage" else "perf-tests.yml"
-        step_name = "Compare Coverage Snapshot" if kind == "coverage" else "Compare Performance Snapshot"
-        code = workflow_python(workflow_steps(".github/workflows/" + workflow)[step_name])
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            parent = Path(directory)
+            root = parent / "workspace"
+            root.mkdir()
+            helper = copy_measurement_helpers(parent / "tools", "a" * 40)
             baseline = root / baseline_name
             baseline.mkdir()
             context = {
@@ -265,6 +304,7 @@ class MeasurementComparisonTests(unittest.TestCase):
                 ),
                 "installed_target": "x86_64-unknown-linux-musl",
                 "features": "ci" if kind == "coverage" else "ci-perf",
+                "helper_revision": "a" * 40,
                 "versions": dict.fromkeys(("rustc", "cargo", "python", "conda"), "tool-version"),
                 "interpreters": dict.fromkeys(
                     ("conda-base", "conda-named", "venv"), "Python 3.12.1"
@@ -304,7 +344,14 @@ class MeasurementComparisonTests(unittest.TestCase):
                 del base_context["versions"]["rustc"]
             elif invalid == "workload":
                 current_context["features"] = base_context["features"] = "other-features"
-            elif invalid not in (None, "missing", "malformed", "revision"):
+            elif invalid == "helper":
+                base_context["helper_revision"] = "b" * 40
+            elif invalid == "coverage-only":
+                del current_context["versions"]["pixi"]
+                del base_context["versions"]["pixi"]
+            elif invalid not in (
+                None, "missing", "malformed", "revision", "missing-helper", "missing-dependency",
+            ):
                 raise ValueError(f"Unknown invalid measurement case: {invalid}")
             (root / "measurement-context.json").write_text(json.dumps(current_context), encoding="utf-8")
             (baseline / "measurement-context.json").write_text(json.dumps(base_context), encoding="utf-8")
@@ -316,16 +363,16 @@ class MeasurementComparisonTests(unittest.TestCase):
                 (baseline / "measurement-context.json").unlink()
             elif invalid == "malformed":
                 (baseline / "measurement-context.json").write_text("{", encoding="utf-8")
+            elif invalid == "missing-helper":
+                (helper.parent / "helper-revision.txt").unlink()
+            elif invalid == "missing-dependency":
+                (helper.parent / "quality_snapshot.py").unlink()
             environment = {
                 **os.environ,
                 "PYTHONPATH": str(ROOT / "scripts"),
                 "PYTHONDONTWRITEBYTECODE": "1",
-                "GITHUB_WORKSPACE": str(root),
-                "GITHUB_STEP_SUMMARY": str(root / "summary.md"),
-                "PLATFORM": "Linux",
-                "MEASUREMENT_TARGET": "x86_64-unknown-linux-musl",
-                "HEAD_SHA": "a" * 40,
-                "BASE_SHA": "b" * 40,
+            }
+            results = {
                 "MEASUREMENTS_RESULT": "success",
                 **dict.fromkeys((
                     "HEAD_BENCHMARK_OUTCOME", "BASE_BENCHMARK_OUTCOME",
@@ -333,13 +380,32 @@ class MeasurementComparisonTests(unittest.TestCase):
                 ), "success"),
                 **(outcomes or {}),
             }
-            result = subprocess.run(
-                [sys.executable, "-B", "-c", code], cwd=root, env=environment,
-                capture_output=True, text=True, check=False,
-            )
             report_path = root / (
                 "coverage-report.md" if kind == "coverage" else "performance-report.md"
             )
+            arguments = [
+                sys.executable, "-B", str(helper), "compare", kind,
+                "--current-dir", str(root), "--baseline-dir", str(baseline),
+                "--expected-head", "a" * 40, "--expected-base", "b" * 40,
+                "--target", "x86_64-unknown-linux-musl", "--workspace", str(root),
+                "--platform", "Linux", "--report", str(report_path),
+                "--summary", str(root / "summary.md"),
+            ]
+            for variable, flag in (
+                ("MEASUREMENTS_RESULT", "--measurements-result"),
+                ("HEAD_BENCHMARK_OUTCOME", "--head-benchmark-outcome"),
+                ("BASE_BENCHMARK_OUTCOME", "--base-benchmark-outcome"),
+                ("HEAD_METRICS_OUTCOME", "--head-metrics-outcome"),
+                ("BASE_METRICS_OUTCOME", "--base-metrics-outcome"),
+            ):
+                arguments.extend((flag, results[variable]))
+            result = subprocess.run(
+                arguments, cwd=root, env=environment,
+                capture_output=True, text=True, check=False,
+            )
+            if invalid == "missing-dependency":
+                self.assertFalse(report_path.exists())
+                return result, ""
             self.assertTrue(report_path.is_file(), result.stderr)
             return result, report_path.read_text(encoding="utf-8")
 
@@ -358,7 +424,7 @@ class MeasurementComparisonTests(unittest.TestCase):
         for kind in ("coverage", "performance"):
             for invalid in (
                 "missing", "malformed", "incomplete", "tool",
-                "image", "fixture", "workload", "revision",
+                "image", "fixture", "workload", "revision", "helper", "missing-helper",
             ):
                 with self.subTest(kind=kind, invalid=invalid):
                     result, report = self.run_measurement(kind, invalid=invalid)
@@ -377,6 +443,131 @@ class MeasurementComparisonTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn("Invalid snapshot", report)
                 self.assertNotIn("Within regression budget", report)
+
+    def test_missing_staged_dependency_cannot_fall_back_to_pythonpath(self) -> None:
+        result, _ = self.run_measurement("coverage", invalid="missing-dependency")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Missing measurement helper dependency", result.stderr)
+
+    def test_coverage_still_requires_its_manager_specific_context(self) -> None:
+        result, report = self.run_measurement("coverage", invalid="coverage-only")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Missing versions measurement context", report)
+
+
+class MeasurementCaptureTests(unittest.TestCase):
+    def test_capture_keeps_base_source_separate_from_helper_and_discovery_workspace(self) -> None:
+        for workload in ("coverage", "performance"):
+            with self.subTest(workload=workload), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "old-base"
+                workspace = root / "workspace"
+                source.mkdir()
+                workspace.mkdir()
+                helper = copy_measurement_helpers(root / "tools", "a" * 40)
+                output = workspace / "baseline"
+                arguments = [
+                    "capture", workload, "--source-dir", str(source),
+                    "--workspace", str(workspace), "--output-dir", str(output),
+                    "--target", "aarch64-apple-darwin", "--expected-source", "b" * 40,
+                    "--workflow-revision", "a" * 40,
+                ]
+                if workload == "coverage":
+                    arguments.extend(("--pipenv-prefix", str(workspace / "created-pipenv")))
+                calls = []
+
+                def command(*args, cwd):
+                    calls.append((args, cwd))
+                    return "b" * 40 if args[0] == "git" else "version"
+
+                with (
+                    patch.object(measurement, "__file__", str(helper)),
+                    patch.object(measurement, "command_output", side_effect=command),
+                    patch.dict(os.environ, dict.fromkeys(measurement.RUNNER_FIELDS, "runner")),
+                ):
+                    self.assertEqual(measurement.main(arguments), 0)
+                context = json.loads((output / "measurement-context.json").read_text(encoding="utf-8"))
+                self.assertEqual((output / "source-revision.txt").read_text().strip(), "b" * 40)
+                self.assertEqual(context["helper_revision"], "a" * 40)
+                self.assertFalse((source / "scripts" / "quality_measurement.py").exists())
+                for args, cwd in calls:
+                    self.assertEqual(
+                        cwd, source.resolve() if args[0] in ("git", "rustc", "cargo") else workspace.resolve()
+                    )
+                if workload == "coverage":
+                    self.assertIn("pipenv", context["versions"])
+                    self.assertIn("pixi-dev", context["interpreters"])
+                    self.assertIn("coverage_target", context)
+                    self.assertTrue(any("test-env1" in args for args, _ in calls))
+                else:
+                    self.assertNotIn("pipenv", context["versions"])
+                    self.assertNotIn("pixi-dev", context["interpreters"])
+                    self.assertEqual(context["discovery_workspace"], str(workspace.resolve()))
+                    self.assertTrue(any("perf-test-env" in args for args, _ in calls))
+
+    def test_capture_rejects_head_reused_as_base_before_writing_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "evidence"
+            arguments = [
+                "capture", "performance", "--source-dir", str(root),
+                "--workspace", str(root), "--output-dir", str(output),
+                "--target", "aarch64-apple-darwin", "--expected-source", "b" * 40,
+                "--workflow-revision", "a" * 40,
+            ]
+            with patch.object(measurement, "command_output", return_value="a" * 40):
+                self.assertEqual(measurement.main(arguments), 1)
+            self.assertFalse(output.exists())
+
+    def test_stage_exports_immutable_helpers_without_copying_measured_source(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "workflow"
+            source.mkdir()
+            destination = root / "tools"
+            files = {
+                name: (ROOT / "scripts" / name).read_bytes()
+                for name in ("quality_measurement.py", "quality_snapshot.py")
+            }
+            arguments = [
+                "stage", "--source-dir", str(source), "--output-dir", str(destination),
+                "--revision", "a" * 40,
+            ]
+            with (
+                patch.object(measurement, "command_output", return_value="a" * 40),
+                patch.object(
+                    measurement, "helper_blob",
+                    side_effect=lambda path, revision, filename: files[filename],
+                ) as blobs,
+            ):
+                self.assertEqual(measurement.main(arguments), 0)
+            for name, content in files.items():
+                self.assertEqual((destination / name).read_bytes(), content)
+            self.assertEqual((destination / "helper-revision.txt").read_text().strip(), "a" * 40)
+            self.assertEqual(list(source.iterdir()), [])
+            self.assertEqual(blobs.call_count, 2)
+            self.assertTrue(all(call.args[1] == "a" * 40 for call in blobs.call_args_list))
+
+    def test_stage_rejects_missing_helpers_and_workspace_injection(self) -> None:
+        for invalid in ("revision", "missing-helper", "inside-workspace"):
+            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "workflow"
+                source.mkdir()
+                destination = source / "tools" if invalid == "inside-workspace" else root / "tools"
+                arguments = [
+                    "stage", "--source-dir", str(source), "--output-dir", str(destination),
+                    "--revision", "a" * 40,
+                ]
+                with (
+                    patch.object(
+                        measurement, "command_output",
+                        return_value=("b" if invalid == "revision" else "a") * 40,
+                    ),
+                    patch.object(measurement, "helper_blob", side_effect=SnapshotError("Missing helper")),
+                ):
+                    self.assertEqual(measurement.main(arguments), 1)
+                self.assertFalse((destination / "helper-revision.txt").exists())
 
 
 if __name__ == "__main__":

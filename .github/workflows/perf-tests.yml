@@ -35,6 +35,11 @@ jobs:
             conda_arch: x86_64
             platform: macOS
             comment_header: perf-macos
+          - os: macos-15
+            target: aarch64-apple-darwin
+            conda_arch: arm64
+            platform: macOS ARM64
+            comment_header: perf-macos-arm64
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,6 +67,14 @@ jobs:
 
       - name: Validate Snapshot Comparator
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
+        shell: bash
+
+      - name: Stage Performance Measurement Helper
+        run: >-
+          python scripts/quality_measurement.py stage
+          --source-dir "$GITHUB_WORKSPACE"
+          --output-dir "$RUNNER_TEMP/quality-tools"
+          --revision "$GITHUB_SHA"
         shell: bash
 
       - name: Add Conda to PATH (Windows)
@@ -138,64 +151,14 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           MEASUREMENT_TARGET: ${{ matrix.target }}
         run: |
-          python - <<'PY'
-          import json
-          import os
-          import shutil
-          import subprocess
-          from pathlib import Path
-
-          def output(*arguments, cwd=None):
-              executable = shutil.which(arguments[0])
-              if executable is None:
-                  raise RuntimeError(f"Required measurement tool not found: {arguments[0]}")
-              value = subprocess.check_output(
-                  [executable, *arguments[1:]], cwd=cwd, text=True, encoding="utf-8"
-              ).strip()
-              if not value:
-                  raise RuntimeError(f"Empty measurement version: {arguments[0]}")
-              return value
-
-          workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
-          runner = {key: os.environ[key] for key in (
-              "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"
-          )}
-          if not all(value.strip() for value in runner.values()):
-              raise RuntimeError("Runner image context must not be empty")
-          venv_python = (
-              workspace / ".venv" / "Scripts" / "python.exe" if os.name == "nt"
-              else workspace / ".venv" / "bin" / "python"
-          )
-          interpreters = {
-              "venv": output(str(venv_python), "--version"),
-              "conda-base": output("conda", "run", "--name", "base", "python", "--version"),
-              "conda-named": output("conda", "run", "--name", "perf-test-env", "python", "--version"),
-          }
-          for directory, destination, variable in (
-              (workspace, workspace, "HEAD_SHA"),
-              (Path(os.environ["RUNNER_TEMP"]) / "perf-base", workspace / "baseline-perf", "BASE_SHA"),
-          ):
-              source = output("git", "rev-parse", "HEAD", cwd=directory)
-              if source != os.environ[variable]:
-                  raise RuntimeError(f"Unexpected {variable} checkout: {source}")
-              context = {
-                  "runner": runner,
-                  "installed_target": os.environ["MEASUREMENT_TARGET"],
-                  "features": "ci-perf",
-                  "discovery_workspace": str(workspace),
-                  "versions": {
-                      "rustc": output("rustc", "-vV", cwd=directory),
-                      "cargo": output("cargo", "--version", cwd=directory),
-                      "python": output("python", "--version"),
-                      "conda": output("conda", "--version"),
-                  },
-                  "interpreters": interpreters,
-              }
-              (destination / "source-revision.txt").write_text(source + "\n", encoding="utf-8")
-              (destination / "measurement-context.json").write_text(
-                  json.dumps(context, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-              )
-          PY
+          python "$RUNNER_TEMP/quality-tools/quality_measurement.py" capture performance \
+            --source-dir "$GITHUB_WORKSPACE" --workspace "$GITHUB_WORKSPACE" \
+            --output-dir "$GITHUB_WORKSPACE" --target "$MEASUREMENT_TARGET" \
+            --expected-source "$HEAD_SHA" --workflow-revision "$GITHUB_SHA"
+          python "$RUNNER_TEMP/quality-tools/quality_measurement.py" capture performance \
+            --source-dir "$RUNNER_TEMP/perf-base" --workspace "$GITHUB_WORKSPACE" \
+            --output-dir "$GITHUB_WORKSPACE/baseline-perf" --target "$MEASUREMENT_TARGET" \
+            --expected-source "$BASE_SHA" --workflow-revision "$GITHUB_SHA"
         shell: bash
 
       - name: Cargo Fetch
@@ -287,79 +250,21 @@ jobs:
           HEAD_METRICS_OUTCOME: ${{ steps.metrics.outcome }}
           BASE_METRICS_OUTCOME: ${{ steps.base_metrics.outcome }}
           PLATFORM: ${{ matrix.platform }}
-        run: |
-          python - <<'PY'
-          import argparse
-          import os
-          import re
-          import sys
-          from pathlib import Path
-
-          sys.path.insert(0, "scripts")
-          from quality_snapshot import SnapshotError, load_json, run_performance, write_report
-
-          report = Path("performance-report.md")
-          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
-          platform = os.environ["PLATFORM"]
-
-          def context(path):
-              value = load_json(path)
-              required = {
-                  "runner": ("RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"),
-                  "versions": ("rustc", "cargo", "python", "conda"),
-                  "interpreters": ("conda-base", "conda-named", "venv"),
-              }
-              for group, keys in required.items():
-                  values = value.get(group)
-                  if not isinstance(values, dict) or any(
-                      not isinstance(values.get(key), str) or not values[key].strip()
-                      for key in keys
-                  ):
-                      raise SnapshotError(f"Missing {group} measurement context in {path}")
-              if (
-                  value.get("features") != "ci-perf"
-                  or value.get("installed_target") != os.environ["MEASUREMENT_TARGET"]
-                  or value.get("discovery_workspace") != str(Path(os.environ["GITHUB_WORKSPACE"]).resolve())
-              ):
-                  raise SnapshotError(f"Incompatible performance workload in {path}")
-              return value
-
-          try:
-              for variable in (
-                  "HEAD_BENCHMARK_OUTCOME", "BASE_BENCHMARK_OUTCOME",
-                  "HEAD_METRICS_OUTCOME", "BASE_METRICS_OUTCOME",
-              ):
-                  if os.environ.get(variable) != "success":
-                      raise SnapshotError(f"Required benchmark or JSON extraction failed: {variable}")
-              for filename, variable in (
-                  ("source-revision.txt", "HEAD_SHA"),
-                  ("baseline-perf/source-revision.txt", "BASE_SHA"),
-              ):
-                  expected = os.environ.get(variable, "")
-                  if (
-                      re.fullmatch(r"[0-9a-f]{40}", expected) is None
-                      or Path(filename).read_text(encoding="utf-8").strip() != expected
-                  ):
-                      raise SnapshotError(f"Unexpected source revision in {filename}")
-              current = context(Path("measurement-context.json"))
-              baseline = context(Path("baseline-perf/measurement-context.json"))
-              if current != baseline:
-                  raise SnapshotError(
-                      "Performance runner, tool, or fixture versions differ; inspect both measurement contexts"
-                  )
-          except (OSError, UnicodeError, SnapshotError) as error:
-              print(f"Invalid performance measurement: {error}", file=sys.stderr)
-              write_report(
-                  f"## Performance Report ({platform})\n\n:x: **Invalid snapshot:** {error}\n",
-                  report, summary,
-              )
-              raise SystemExit(1)
-
-          raise SystemExit(run_performance(argparse.Namespace(
-              current=Path("metrics.json"), baseline=Path("baseline-perf/metrics.json"),
-              platform=platform, report=report, summary=summary,
-          )))
-          PY
+        run: >-
+          python "$RUNNER_TEMP/quality-tools/quality_measurement.py" compare performance
+          --current-dir .
+          --baseline-dir baseline-perf
+          --expected-head "$HEAD_SHA"
+          --expected-base "$BASE_SHA"
+          --target "$MEASUREMENT_TARGET"
+          --workspace "$GITHUB_WORKSPACE"
+          --head-benchmark-outcome "$HEAD_BENCHMARK_OUTCOME"
+          --base-benchmark-outcome "$BASE_BENCHMARK_OUTCOME"
+          --head-metrics-outcome "$HEAD_METRICS_OUTCOME"
+          --base-metrics-outcome "$BASE_METRICS_OUTCOME"
+          --platform "$PLATFORM"
+          --report performance-report.md
+          --summary "$GITHUB_STEP_SUMMARY"
         shell: bash
 
       - name: Upload PR Performance Results
