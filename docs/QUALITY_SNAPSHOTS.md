@@ -215,6 +215,20 @@ the unchanged line/function comparator gates those comparable artifacts. This wo
 PR without silently accepting an absent macOS baseline. Main/manual runs publish the native
 measurement and proof for inspection. Existing functional macOS installed-manager jobs remain.
 
+Concurrency tests observe a pending wait before releasing an owner or worker. Cache wait
+observations and JSONRPC writer-start observations compile only with `#[cfg(test)]`; they do
+not change production scheduling or shutdown. The descendant termination check is also tested
+with a file lease held until its pending poll is observed. These handshakes prevent scheduling
+from deciding whether intended waiter paths execute, including individual writer instantiations
+that a positive union of LCOV `DA` lines can obscure. Raw counters are not normalized and the
+raw gate remains unchanged.
+
+The functional macOS comparison permits only the extra `MacPythonOrg` PATH shortcut at
+`/Users/runner/hostedtoolcache/Python/<major.minor.patch>/{x64,arm64}/bin/python`.
+Before excluding it from either alias list, the test requires it to resolve to that environment's
+executable. Missing or different targets fail; unrelated paths and ordinary aliases remain
+strictly compared, and the normalization does not modify interpreter metadata.
+
 Stable Rust line instrumentation does not provide condition/branch outcomes. Reports show LCOV
 `BRDA` totals when supplied, otherwise explicitly report branch data as unavailable (not 100%).
 Native malformed-frame/envelope, EOF, broken-output, saturation, and descendant tests provide

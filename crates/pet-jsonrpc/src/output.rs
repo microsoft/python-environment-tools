@@ -101,9 +101,22 @@ impl Output {
             ready: Condvar::new(),
         });
         let writer_shared = Arc::clone(&shared);
+        #[cfg(test)]
+        let (waiting_tx, waiting_rx) = std::sync::mpsc::sync_channel(1);
         thread::Builder::new()
             .name("pet-jsonrpc-output".to_string())
-            .spawn(move || writer_loop(writer, writer_shared))?;
+            .spawn(move || {
+                writer_loop(
+                    writer,
+                    writer_shared,
+                    #[cfg(test)]
+                    waiting_tx,
+                )
+            })?;
+        #[cfg(test)]
+        waiting_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("test writer did not reach its empty-queue wait");
 
         Ok(Self {
             shared,
@@ -209,7 +222,13 @@ impl Output {
     }
 }
 
-fn writer_loop(mut writer: impl Write, shared: Arc<Shared>) {
+fn writer_loop(
+    mut writer: impl Write,
+    shared: Arc<Shared>,
+    #[cfg(test)] waiting: std::sync::mpsc::SyncSender<()>,
+) {
+    #[cfg(test)]
+    let mut waiting = Some(waiting);
     loop {
         let frame = {
             let mut state = shared
@@ -223,6 +242,10 @@ fn writer_loop(mut writer: impl Write, shared: Arc<Shared>) {
                 }
                 if !state.accepting {
                     return;
+                }
+                #[cfg(test)]
+                if let Some(waiting) = waiting.take() {
+                    waiting.send(()).expect("test writer observer dropped");
                 }
                 state = shared
                     .ready
@@ -562,11 +585,11 @@ mod tests {
 
     impl Write for BlockingWriter {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let (released, ready) = &*self.release;
+            let mut released = released.lock().expect("release lock poisoned");
             if let Some(entered) = self.entered.take() {
                 entered.send(()).expect("blocked writer observer dropped");
             }
-            let (released, ready) = &*self.release;
-            let mut released = released.lock().expect("release lock poisoned");
             while !*released {
                 released = ready.wait(released).expect("release lock poisoned");
             }
@@ -616,13 +639,13 @@ mod tests {
 
     impl Write for DelayedFailingWriter {
         fn write(&mut self, _bytes: &[u8]) -> io::Result<usize> {
+            let (released, ready) = &*self.release;
+            let mut released = released.lock().expect("release lock poisoned");
             self.entered
                 .take()
                 .expect("writer entered more than once")
                 .send(())
                 .expect("writer observer dropped");
-            let (released, ready) = &*self.release;
-            let mut released = released.lock().expect("release lock poisoned");
             while !*released {
                 released = ready.wait(released).expect("release lock poisoned");
             }
@@ -1088,11 +1111,11 @@ mod tests {
         where
             S: Serializer,
         {
+            let (released, ready) = &*self.release;
+            let mut released = released.lock().expect("release lock poisoned");
             self.entered
                 .send(())
                 .expect("serialization observer dropped");
-            let (released, ready) = &*self.release;
-            let mut released = released.lock().expect("release lock poisoned");
             while !*released {
                 released = ready.wait(released).expect("release lock poisoned");
             }
