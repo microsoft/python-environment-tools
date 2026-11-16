@@ -14,12 +14,14 @@ permissions:
   pull-requests: write
 
 jobs:
-  coverage:
-    name: Coverage
+  measurements:
+    name: Coverage measurement (${{ matrix.platform }}, ${{ matrix.revision }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
+        revision: [base, head]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -30,14 +32,17 @@ jobs:
             platform: Windows
             comment_header: coverage-windows
     steps:
-      - name: Checkout
+      - name: Checkout Workflow
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Post Coverage Started Comment
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: >-
+          matrix.revision == 'head' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
@@ -58,16 +63,35 @@ jobs:
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
         shell: bash
 
+      - name: Stage Coverage Measurement Helper
+        run: >-
+          python scripts/quality_measurement.py stage
+          --source-dir "$GITHUB_WORKSPACE"
+          --output-dir "$RUNNER_TEMP/quality-tools"
+          --revision "$GITHUB_SHA"
+        shell: bash
+
+      - name: Checkout Measurement Source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.revision == 'base' && github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Add Conda to PATH (Windows)
         if: startsWith(matrix.os, 'windows')
         run: |
           $path = $env:PATH + ";" + $env:CONDA + "\condabin"
           echo "PATH=$path" >> $env:GITHUB_ENV
 
-      - name: Add Conda to PATH (Linux)
+      - name: Set up Conda (Linux)
         if: startsWith(matrix.os, 'ubuntu')
-        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
-        shell: bash
+        uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
+        with:
+          activate-environment: ""
+          auto-activate: false
+          run-init: false
+          conda-remove-defaults: false
 
       - name: Check Conda version
         run: conda info --all
@@ -86,7 +110,12 @@ jobs:
         run: pipenv --version
 
       - name: Create a Pipenv Environment
-        run: pipenv install
+        id: pipenv
+        run: |
+          pipenv install
+          prefix="$(pipenv --venv)"
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Install virtualenvwrapper (Linux)
         if: startsWith(matrix.os, 'ubuntu')
@@ -197,6 +226,22 @@ jobs:
         run: cargo fetch
         shell: bash
 
+      - name: Capture Coverage Measurement Context
+        env:
+          MEASUREMENT_TARGET: ${{ matrix.target }}
+          MEASURED_SHA: ${{ matrix.revision == 'base' && github.event.pull_request.base.sha || github.sha }}
+          CREATED_PIPENV_PREFIX: ${{ steps.pipenv.outputs.prefix }}
+        run: >-
+          python "$RUNNER_TEMP/quality-tools/quality_measurement.py" capture coverage
+          --source-dir "$GITHUB_WORKSPACE"
+          --workspace "$GITHUB_WORKSPACE"
+          --output-dir "$GITHUB_WORKSPACE"
+          --target "$MEASUREMENT_TARGET"
+          --expected-source "$MEASURED_SHA"
+          --workflow-revision "$GITHUB_SHA"
+          --pipenv-prefix "$CREATED_PIPENV_PREFIX"
+        shell: bash
+
       - name: Run Tests with Coverage
         id: coverage
         run: cargo llvm-cov --features ci --lcov --output-path lcov.info -- --nocapture --test-threads=1
@@ -220,40 +265,85 @@ jobs:
           --output production-coverage
         shell: bash
 
-      - name: Wait for Exact PR Base Coverage
-        id: wait_for_base_coverage
+      - name: Upload Coverage Measurement
         if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-measurement-${{ matrix.os }}-${{ matrix.revision }}-${{ github.run_attempt }}
+          path: |
+            lcov.info
+            measurement-context.json
+            source-revision.txt
+            production-coverage/
+            subprocess-coverage/
+            subprocess-coverage.json
+          if-no-files-found: error
+
+  coverage:
+    name: Coverage
+    needs: measurements
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            platform: Linux
+            comment_header: coverage-linux
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: Windows
+            comment_header: coverage-windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set Python to PATH
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Stage Coverage Comparison Helper
         run: >-
-          python scripts/wait_for_baseline.py
-          --repository "${{ github.repository }}"
-          --workflow coverage-baseline.yml
-          --commit "${{ github.event.pull_request.base.sha }}"
-          --artifact "coverage-baseline-${{ matrix.os }}"
-          --timeout-seconds 1200
-          --poll-seconds 20
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+          python scripts/quality_measurement.py stage
+          --source-dir "$GITHUB_WORKSPACE"
+          --output-dir "$RUNNER_TEMP/quality-tools"
+          --revision "$GITHUB_SHA"
         shell: bash
 
-      - name: Download Exact PR Base Coverage
-        if: always() && steps.wait_for_base_coverage.outcome == 'success'
-        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
+      - name: Download Head Coverage Measurement
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          workflow: coverage-baseline.yml
-          commit: ${{ github.event.pull_request.base.sha }}
-          workflow_conclusion: success
-          name: coverage-baseline-${{ matrix.os }}
+          name: coverage-measurement-${{ matrix.os }}-head-${{ github.run_attempt }}
+
+      - name: Download Exact PR Base Coverage
+        if: always()
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-measurement-${{ matrix.os }}-base-${{ github.run_attempt }}
           path: baseline-coverage
-          check_artifacts: true
-          search_artifacts: true
 
       - name: Compare Coverage Snapshot
         if: always()
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+          MEASUREMENT_TARGET: ${{ matrix.target }}
+          MEASUREMENTS_RESULT: ${{ needs.measurements.result }}
+          PLATFORM: ${{ matrix.platform }}
         run: >-
-          python scripts/quality_snapshot.py coverage
-          --current lcov.info
-          --baseline baseline-coverage/lcov.info
-          --platform "${{ matrix.platform }}"
+          python "$RUNNER_TEMP/quality-tools/quality_measurement.py" compare coverage
+          --current-dir .
+          --baseline-dir baseline-coverage
+          --expected-head "$HEAD_SHA"
+          --expected-base "$BASE_SHA"
+          --target "$MEASUREMENT_TARGET"
+          --measurements-result "$MEASUREMENTS_RESULT"
+          --platform "$PLATFORM"
           --report coverage-report.md
           --summary "$GITHUB_STEP_SUMMARY"
         shell: bash
@@ -265,6 +355,9 @@ jobs:
           name: coverage-pr-${{ matrix.os }}
           path: |
             lcov.info
+            measurement-context.json
+            source-revision.txt
+            baseline-coverage/
             coverage-report.md
             production-coverage/
             subprocess-coverage/
