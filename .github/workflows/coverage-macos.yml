@@ -6,12 +6,18 @@ on:
   push:
     branches: [main, 'release*', 'release/*', 'release-*']
   workflow_dispatch:
+    inputs:
+      same_commit_diagnostic:
+        description: Run the bounded unchanged-source coverage experiment
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   coverage:
+    if: inputs.same_commit_diagnostic != true
     runs-on: macos-15
     timeout-minutes: 35
     steps:
@@ -91,3 +97,82 @@ jobs:
             subprocess-coverage/
             subprocess-coverage.json
           retention-days: 30
+
+  same-commit-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.same_commit_diagnostic
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout unchanged measurement revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 5ac67ce6dc78dd24c2d0e766bd9b07c1f161721a
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set Python to PATH
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Rust Tool Chain setup
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Measure unchanged source in A B B A order
+        run: |
+          mkdir -p "$RUNNER_TEMP/macos-aa"
+          git worktree add --detach "$RUNNER_TEMP/coverage-base" HEAD
+          for pass in head-1 base-1 base-2 head-2; do
+            case "$pass" in
+              head-*) source="$GITHUB_WORKSPACE"; target="$GITHUB_WORKSPACE/target" ;;
+              base-*) source="$RUNNER_TEMP/coverage-base"; target="$RUNNER_TEMP/coverage-base-target" ;;
+            esac
+            result="$RUNNER_TEMP/macos-aa/$pass"
+            mkdir -p "$result"
+            (
+              cd "$source"
+              export CARGO_TARGET_DIR="$target"
+              export PET_SUBPROCESS_COVERAGE_PROOF="$result/subprocess-coverage.json"
+              {
+                git rev-parse HEAD
+                rustc -Vv
+                cargo llvm-cov --version
+                printf 'source=%s\ntarget=%s\npass=%s\n' "$source" "$target" "$pass"
+                shasum -a 256 Cargo.lock
+              } > "$result/context.txt"
+              cargo llvm-cov --workspace --lcov --output-path "$result/lcov.info" -- --test-threads=1
+              cargo llvm-cov report --json --output-path "$result/llvm.json"
+              cargo llvm-cov report --lcov --output-path "$result/lcov-repeat.info"
+              python scripts/coverage_detail.py proof \
+                --manifest "$result/subprocess-coverage.json" --output "$result/subprocess-coverage"
+              find "$target" -type f \( -name '*.profraw' -o -name '*.profdata' \) -print0 |
+                tar --null -czf "$result/profiles.tar.gz" --files-from -
+            )
+          done
+
+      - name: Compare all predeclared pairs
+        run: |
+          cd "$RUNNER_TEMP/macos-aa"
+          status=0
+          for pair in head-1:base-1 base-2:head-2 head-1:head-2 base-1:base-2; do
+            current="${pair%:*}"
+            baseline="${pair#*:}"
+            python "$GITHUB_WORKSPACE/scripts/quality_snapshot.py" coverage \
+              --current "$current/lcov.info" --baseline "$baseline/lcov.info" --platform macOS \
+              --report "$current-vs-$baseline.md" --summary "$GITHUB_STEP_SUMMARY" || status=1
+          done
+          exit "$status"
+
+      - name: Upload attempt-qualified diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-aa-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/macos-aa/
+          retention-days: 14
