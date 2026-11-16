@@ -1,6 +1,45 @@
 # Quality snapshots
 
-PET uses pull-request snapshots to prevent performance and coverage drift. Each pull request is compared with artifacts produced for the exact pull-request base commit, not the latest moving `main` tip.
+PET uses pull-request snapshots to prevent performance and coverage drift. Each pull request
+measures its exact base commit with the current workflow setup, rather than compare against a
+moving `main` tip or a historical measurement from a different compiler or runner image.
+
+## Comparable measurements
+
+Linux and Windows coverage run the exact base and tested PR revision in separate fresh jobs.
+Both use the same installed-manager `ci` workload and fixture setup. They must not be measured
+sequentially against shared mutable fixtures: the Unix Conda CI tests create environments and
+install Mamba into the base installation. Native ARM64 macOS coverage retains its separate
+default-feature workload and same-runner base measurement.
+
+Coverage measurement artifacts include `source-revision.txt` and `measurement-context.json`,
+LCOV, production reports, and subprocess proof. Artifact names distinguish revision and workflow
+attempt; partial reruns cannot silently reuse the other revision's earlier measurement. The gate
+requires successful measurements/proofs, the expected source SHAs, and matching nonempty runner
+image, architecture, toolchain/LLVM, tool, feature, and fixture-interpreter versions before the
+unchanged numerical comparison. Missing or incompatible evidence is an invalid snapshot, not an
+improvement or a reason to fall back to an older successful artifact. Separate coverage machines
+are not claimed to have identical hardware; observable context mismatches remain blocking.
+
+Performance builds each revision and its benchmark harness in its own source tree before timing,
+then measures the exact base and PR sequentially on the same runner. The detached base worktree
+is outside the discovery workspace; both harnesses inherit the same `GITHUB_WORKSPACE`, PATH,
+Conda installation, and workspace `.venv`. Builds explicitly use each source tree's normal
+`target` directory because the harness resolves its PET executable there rather than honor
+`CARGO_TARGET_DIR`. Each invocation still uses independent PID-specific caches and retains every
+cold/warm sample and inventory check. Both benchmark executions and JSON extractions must succeed;
+the report retains both actual snapshots, source/context evidence, and benchmark logs.
+Manual performance runs resolve the default branch's exact SHA once and measure it the same way.
+
+Linux fixture jobs explicitly provision Miniconda without creating or activating an additional
+environment. macOS x86_64 installed-manager/performance jobs use `macos-15-intel`; existing ARM64
+jobs use `macos-15`, with matching native Conda installers. Host-image inventory changes are
+measured on both revisions, never normalized away or accepted by changing inventory schemas.
+
+The push/manual coverage and performance baseline workflows remain publishers for inspection
+and history, but PR gates no longer depend on their historical artifacts. Fresh comparisons add
+a real base coverage job and base performance build/measurement per platform. All regression
+budgets, sample requirements, inventory checks, and required coverage evidence remain unchanged.
 
 ## Performance gate
 

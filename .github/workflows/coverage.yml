@@ -14,12 +14,14 @@ permissions:
   pull-requests: write
 
 jobs:
-  coverage:
-    name: Coverage
+  measurements:
+    name: Coverage measurement (${{ matrix.platform }}, ${{ matrix.revision }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
+        revision: [base, head]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -33,11 +35,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ matrix.revision == 'base' && github.event.pull_request.base.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Post Coverage Started Comment
-        if: github.event.pull_request.head.repo.full_name == github.repository
+        if: >-
+          matrix.revision == 'head' &&
+          github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
         uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
         with:
@@ -64,10 +69,14 @@ jobs:
           $path = $env:PATH + ";" + $env:CONDA + "\condabin"
           echo "PATH=$path" >> $env:GITHUB_ENV
 
-      - name: Add Conda to PATH (Linux)
+      - name: Set up Conda (Linux)
         if: startsWith(matrix.os, 'ubuntu')
-        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
-        shell: bash
+        uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
+        with:
+          activate-environment: ""
+          auto-activate: false
+          run-init: false
+          conda-remove-defaults: false
 
       - name: Check Conda version
         run: conda info --all
@@ -86,7 +95,12 @@ jobs:
         run: pipenv --version
 
       - name: Create a Pipenv Environment
-        run: pipenv install
+        id: pipenv
+        run: |
+          pipenv install
+          prefix="$(pipenv --venv)"
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Install virtualenvwrapper (Linux)
         if: startsWith(matrix.os, 'ubuntu')
@@ -197,6 +211,85 @@ jobs:
         run: cargo fetch
         shell: bash
 
+      - name: Capture Coverage Measurement Context
+        env:
+          MEASUREMENT_TARGET: ${{ matrix.target }}
+          CREATED_PIPENV_PREFIX: ${{ steps.pipenv.outputs.prefix }}
+        run: |
+          git rev-parse HEAD > source-revision.txt
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          def output(*arguments):
+              executable = shutil.which(arguments[0])
+              if executable is None:
+                  raise RuntimeError(f"Required measurement tool not found: {arguments[0]}")
+              value = subprocess.check_output(
+                  [executable, *arguments[1:]], text=True, encoding="utf-8"
+              ).strip()
+              if not value:
+                  raise RuntimeError(f"Empty measurement version: {arguments[0]}")
+              return value
+
+          runner = {key: os.environ[key] for key in (
+              "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"
+          )}
+          if not all(value.strip() for value in runner.values()):
+              raise RuntimeError("Runner image context must not be empty")
+          windows = os.name == "nt"
+          python_name = "python.exe" if windows else "python"
+          venv_bin = "Scripts" if windows else "bin"
+          pipenv_prefix = Path(os.environ["CREATED_PIPENV_PREFIX"])
+          interpreters = {
+              name: output(str(prefix / venv_bin / python_name), "--version")
+              for name, prefix in (
+                  ("venv", Path(".venv")),
+                  ("venv2", Path(".venv2")),
+                  ("pipenv", pipenv_prefix),
+              )
+          }
+          for name in ("default", "dev"):
+              prefix = Path(".pixi") / "envs" / name
+              executable = prefix / python_name if windows else prefix / "bin" / python_name
+              interpreters[f"pixi-{name}"] = output(str(executable), "--version")
+          for label, selector in (
+              ("base", ("--name", "base")),
+              ("named", ("--name", "test-env1")),
+              ("prefix", ("--prefix", str(Path("prefix-envs/.conda1").resolve()))),
+          ):
+              interpreters[f"conda-{label}"] = output(
+                  "conda", "run", *selector, "python", "--version"
+              )
+          interpreters["pyenv"] = "\n".join(sorted(
+              output("pyenv", "versions", "--bare").splitlines()
+          ))
+          context = {
+              "runner": runner,
+              "installed_target": os.environ["MEASUREMENT_TARGET"],
+              "coverage_target": "host",
+              "features": "ci",
+              "versions": {
+                  "rustc": output("rustc", "-vV"),
+                  "cargo": output("cargo", "--version"),
+                  "cargo-llvm-cov": output("cargo", "llvm-cov", "--version"),
+                  "python": output("python", "--version"),
+                  "conda": output("conda", "--version"),
+                  "pipenv": output("pipenv", "--version"),
+                  "pyenv": output("pyenv", "--version"),
+                  "pixi": output("pixi", "--version"),
+              },
+              "interpreters": interpreters,
+          }
+          Path("measurement-context.json").write_text(
+              json.dumps(context, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+        shell: bash
+
       - name: Run Tests with Coverage
         id: coverage
         run: cargo llvm-cov --features ci --lcov --output-path lcov.info -- --nocapture --test-threads=1
@@ -220,42 +313,143 @@ jobs:
           --output production-coverage
         shell: bash
 
-      - name: Wait for Exact PR Base Coverage
-        id: wait_for_base_coverage
+      - name: Upload Coverage Measurement
         if: always()
-        run: >-
-          python scripts/wait_for_baseline.py
-          --repository "${{ github.repository }}"
-          --workflow coverage-baseline.yml
-          --commit "${{ github.event.pull_request.base.sha }}"
-          --artifact "coverage-baseline-${{ matrix.os }}"
-          --timeout-seconds 1200
-          --poll-seconds 20
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        shell: bash
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-measurement-${{ matrix.os }}-${{ matrix.revision }}-${{ github.run_attempt }}
+          path: |
+            lcov.info
+            measurement-context.json
+            source-revision.txt
+            production-coverage/
+            subprocess-coverage/
+            subprocess-coverage.json
+          if-no-files-found: error
+
+  coverage:
+    name: Coverage
+    needs: measurements
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            platform: Linux
+            comment_header: coverage-linux
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: Windows
+            comment_header: coverage-windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set Python to PATH
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Download Head Coverage Measurement
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-measurement-${{ matrix.os }}-head-${{ github.run_attempt }}
 
       - name: Download Exact PR Base Coverage
-        if: always() && steps.wait_for_base_coverage.outcome == 'success'
-        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
+        if: always()
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          workflow: coverage-baseline.yml
-          commit: ${{ github.event.pull_request.base.sha }}
-          workflow_conclusion: success
-          name: coverage-baseline-${{ matrix.os }}
+          name: coverage-measurement-${{ matrix.os }}-base-${{ github.run_attempt }}
           path: baseline-coverage
-          check_artifacts: true
-          search_artifacts: true
 
       - name: Compare Coverage Snapshot
         if: always()
-        run: >-
-          python scripts/quality_snapshot.py coverage
-          --current lcov.info
-          --baseline baseline-coverage/lcov.info
-          --platform "${{ matrix.platform }}"
-          --report coverage-report.md
-          --summary "$GITHUB_STEP_SUMMARY"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+          MEASUREMENT_TARGET: ${{ matrix.target }}
+          MEASUREMENTS_RESULT: ${{ needs.measurements.result }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          python - <<'PY'
+          import argparse
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts")
+          from quality_snapshot import SnapshotError, load_json, run_coverage, write_report
+
+          report = Path("coverage-report.md")
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          platform = os.environ["PLATFORM"]
+
+          def context(path):
+              value = load_json(path)
+              required = {
+                  "runner": ("RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"),
+                  "versions": (
+                      "rustc", "cargo", "cargo-llvm-cov", "python",
+                      "conda", "pipenv", "pyenv", "pixi",
+                  ),
+                  "interpreters": (
+                      "conda-base", "conda-named", "conda-prefix", "venv", "venv2",
+                      "pipenv", "pixi-default", "pixi-dev", "pyenv",
+                  ),
+              }
+              for group, keys in required.items():
+                  values = value.get(group)
+                  if not isinstance(values, dict) or any(
+                      not isinstance(values.get(key), str) or not values[key].strip()
+                      for key in keys
+                  ):
+                      raise SnapshotError(f"Missing {group} measurement context in {path}")
+              if (
+                  value.get("features") != "ci"
+                  or value.get("coverage_target") != "host"
+                  or value.get("installed_target") != os.environ["MEASUREMENT_TARGET"]
+              ):
+                  raise SnapshotError(f"Incompatible coverage workload in {path}")
+              return value
+
+          try:
+              if os.environ.get("MEASUREMENTS_RESULT") != "success":
+                  raise SnapshotError("One or more coverage measurements or required proofs failed")
+              for filename, variable in (
+                  ("source-revision.txt", "HEAD_SHA"),
+                  ("baseline-coverage/source-revision.txt", "BASE_SHA"),
+              ):
+                  expected = os.environ.get(variable, "")
+                  if (
+                      re.fullmatch(r"[0-9a-f]{40}", expected) is None
+                      or Path(filename).read_text(encoding="utf-8").strip() != expected
+                  ):
+                      raise SnapshotError(f"Unexpected source revision in {filename}")
+              current = context(Path("measurement-context.json"))
+              baseline = context(Path("baseline-coverage/measurement-context.json"))
+              if current != baseline:
+                  raise SnapshotError(
+                      "Coverage runner, tool, or fixture versions differ; inspect both measurement contexts"
+                  )
+          except (OSError, UnicodeError, SnapshotError) as error:
+              print(f"Invalid coverage measurement: {error}", file=sys.stderr)
+              write_report(
+                  f"## Test Coverage Report ({platform})\n\n:x: **Invalid snapshot:** {error}\n",
+                  report, summary,
+              )
+              raise SystemExit(1)
+
+          raise SystemExit(run_coverage(argparse.Namespace(
+              current=Path("lcov.info"), baseline=Path("baseline-coverage/lcov.info"),
+              platform=platform, report=report, summary=summary,
+          )))
+          PY
         shell: bash
 
       - name: Upload PR Coverage Artifact
@@ -265,6 +459,9 @@ jobs:
           name: coverage-pr-${{ matrix.os }}
           path: |
             lcov.info
+            measurement-context.json
+            source-revision.txt
+            baseline-coverage/
             coverage-report.md
             production-coverage/
             subprocess-coverage/

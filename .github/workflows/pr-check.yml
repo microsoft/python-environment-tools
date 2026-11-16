@@ -32,11 +32,13 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             run_cli: "yes"
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
+            conda_arch: x86_64
             run_cli: "yes"
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
+            conda_arch: arm64
             run_cli: "yes"
     steps:
       - name: Checkout
@@ -58,18 +60,29 @@ jobs:
           $path = $env:PATH + ";" + $env:CONDA + "\condabin"
           echo "PATH=$path" >> $env:GITHUB_ENV
 
-      - name: Add Conda to PATH
+      - name: Set up Conda (Linux)
         if: startsWith( matrix.os, 'ubuntu')
-        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
-        shell: bash
+        uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
+        with:
+          activate-environment: ""
+          auto-activate: false
+          run-init: false
+          conda-remove-defaults: false
 
       - name: Install Conda + add to PATH
         if: startsWith( matrix.os, 'macos')
+        env:
+          CONDA_ARCH: ${{ matrix.conda_arch }}
         run: |
-          curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-          bash ~/miniconda.sh -b -p ~/miniconda
-          echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
-          echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
+          if [[ "$(uname -m)" != "$CONDA_ARCH" ]]; then
+            echo "Conda installer architecture $CONDA_ARCH does not match runner $(uname -m)" >&2
+            exit 1
+          fi
+          curl --fail --location --show-error --output "$RUNNER_TEMP/miniconda.sh" \
+            "https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-${CONDA_ARCH}.sh"
+          bash "$RUNNER_TEMP/miniconda.sh" -b -p "$HOME/miniconda"
+          echo "PATH=$PATH:$HOME/miniconda/bin" >> "$GITHUB_ENV"
+          echo "CONDA=$HOME/miniconda" >> "$GITHUB_ENV"
         shell: bash
 
       - name: Check Conda version
@@ -459,10 +472,10 @@ jobs:
           #     target: aarch64-unknown-linux-gnu
           #   - os: ubuntu-latest
           #     target: arm-unknown-linux-gnueabihf
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             run_cli: "yes"
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             run_cli: "yes"
           #   - os: ubuntu-latest

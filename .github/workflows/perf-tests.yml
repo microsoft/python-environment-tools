@@ -30,13 +30,17 @@ jobs:
             target: x86_64-unknown-linux-musl
             platform: Linux
             comment_header: perf-linux
-          - os: macos-latest
+          - os: macos-15-intel
             target: x86_64-apple-darwin
+            conda_arch: x86_64
             platform: macOS
             comment_header: perf-macos
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Post In-Progress Comment
         if: >-
@@ -49,7 +53,7 @@ jobs:
           message: |
             ## Performance Report (${{ matrix.platform }}) :hourglass_flowing_sand:
 
-            Running performance tests against baseline `${{ github.event.pull_request.base.sha }}`.
+            Measuring this revision and exact base `${{ github.event.pull_request.base.sha }}` on the same runner.
 
       - name: Set Python to PATH
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -66,19 +70,33 @@ jobs:
           $path = $env:PATH + ";" + $env:CONDA + "\condabin"
           echo "PATH=$path" >> $env:GITHUB_ENV
 
-      - name: Add Conda to PATH (Ubuntu)
+      - name: Set up Conda (Linux)
         if: startsWith(matrix.os, 'ubuntu')
-        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
-        shell: bash
+        uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
+        with:
+          activate-environment: ""
+          auto-activate: false
+          run-init: false
+          conda-remove-defaults: false
 
       - name: Install Conda + add to PATH (macOS)
         if: startsWith(matrix.os, 'macos')
+        env:
+          CONDA_ARCH: ${{ matrix.conda_arch }}
         run: |
-          curl -o ~/miniconda.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh
-          bash ~/miniconda.sh -b -p ~/miniconda
-          echo "PATH=$PATH:$HOME/miniconda/bin" >> $GITHUB_ENV
-          echo "CONDA=$HOME/miniconda" >> $GITHUB_ENV
+          if [[ "$(uname -m)" != "$CONDA_ARCH" ]]; then
+            echo "Conda installer architecture $CONDA_ARCH does not match runner $(uname -m)" >&2
+            exit 1
+          fi
+          curl --fail --location --show-error --output "$RUNNER_TEMP/miniconda.sh" \
+            "https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-${CONDA_ARCH}.sh"
+          bash "$RUNNER_TEMP/miniconda.sh" -b -p "$HOME/miniconda"
+          echo "PATH=$PATH:$HOME/miniconda/bin" >> "$GITHUB_ENV"
+          echo "CONDA=$HOME/miniconda" >> "$GITHUB_ENV"
         shell: bash
+
+      - name: Check Conda version
+        run: conda info --all
 
       - name: Create test Conda environment
         run: conda create -n perf-test-env python=3.12 -y
@@ -93,26 +111,148 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Cargo Fetch
-        run: cargo fetch
+      - name: Prepare Exact Base Worktree
+        id: baseline
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            base="$PR_BASE"
+          else
+            base="$(git rev-parse --verify "refs/remotes/origin/$DEFAULT_BRANCH^{commit}")"
+          fi
+          if [[ ! "$base" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Missing or invalid exact base revision" >&2
+            exit 1
+          fi
+          git worktree add --detach "$RUNNER_TEMP/perf-base" "$base"
+          mkdir -p baseline-perf
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
         shell: bash
 
-      - name: Build Release
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Capture Performance Measurement Context
+        id: measurement_context
+        env:
+          BASE_SHA: ${{ steps.baseline.outputs.sha }}
+          HEAD_SHA: ${{ github.sha }}
+          MEASUREMENT_TARGET: ${{ matrix.target }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          def output(*arguments, cwd=None):
+              executable = shutil.which(arguments[0])
+              if executable is None:
+                  raise RuntimeError(f"Required measurement tool not found: {arguments[0]}")
+              value = subprocess.check_output(
+                  [executable, *arguments[1:]], cwd=cwd, text=True, encoding="utf-8"
+              ).strip()
+              if not value:
+                  raise RuntimeError(f"Empty measurement version: {arguments[0]}")
+              return value
+
+          workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
+          runner = {key: os.environ[key] for key in (
+              "RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"
+          )}
+          if not all(value.strip() for value in runner.values()):
+              raise RuntimeError("Runner image context must not be empty")
+          venv_python = (
+              workspace / ".venv" / "Scripts" / "python.exe" if os.name == "nt"
+              else workspace / ".venv" / "bin" / "python"
+          )
+          interpreters = {
+              "venv": output(str(venv_python), "--version"),
+              "conda-base": output("conda", "run", "--name", "base", "python", "--version"),
+              "conda-named": output("conda", "run", "--name", "perf-test-env", "python", "--version"),
+          }
+          for directory, destination, variable in (
+              (workspace, workspace, "HEAD_SHA"),
+              (Path(os.environ["RUNNER_TEMP"]) / "perf-base", workspace / "baseline-perf", "BASE_SHA"),
+          ):
+              source = output("git", "rev-parse", "HEAD", cwd=directory)
+              if source != os.environ[variable]:
+                  raise RuntimeError(f"Unexpected {variable} checkout: {source}")
+              context = {
+                  "runner": runner,
+                  "installed_target": os.environ["MEASUREMENT_TARGET"],
+                  "features": "ci-perf",
+                  "discovery_workspace": str(workspace),
+                  "versions": {
+                      "rustc": output("rustc", "-vV", cwd=directory),
+                      "cargo": output("cargo", "--version", cwd=directory),
+                      "python": output("python", "--version"),
+                      "conda": output("conda", "--version"),
+                  },
+                  "interpreters": interpreters,
+              }
+              (destination / "source-revision.txt").write_text(source + "\n", encoding="utf-8")
+              (destination / "measurement-context.json").write_text(
+                  json.dumps(context, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+              )
+          PY
+        shell: bash
+
+      - name: Cargo Fetch
+        run: |
+          cargo fetch --locked
+          cd "$RUNNER_TEMP/perf-base"
+          cargo fetch --locked
+        shell: bash
+
+      - name: Build Release and Benchmark Harnesses
+        id: build
+        env:
+          MEASUREMENT_TARGET: ${{ matrix.target }}
+        run: |
+          for source in "$RUNNER_TEMP/perf-base" "$GITHUB_WORKSPACE"; do
+            (
+              cd "$source"
+              cargo build --frozen --release --target-dir target --target "$MEASUREMENT_TARGET"
+              cargo test --frozen --release --target-dir target --features ci-perf --target "$MEASUREMENT_TARGET" \
+                --test e2e_performance --no-run
+              git diff --exit-code -- Cargo.toml Cargo.lock crates
+            )
+          done
+        shell: bash
+
+      - name: Run Exact Base Performance Tests
+        id: base_benchmark
+        env:
+          MEASUREMENT_TARGET: ${{ matrix.target }}
+          RUST_BACKTRACE: 1
+          RUST_LOG: warn
+        run: |
+          set -o pipefail
+          cd "$RUNNER_TEMP/perf-base"
+          cargo test --frozen --release --target-dir target --features ci-perf --target "$MEASUREMENT_TARGET" \
+            --test e2e_performance test_performance_summary -- --nocapture 2>&1 \
+            | tee "$GITHUB_WORKSPACE/baseline-perf/perf-output.txt"
         shell: bash
 
       - name: Run Performance Tests
         id: benchmark
+        if: >-
+          always() && steps.build.outcome == 'success' &&
+          steps.measurement_context.outcome == 'success'
         run: |
           set -o pipefail
-          cargo test --release --features ci-perf --target ${{ matrix.target }} --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
+          cargo test --frozen --release --target-dir target --features ci-perf --target "$MEASUREMENT_TARGET" \
+            --test e2e_performance test_performance_summary -- --nocapture 2>&1 | tee perf-output.txt
         env:
+          MEASUREMENT_TARGET: ${{ matrix.target }}
           RUST_BACKTRACE: 1
           RUST_LOG: warn
         shell: bash
 
       - name: Extract Performance Metrics
-        if: steps.benchmark.outcome == 'success'
+        id: metrics
+        if: always() && steps.benchmark.outcome == 'success'
         run: |
           if ! grep -q "JSON metrics:" perf-output.txt; then
             echo "Performance test produced no JSON metrics" >&2
@@ -123,56 +263,103 @@ jobs:
           cat metrics.json
         shell: bash
 
-      - name: Wait for Exact PR Base Performance
-        id: wait_for_base_performance
-        if: always() && github.event_name == 'pull_request'
-        run: >-
-          python scripts/wait_for_baseline.py
-          --repository "${{ github.repository }}"
-          --workflow perf-baseline.yml
-          --commit "${{ github.event.pull_request.base.sha }}"
-          --artifact "perf-baseline-${{ matrix.os }}"
-          --timeout-seconds 1200
-          --poll-seconds 20
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Extract Exact Base Performance Metrics
+        id: base_metrics
+        if: always() && steps.base_benchmark.outcome == 'success'
+        run: |
+          if ! grep -q "JSON metrics:" baseline-perf/perf-output.txt; then
+            echo "Exact base performance test produced no JSON metrics" >&2
+            exit 1
+          fi
+          sed -n '/JSON metrics:/,/^}/p' baseline-perf/perf-output.txt | tail -n +2 > baseline-perf/metrics.json
+          python -m json.tool baseline-perf/metrics.json > /dev/null
+          cat baseline-perf/metrics.json
         shell: bash
-
-      - name: Download Exact PR Base Performance
-        if: >-
-          always() && github.event_name == 'pull_request' &&
-          steps.wait_for_base_performance.outcome == 'success'
-        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
-        with:
-          workflow: perf-baseline.yml
-          commit: ${{ github.event.pull_request.base.sha }}
-          workflow_conclusion: success
-          name: perf-baseline-${{ matrix.os }}
-          path: baseline-perf
-          check_artifacts: true
-          search_artifacts: true
-
-      - name: Download Main Performance for Manual Run
-        if: always() && github.event_name == 'workflow_dispatch'
-        uses: dawidd6/action-download-artifact@eab87c9830c39eff17e5a6eadb20bfb4bc880477 # v27
-        with:
-          workflow: perf-baseline.yml
-          branch: main
-          workflow_conclusion: success
-          name: perf-baseline-${{ matrix.os }}
-          path: baseline-perf
-          check_artifacts: true
-          search_artifacts: true
 
       - name: Compare Performance Snapshot
         if: always()
-        run: >-
-          python scripts/quality_snapshot.py performance
-          --current metrics.json
-          --baseline baseline-perf/metrics.json
-          --platform "${{ matrix.platform }}"
-          --report performance-report.md
-          --summary "$GITHUB_STEP_SUMMARY"
+        env:
+          BASE_SHA: ${{ steps.baseline.outputs.sha }}
+          HEAD_SHA: ${{ github.sha }}
+          MEASUREMENT_TARGET: ${{ matrix.target }}
+          HEAD_BENCHMARK_OUTCOME: ${{ steps.benchmark.outcome }}
+          BASE_BENCHMARK_OUTCOME: ${{ steps.base_benchmark.outcome }}
+          HEAD_METRICS_OUTCOME: ${{ steps.metrics.outcome }}
+          BASE_METRICS_OUTCOME: ${{ steps.base_metrics.outcome }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          python - <<'PY'
+          import argparse
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "scripts")
+          from quality_snapshot import SnapshotError, load_json, run_performance, write_report
+
+          report = Path("performance-report.md")
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          platform = os.environ["PLATFORM"]
+
+          def context(path):
+              value = load_json(path)
+              required = {
+                  "runner": ("RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"),
+                  "versions": ("rustc", "cargo", "python", "conda"),
+                  "interpreters": ("conda-base", "conda-named", "venv"),
+              }
+              for group, keys in required.items():
+                  values = value.get(group)
+                  if not isinstance(values, dict) or any(
+                      not isinstance(values.get(key), str) or not values[key].strip()
+                      for key in keys
+                  ):
+                      raise SnapshotError(f"Missing {group} measurement context in {path}")
+              if (
+                  value.get("features") != "ci-perf"
+                  or value.get("installed_target") != os.environ["MEASUREMENT_TARGET"]
+                  or value.get("discovery_workspace") != str(Path(os.environ["GITHUB_WORKSPACE"]).resolve())
+              ):
+                  raise SnapshotError(f"Incompatible performance workload in {path}")
+              return value
+
+          try:
+              for variable in (
+                  "HEAD_BENCHMARK_OUTCOME", "BASE_BENCHMARK_OUTCOME",
+                  "HEAD_METRICS_OUTCOME", "BASE_METRICS_OUTCOME",
+              ):
+                  if os.environ.get(variable) != "success":
+                      raise SnapshotError(f"Required benchmark or JSON extraction failed: {variable}")
+              for filename, variable in (
+                  ("source-revision.txt", "HEAD_SHA"),
+                  ("baseline-perf/source-revision.txt", "BASE_SHA"),
+              ):
+                  expected = os.environ.get(variable, "")
+                  if (
+                      re.fullmatch(r"[0-9a-f]{40}", expected) is None
+                      or Path(filename).read_text(encoding="utf-8").strip() != expected
+                  ):
+                      raise SnapshotError(f"Unexpected source revision in {filename}")
+              current = context(Path("measurement-context.json"))
+              baseline = context(Path("baseline-perf/measurement-context.json"))
+              if current != baseline:
+                  raise SnapshotError(
+                      "Performance runner, tool, or fixture versions differ; inspect both measurement contexts"
+                  )
+          except (OSError, UnicodeError, SnapshotError) as error:
+              print(f"Invalid performance measurement: {error}", file=sys.stderr)
+              write_report(
+                  f"## Performance Report ({platform})\n\n:x: **Invalid snapshot:** {error}\n",
+                  report, summary,
+              )
+              raise SystemExit(1)
+
+          raise SystemExit(run_performance(argparse.Namespace(
+              current=Path("metrics.json"), baseline=Path("baseline-perf/metrics.json"),
+              platform=platform, report=report, summary=summary,
+          )))
+          PY
         shell: bash
 
       - name: Upload PR Performance Results
@@ -182,6 +369,10 @@ jobs:
           name: perf-pr-${{ matrix.os }}
           path: |
             metrics.json
+            measurement-context.json
+            source-revision.txt
+            baseline-perf/
+            perf-output.txt
             performance-report.md
           if-no-files-found: ignore
 

@@ -46,10 +46,14 @@ jobs:
           $path = $env:PATH + ";" + $env:CONDA + "\condabin"
           echo "PATH=$path" >> $env:GITHUB_ENV
 
-      - name: Add Conda to PATH (Linux)
+      - name: Set up Conda (Linux)
         if: startsWith(matrix.os, 'ubuntu')
-        run: echo "PATH=$PATH:$CONDA/condabin" >> $GITHUB_ENV
-        shell: bash
+        uses: conda-incubator/setup-miniconda@be893c923ea9cf1cf7cd510fbdde27c7e18cbdcb # v4.1.0
+        with:
+          activate-environment: ""
+          auto-activate: false
+          run-init: false
+          conda-remove-defaults: false
 
       - name: Check Conda version
         run: conda info --all
