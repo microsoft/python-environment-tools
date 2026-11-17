@@ -1,7 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-use std::{path::PathBuf, sync::Once};
+use std::{
+    path::{Path, PathBuf},
+    sync::Once,
+};
 
 use common::{does_version_match, resolve_test_path};
 use lazy_static::lazy_static;
@@ -489,6 +492,59 @@ fn verify_we_can_get_same_env_info_using_find_with_exe(
     );
 }
 
+fn comparable_symlinks(environment: &PythonEnvironment, toolcache: &Path) -> Vec<PathBuf> {
+    environment
+        .symlinks
+        .iter()
+        .flatten()
+        .filter(|path| {
+            if environment.kind != Some(PythonEnvironmentKind::MacPythonOrg)
+                || !is_ci_toolcache_alias(path, toolcache)
+            {
+                return true;
+            }
+
+            // PATH discovery knows this shortcut, but direct framework identification need not.
+            let executable = environment
+                .executable
+                .as_ref()
+                .expect("CI toolcache alias has no environment executable");
+            let target = std::fs::canonicalize(path).unwrap_or_else(|error| {
+                panic!("Cannot resolve CI toolcache alias {path:?}: {error}")
+            });
+            let expected = std::fs::canonicalize(executable).unwrap_or_else(|error| {
+                panic!("Cannot resolve environment executable {executable:?}: {error}")
+            });
+            assert_eq!(
+                target, expected,
+                "CI toolcache alias {path:?} points to a different interpreter than {executable:?}"
+            );
+            false
+        })
+        .cloned()
+        .collect()
+}
+
+fn is_ci_toolcache_alias(path: &Path, toolcache: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(toolcache) else {
+        return false;
+    };
+    let mut parts = relative.iter();
+    let Some(version) = parts.next().and_then(|part| part.to_str()) else {
+        return false;
+    };
+    version.split('.').count() == 3
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && parts
+            .next()
+            .is_some_and(|arch| arch == "x64" || arch == "arm64")
+        && parts.next().is_some_and(|part| part == "bin")
+        && parts.next().is_some_and(|part| part == "python")
+        && parts.next().is_none()
+}
+
 fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, method: &str) {
     let mut actual = actual.clone();
     let mut expected = expected.clone();
@@ -572,35 +628,9 @@ fn compare_environments(actual: PythonEnvironment, expected: PythonEnvironment, 
             actual.prefix = expected.clone().prefix;
         }
     }
-    // known issue
-    actual.symlinks = Some(
-        actual
-            .clone()
-            .symlinks
-            .unwrap_or_default()
-            .iter()
-            .filter(|p| {
-                // This is in the path, but not easy to figure out, unless we add support for codespaces or CI.
-                !(p.starts_with("/Users/runner/hostedtoolcache/Python")
-                    && p.to_string_lossy().contains("arm64"))
-            })
-            .map(|p| p.to_path_buf())
-            .collect::<Vec<PathBuf>>(),
-    );
-    expected.symlinks = Some(
-        expected
-            .clone()
-            .symlinks
-            .unwrap_or_default()
-            .iter()
-            .filter(|p| {
-                // This is in the path, but not easy to figure out, unless we add support for codespaces or CI.
-                !(p.starts_with("/Users/runner/hostedtoolcache/Python")
-                    && p.to_string_lossy().contains("arm64"))
-            })
-            .map(|p| p.to_path_buf())
-            .collect::<Vec<PathBuf>>(),
-    );
+    let toolcache = Path::new("/Users/runner/hostedtoolcache/Python");
+    actual.symlinks = Some(comparable_symlinks(&actual, toolcache));
+    expected.symlinks = Some(comparable_symlinks(&expected, toolcache));
 
     // if we know the arch, then verify it
     if expected.arch.as_ref().is_some()
@@ -842,4 +872,126 @@ fn get_python_interpreter_info(cli: &[String]) -> Option<InterpreterInfo> {
         );
         None
     }
+}
+
+#[test]
+fn ci_toolcache_comparison_preserves_unrelated_and_malformed_aliases() {
+    let toolcache = Path::new("/Users/runner/hostedtoolcache/Python");
+    let symlinks = [
+        "/usr/local/bin/python3.12",
+        "/Users/runner/hostedtoolcache/Python/3.12.10/notarm64/bin/python",
+        "/Users/runner/hostedtoolcache/Python/3.12.10/arm64/lib/python",
+        "/Users/runner/hostedtoolcache/Python/3.12.10/arm64/bin/python-config",
+        "/Users/runner/hostedtoolcache/Python/3.12.\u{00e9}/arm64/bin/python",
+        "/Users/runner/hostedtoolcache/Python/3.12.10/arm64/bin/python/extra",
+        "/Users/runner/hostedtoolcache/Python-extra/3.12.10/arm64/bin/python",
+    ]
+    .map(PathBuf::from)
+    .to_vec();
+    let environment = PythonEnvironment {
+        kind: Some(PythonEnvironmentKind::MacPythonOrg),
+        symlinks: Some(symlinks.clone()),
+        ..Default::default()
+    };
+
+    assert_eq!(comparable_symlinks(&environment, toolcache), symlinks);
+}
+
+#[test]
+fn ci_toolcache_aliases_require_an_exact_version_and_architecture() {
+    let toolcache = Path::new("/Users/runner/hostedtoolcache/Python");
+    for arch in ["x64", "arm64"] {
+        assert!(is_ci_toolcache_alias(
+            &toolcache.join("3.12.10").join(arch).join("bin/python"),
+            toolcache
+        ));
+    }
+    for relative in [
+        "3.12/x64/bin/python",
+        "3..10/arm64/bin/python",
+        "3.12.10.1/arm64/bin/python",
+        "3.12.10/x86_64/bin/python",
+        "3.12.10/arm64/../bin/python",
+        "3.12.10/arm64/bin/python3",
+        "3.12.10/arm64-\u{00e9}/bin/python",
+    ] {
+        assert!(
+            !is_ci_toolcache_alias(&toolcache.join(relative), toolcache),
+            "{relative}"
+        );
+    }
+
+    let alias = toolcache.join("3.12.10/arm64/bin/python");
+    let environment = PythonEnvironment {
+        kind: Some(PythonEnvironmentKind::Conda),
+        symlinks: Some(vec![alias.clone()]),
+        ..Default::default()
+    };
+    assert_eq!(comparable_symlinks(&environment, toolcache), vec![alias]);
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_toolcache_comparison_verifies_both_architectures_and_keeps_ordinary_aliases() {
+    use std::{fs, os::unix::fs::symlink};
+
+    let directory = tempfile::tempdir().unwrap();
+    let toolcache = directory.path().join("toolcache-\u{00e9}/Python");
+    let target = directory.path().join("python3.12");
+    fs::write(&target, b"interpreter").unwrap();
+    let executable = directory.path().join("executable");
+    symlink(&target, &executable).unwrap();
+    let ordinary = directory.path().join("ordinary-python");
+    symlink(&target, &ordinary).unwrap();
+    let mut symlinks = vec![ordinary.clone()];
+    for arch in ["x64", "arm64"] {
+        let alias = toolcache.join("3.12.10").join(arch).join("bin/python");
+        fs::create_dir_all(alias.parent().unwrap()).unwrap();
+        symlink(&executable, &alias).unwrap();
+        symlinks.push(alias);
+    }
+    let environment = PythonEnvironment {
+        kind: Some(PythonEnvironmentKind::MacPythonOrg),
+        executable: Some(executable),
+        symlinks: Some(symlinks.clone()),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        comparable_symlinks(&environment, &toolcache),
+        vec![ordinary]
+    );
+    assert_eq!(environment.symlinks, Some(symlinks));
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_toolcache_comparison_rejects_different_or_unresolvable_interpreters() {
+    use std::{fs, os::unix::fs::symlink};
+
+    let directory = tempfile::tempdir().unwrap();
+    let toolcache = directory.path().join("Python");
+    let executable = directory.path().join("python3.12");
+    let other = directory.path().join("other-python");
+    fs::write(&executable, b"interpreter").unwrap();
+    fs::write(&other, b"other interpreter").unwrap();
+    let alias = toolcache.join("3.12.10/x64/bin/python");
+    fs::create_dir_all(alias.parent().unwrap()).unwrap();
+    let environment = PythonEnvironment {
+        kind: Some(PythonEnvironmentKind::MacPythonOrg),
+        executable: Some(executable),
+        symlinks: Some(vec![alias.clone()]),
+        ..Default::default()
+    };
+
+    symlink(&other, &alias).unwrap();
+    assert!(std::panic::catch_unwind(|| comparable_symlinks(&environment, &toolcache)).is_err());
+    fs::remove_file(&other).unwrap();
+    assert!(std::panic::catch_unwind(|| comparable_symlinks(&environment, &toolcache)).is_err());
+
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let invalid = toolcache
+        .join(OsStr::from_bytes(b"3.12.\xff"))
+        .join("arm64/bin/python");
+    assert!(!is_ci_toolcache_alias(&invalid, &toolcache));
 }

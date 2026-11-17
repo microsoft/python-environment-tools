@@ -670,7 +670,7 @@ mod tests {
     struct ReleaseDescendant(tempfile::TempDir);
 
     impl ReleaseDescendant {
-        fn assert_terminated(&self) {
+        fn assert_terminated(&self, mut waiting: Option<std::sync::mpsc::SyncSender<()>>) {
             assert!(
                 self.0.path().join("ready").exists(),
                 "descendant never started"
@@ -681,6 +681,9 @@ mod tests {
                 match lease.try_lock() {
                     Ok(()) => break,
                     Err(fs::TryLockError::WouldBlock) => {
+                        if let Some(waiting) = waiting.take() {
+                            waiting.send(()).expect("lease wait observer dropped");
+                        }
                         assert!(
                             started.elapsed() < CLEANUP_TIMEOUT,
                             "descendant still holds its lease"
@@ -695,6 +698,26 @@ mod tests {
                 "descendant exited on its own instead of being terminated"
             );
         }
+    }
+
+    #[test]
+    fn termination_check_waits_for_the_descendant_lease() {
+        use std::sync::{mpsc, Arc};
+
+        let directory = Arc::new(ReleaseDescendant(tempfile::tempdir().unwrap()));
+        let lease = fs::File::create(directory.0.path().join("lease")).unwrap();
+        lease.lock().unwrap();
+        fs::write(directory.0.path().join("ready"), b"ready").unwrap();
+        let (waiting_tx, waiting_rx) = mpsc::sync_channel(1);
+        let waiting_directory = directory.clone();
+        let waiter = thread::spawn(move || waiting_directory.assert_terminated(Some(waiting_tx)));
+
+        waiting_rx
+            .recv_timeout(CLEANUP_TIMEOUT)
+            .expect("termination check did not observe the held lease");
+        assert!(!waiter.is_finished());
+        lease.unlock().unwrap();
+        waiter.join().unwrap();
     }
 
     impl ReleaseDescendant {
@@ -748,7 +771,7 @@ mod tests {
                 Some(if mode == "tree-nonzero" { 23 } else { 0 })
             );
             assert!(started.elapsed() < Duration::from_secs(5));
-            directory.assert_terminated();
+            directory.assert_terminated(None);
             assert_child_reaped(fs::read_to_string(pid).unwrap().parse().unwrap());
         }
     }
@@ -768,7 +791,7 @@ mod tests {
                 assert!(matches!(error, ProcessError::OutputLimit(4096)), "{error}");
             }
             assert!(started.elapsed() < Duration::from_secs(5));
-            directory.assert_terminated();
+            directory.assert_terminated(None);
         }
     }
 
@@ -802,7 +825,7 @@ mod tests {
             .unwrap()
             .status
             .success());
-        directory.assert_terminated();
+        directory.assert_terminated(None);
     }
 
     #[cfg(windows)]
@@ -906,7 +929,7 @@ mod tests {
             .unwrap()
             .status
             .success());
-        owned.assert_terminated();
+        owned.assert_terminated(None);
         assert!(unrelated.0.try_wait().unwrap().is_none());
         let lease = fs::File::open(directory.path().join("lease")).unwrap();
         assert!(matches!(
@@ -1187,7 +1210,7 @@ mod tests {
             assert!(matches!(error, ProcessError::Cancelled), "{error}");
         });
 
-        owned.assert_terminated();
+        owned.assert_terminated(None);
         assert_child_reaped(fs::read_to_string(root_pid).unwrap().parse().unwrap());
         assert!(unrelated.0.try_wait().unwrap().is_none());
         let lease = fs::File::open(unrelated_directory.path().join("lease")).unwrap();

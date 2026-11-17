@@ -28,6 +28,8 @@ pub struct LocatorCache<K, V> {
 struct InFlightEntry<V> {
     result: Mutex<Option<InFlightResult<V>>>,
     changed: Condvar,
+    #[cfg(test)]
+    waiting: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone)]
@@ -52,6 +54,8 @@ impl<V> InFlightEntry<V> {
         Self {
             result: Mutex::new(None),
             changed: Condvar::new(),
+            #[cfg(test)]
+            waiting: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -233,6 +237,10 @@ impl<K: Eq + Hash, V: Clone> LocatorCache<K, V> {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         while result.is_none() {
+            #[cfg(test)]
+            entry
+                .waiting
+                .store(true, std::sync::atomic::Ordering::Release);
             result = entry
                 .changed
                 .wait(result)
@@ -313,7 +321,15 @@ mod tests {
         mpsc, Arc, Barrier, Mutex,
     };
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
+
+    fn wait_for_pending<V>(entry: &InFlightEntry<V>) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !entry.waiting.load(Ordering::Acquire) {
+            assert!(Instant::now() < deadline, "cache waiter did not block");
+            thread::yield_now();
+        }
+    }
 
     #[test]
     fn test_cache_get_and_insert() {
@@ -379,6 +395,8 @@ mod tests {
 
         barrier.wait();
         started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let entry = cache.in_flight.lock().unwrap().get("key").unwrap().clone();
+        wait_for_pending(&entry);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert!(started_rx.try_recv().is_err());
 
@@ -397,21 +415,20 @@ mod tests {
 
     #[test]
     fn test_cache_get_or_insert_with_shares_concurrent_none_result() {
-        let entry = Arc::new(InFlightEntry::new());
+        let cache: LocatorCache<String, i32> = LocatorCache::new();
+        let InFlightClaim::Owner(owner) = cache.claim_in_flight(&"key".to_string()) else {
+            panic!("new cache unexpectedly has an in-flight owner");
+        };
+        let entry = owner.entry.clone();
         let waiter_entry = entry.clone();
         let waiter =
             thread::spawn(move || LocatorCache::<String, i32>::wait_for_in_flight(waiter_entry));
 
-        *entry
-            .result
-            .lock()
-            .expect("locator cache in-flight result lock poisoned") =
-            Some(InFlightResult::Value(None));
-        entry.changed.notify_all();
+        wait_for_pending(&entry);
+        owner.complete(None);
 
         assert_eq!(waiter.join().unwrap(), None);
 
-        let cache: LocatorCache<String, i32> = LocatorCache::new();
         assert_eq!(cache.get_or_insert_with("key".to_string(), || None), None);
         assert!(!cache.contains_key(&"key".to_string()));
 
@@ -452,12 +469,13 @@ mod tests {
             in_flight: &in_flight,
         };
 
+        let waiter_entry = entry.clone();
+        let waiter =
+            thread::spawn(move || LocatorCache::<String, i32>::wait_for_in_flight(waiter_entry));
+        wait_for_pending(&entry);
         drop(owner);
 
-        let waiter_result =
-            std::panic::catch_unwind(|| LocatorCache::<String, i32>::wait_for_in_flight(entry));
-
-        assert!(waiter_result.is_err());
+        assert!(waiter.join().is_err());
         assert!(in_flight.lock().unwrap().is_empty());
     }
 
