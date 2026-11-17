@@ -360,3 +360,26 @@ fn find_environment_directories_via_env_var() {
     let json: Value = serde_json::from_slice(&output.stdout).expect("output is not valid JSON");
     assert!(json["environments"].is_array());
 }
+
+/// Test 9: log output written to a non-terminal stderr has no ANSI escape codes.
+#[cfg_attr(feature = "ci", test)]
+#[allow(dead_code)]
+fn stderr_logs_have_no_ansi_codes_when_redirected() {
+    let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+    let missing = temp_dir.path().join("missing-python");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_pet"))
+        .args(["resolve", missing.to_string_lossy().as_ref()])
+        .output()
+        .expect("failed to run pet resolve");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown Python Env"),
+        "expected a warning on stderr, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains('\u{1b}'),
+        "stderr contains ANSI escape codes: {stderr:?}"
+    );
+}

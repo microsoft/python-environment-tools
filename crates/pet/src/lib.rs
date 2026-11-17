@@ -18,7 +18,7 @@ use pet_reporter::{self, cache::CacheReporter, collect, stdio};
 use resolve::resolve_environment;
 use serde::Serialize;
 use std::path::PathBuf;
-use std::{collections::BTreeMap, env, sync::Arc, time::SystemTime};
+use std::{collections::BTreeMap, env, io::IsTerminal, sync::Arc, time::SystemTime};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 pub mod find;
@@ -58,6 +58,7 @@ pub fn initialize_tracing(verbose: bool) {
                     fmt::layer()
                         .with_target(true)
                         .with_timer(fmt::time::uptime())
+                        .with_ansi(std::io::stderr().is_terminal())
                         .with_writer(std::io::stderr),
                 )
                 .init();
