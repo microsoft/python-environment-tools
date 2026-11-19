@@ -101,6 +101,15 @@ impl RawRpcClient {
     }
 
     fn receive(&self) -> Value {
+        loop {
+            let message = self.receive_message();
+            if message["method"] != "log" {
+                return message;
+            }
+        }
+    }
+
+    fn receive_message(&self) -> Value {
         self.responses
             .recv_timeout(Duration::from_secs(10))
             .expect("PET must respond within ten seconds")
@@ -361,6 +370,29 @@ fn missing_and_invalid_request_ids_have_distinct_wire_behavior() {
     }
     client.send(json!({"jsonrpc": "2.0", "id": "after-invalid", "method": "info", "params": {}}));
     assert_eq!(client.receive()["id"], "after-invalid");
+}
+
+#[test]
+fn server_logs_are_sent_as_log_notifications() {
+    let mut client = RawRpcClient::spawn();
+    client.send(json!({
+        "jsonrpc": "2.0",
+        "id": "invalid-resolve",
+        "method": "resolve",
+        "params": {"executable": 42}
+    }));
+
+    let log = client.receive_message();
+    assert_eq!(
+        log["method"], "log",
+        "expected a log notification, got {log}"
+    );
+    assert_eq!(log["params"]["level"], "error");
+    assert!(log["params"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("Failed to parse resolve"));
+    assert_rpc_error(&client.receive(), &json!("invalid-resolve"), -4);
 }
 
 fn create_fake_workspace(prompt: &str) -> (TempDir, PathBuf, PathBuf) {

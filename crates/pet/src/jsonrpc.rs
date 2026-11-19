@@ -6,7 +6,6 @@ use pet::find::find_and_report_envs;
 use pet::find::find_python_environments_in_workspace_folder_recursive;
 use pet::find::identify_python_executables_using_locators;
 use pet::find::SearchScope;
-use pet::initialize_tracing;
 use pet::locators::create_locators;
 use pet::resolve::resolve_environment;
 use pet_conda::Conda;
@@ -27,7 +26,7 @@ use pet_fs::glob::{
 };
 use pet_fs::path::norm_case;
 use pet_jsonrpc::{
-    send_error, send_reply,
+    send_error, send_message, send_reply,
     server::{start_server, HandlersKeyedByMethodName},
     RequestId,
 };
@@ -52,7 +51,9 @@ use std::{
     thread,
     time::{Instant, SystemTime},
 };
+use tracing::field::{Field, Visit};
 use tracing::info_span;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 #[derive(Debug, Clone, Default)]
 struct ConfigurationState {
@@ -559,10 +560,51 @@ const MISSING_ENVS_COMPLETED: u64 = u64::MAX - 1;
 static MISSING_ENVS_REPORTING_STATE: AtomicU64 = AtomicU64::new(MISSING_ENVS_AVAILABLE);
 static NEXT_REFRESH_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Sends tracing events (including `log` records) to the client as `log` notifications,
+/// so they keep their level instead of being written to stderr.
+struct LogNotificationLayer;
+
+impl<S: tracing::Subscriber> Layer<S> for LogNotificationLayer {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let level = match *event.metadata().level() {
+            tracing::Level::ERROR => jsonrpc::LogLevel::Error,
+            tracing::Level::WARN => jsonrpc::LogLevel::Warning,
+            tracing::Level::INFO => jsonrpc::LogLevel::Info,
+            _ => jsonrpc::LogLevel::Debug,
+        };
+        let mut visitor = LogMessageVisitor::default();
+        event.record(&mut visitor);
+        let payload = jsonrpc::Log {
+            message: visitor.message,
+            level,
+        };
+        send_message("log", payload.into());
+    }
+}
+
+#[derive(Default)]
+struct LogMessageVisitor {
+    message: String,
+}
+
+impl Visit for LogMessageVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = format!("{value:?}");
+        }
+    }
+}
+
 pub fn start_jsonrpc_server() -> std::io::Result<()> {
-    // Initialize tracing for performance profiling (controlled by RUST_LOG env var)
-    // Note: This includes log compatibility, so we don't call jsonrpc::initialize_logger
-    initialize_tracing(false);
+    // Log level is controlled by the RUST_LOG env var (warn by default).
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")))
+        .with(LogNotificationLayer)
+        .init();
 
     // These are globals for the the lifetime of the server.
     // Hence passed around as Arcs via the context.
