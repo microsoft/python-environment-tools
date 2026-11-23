@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Signs a single file in place with MicroBuild (ESRP).
+
+  Run after the MicroBuildSigningPlugin task and a NuGet restore of packages.config:
+    msbuild sign.proj /p:SignType=real /p:FileToSign=<full path> /p:Authenticode=<certificate> [/p:MacAppName=<name>]
+
+  Certificates used by azure-pipelines/devdiv-pre-release.yml:
+    Microsoft400        Windows Authenticode (pet.exe)
+    MacDeveloperHarden  macOS hardened-runtime signing (zip containing `pet`)
+    8020                macOS notarization (same zip, after MacDeveloperHarden)
+-->
+<Project DefaultTargets="SignFiles" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <MicroBuildCoreDir>$(MSBuildThisFileDirectory)packages\Microsoft.VisualStudioEng.MicroBuild.Core.1.0.0\build\</MicroBuildCoreDir>
+    <!-- MicroBuild only signs files located under OutDir. -->
+    <OutDir>$([MSBuild]::EnsureTrailingSlash($([System.IO.Path]::GetDirectoryName('$(FileToSign)'))))</OutDir>
+    <IntermediateOutputPath>$(OutDir)signing-obj\</IntermediateOutputPath>
+  </PropertyGroup>
+
+  <Import Project="$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.props" Condition="Exists('$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.props')" />
+
+  <Target Name="ValidateSigningInputs" BeforeTargets="SignFiles">
+    <Error Condition="!Exists('$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.targets')" Text="MicroBuild signing targets are missing. Restore azure-pipelines/signing/packages.config before signing." />
+    <Error Condition="'$(SignType)' != 'real' and '$(SignType)' != 'test'" Text="SignType must be 'real' or 'test'." />
+    <Error Condition="'$(FileToSign)' == '' or !Exists('$(FileToSign)')" Text="FileToSign does not exist: '$(FileToSign)'." />
+    <Error Condition="'$(Authenticode)' == ''" Text="Authenticode (certificate name) is required." />
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+  </Target>
+
+  <Target Name="GetFilesToSign" BeforeTargets="SignFiles" DependsOnTargets="ValidateSigningInputs">
+    <ItemGroup>
+      <FilesToSign Include="$(FileToSign)" Condition="'$(MacAppName)' == ''">
+        <Authenticode>$(Authenticode)</Authenticode>
+      </FilesToSign>
+      <FilesToSign Include="$(FileToSign)" Condition="'$(MacAppName)' != ''">
+        <Authenticode>$(Authenticode)</Authenticode>
+        <MacAppName>$(MacAppName)</MacAppName>
+      </FilesToSign>
+    </ItemGroup>
+    <Message Importance="high" Text="Signing '$(FileToSign)' with '$(Authenticode)' (SignType=$(SignType))." />
+  </Target>
+
+  <Import Project="$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.targets" Condition="Exists('$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.targets')" />
+</Project>

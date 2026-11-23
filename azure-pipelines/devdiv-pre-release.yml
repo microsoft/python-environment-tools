@@ -1,0 +1,342 @@
+# DevDiv pre-release pipeline for PET.
+#
+# Migrated from the MonacoTools "python-environment-tools (pre-release)" definition (591, pre-release.yml),
+# which extends microsoft/vscode-engineering's rust-package template. This pipeline reproduces the same
+# build matrix, versioning, triggers, and `bin-<target>` artifacts using DevDiv's MicroBuild 1ES template,
+# and replaces VS Code's ESRP signing with MicroBuild signing:
+#   Windows: pet.exe          -> Microsoft400 (Authenticode)
+#   macOS:   pet (zipped)     -> MacDeveloperHarden, then 8020 (notarization)
+#   Linux:   not signed (same as the MonacoTools pipeline)
+
+trigger:
+  branches:
+    include:
+      - main
+schedules:
+  - cron: "0 0 * * 0"
+    displayName: Weekly build
+    branches:
+      include:
+        - main
+    always: true
+pr: none
+
+parameters:
+  - name: buildPlatforms
+    type: object
+    default:
+      - name: linux
+        target: x86_64-unknown-linux-musl
+      - name: linux
+        target: aarch64-unknown-linux-gnu
+      - name: linux
+        target: armv7-unknown-linux-gnueabihf
+      - name: darwin
+        target: aarch64-apple-darwin
+      - name: darwin
+        target: x86_64-apple-darwin
+      - name: windows
+        target: aarch64-pc-windows-msvc
+      - name: windows
+        target: x86_64-pc-windows-msvc
+
+resources:
+  repositories:
+    - repository: MicroBuildTemplate
+      type: git
+      name: 1ESPipelineTemplates/MicroBuildTemplate
+      ref: refs/tags/release
+
+variables:
+  # Required to enable the Windows resource block in crates/pet/build.rs.
+  - name: CARGO_BIN_NAME
+    value: pet
+  - name: RustToolchain
+    value: ms-prod-1.99
+  - name: RustToolchainFeed
+    value: https://pkgs.dev.azure.com/devdiv/_packaging/Rust/nuget/v3/index.json
+  # DevDiv feed with a crates.io upstream (replaces the MonacoTools `vscode` Cargo feed).
+  - name: CargoFeed
+    value: sparse+https://pkgs.dev.azure.com/devdiv/DevDiv/_packaging/Pylance_PublicPackages/Cargo/index/
+  - name: SignType
+    value: real
+  - name: TeamName
+    value: VSCode-python-environments
+  - name: SigningDir
+    value: $(Build.SourcesDirectory)/azure-pipelines/signing
+
+extends:
+  template: azure-pipelines/MicroBuild.1ES.Official.yml@MicroBuildTemplate
+  parameters:
+    sdl:
+      sourceAnalysisPool: VSEng-MicroBuildVSStable
+      codeSignValidation:
+        enabled: true
+    pool:
+      name: AzurePipelines-EO
+      image: 1ESPT-Windows2022
+      os: windows
+    stages:
+      - stage: Build
+        displayName: Compile, Sign & Package
+        jobs:
+          - ${{ each platform in parameters.buildPlatforms }}:
+              - job: build_${{ replace(platform.target, '-', '_') }}
+                displayName: Build ${{ platform.target }}
+                timeoutInMinutes: 90
+
+                ${{ if eq(platform.name, 'linux') }}:
+                  pool:
+                    name: AzurePipelines-EO
+                    image: 1ESPT-Ubuntu22.04
+                    os: linux
+                ${{ if eq(platform.name, 'darwin') }}:
+                  pool:
+                    name: Azure Pipelines
+                    image: macos-latest
+                    os: macOS
+                ${{ if eq(platform.name, 'windows') }}:
+                  pool:
+                    name: AzurePipelines-EO
+                    image: 1ESPT-Windows2022
+                    os: windows
+
+                variables:
+                  ReleaseDir: $(Build.SourcesDirectory)/target/${{ platform.target }}/release
+                  ArtifactDir: $(Build.ArtifactStagingDirectory)/${{ platform.target }}
+                  ${{ if eq(platform.name, 'darwin') }}:
+                    BUILDSECMON_OPT_IN: false
+
+                templateContext:
+                  ${{ if eq(platform.name, 'windows') }}:
+                    mb:
+                      signing:
+                        enabled: true
+                        signType: $(SignType)
+                        signWithProd: true
+                        zipSources: false
+                  outputs:
+                    - output: pipelineArtifact
+                      targetPath: $(ArtifactDir)
+                      # macOS binaries are signed and notarized by the sign_* job below.
+                      ${{ if eq(platform.name, 'darwin') }}:
+                        displayName: Publish unsigned ${{ platform.target }}
+                        artifactName: unsigned-${{ platform.target }}
+                      ${{ else }}:
+                        displayName: Publish ${{ platform.target }}
+                        artifactName: bin-${{ platform.target }}
+
+                steps:
+                  - checkout: self
+                    path: s
+
+                  - pwsh: Rename-Item -Path "./.cargo/config.toml.disabled" -NewName "config.toml"
+                    displayName: Enable Azure Build config for Rust
+
+                  - pwsh: ./set-version.ps1 -Suffix "dev.$(Build.BuildId)"
+                    displayName: Set nightly version
+
+                  - bash: |
+                      set -euo pipefail
+                      cat >> .cargo/config.toml <<EOF
+
+                      [registries.devdiv]
+                      index = "$(CargoFeed)"
+
+                      [source.crates-io]
+                      replace-with = "devdiv"
+
+                      [source.devdiv]
+                      registry = "$(CargoFeed)"
+                      EOF
+                    displayName: Use DevDiv Cargo feed
+
+                  - task: RustInstaller@1
+                    displayName: Install Rust toolchain
+                    inputs:
+                      rustVersion: $(RustToolchain)
+                      additionalTargets: ${{ platform.target }}
+                      toolchainFeed: $(RustToolchainFeed)
+
+                  - task: CargoAuthenticate@0
+                    displayName: Authenticate with Azure Artifacts
+                    inputs:
+                      configFile: .cargo/config.toml
+
+                  - script: cargo fetch
+                    displayName: Cargo fetch
+
+                  - ${{ if eq(platform.target, 'aarch64-unknown-linux-gnu') }}:
+                      - bash: |
+                          set -euo pipefail
+                          sudo apt-get update
+                          sudo apt-get install -y gcc-aarch64-linux-gnu
+                          echo "##vso[task.setvariable variable=CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER]aarch64-linux-gnu-gcc"
+                        displayName: Install aarch64 cross toolchain
+                  - ${{ if eq(platform.target, 'armv7-unknown-linux-gnueabihf') }}:
+                      - bash: |
+                          set -euo pipefail
+                          sudo apt-get update
+                          sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+                          echo "##vso[task.setvariable variable=CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER]arm-linux-gnueabihf-gcc"
+                        displayName: Install armv7 cross toolchain
+
+                  - script: cargo build --release --frozen --target ${{ platform.target }}
+                    displayName: Build
+
+                  - ${{ if eq(platform.name, 'windows') }}:
+                      - task: NuGetToolInstaller@1
+                        displayName: Install NuGet
+                      - task: NuGetCommand@2
+                        displayName: Restore MicroBuild signing package
+                        inputs:
+                          command: restore
+                          restoreSolution: $(SigningDir)/packages.config
+                          feedsToUse: config
+                          nugetConfigPath: $(SigningDir)/NuGet.config
+                          restoreDirectory: $(SigningDir)/packages
+                      - task: MSBuild@1
+                        displayName: Sign pet.exe (Microsoft400)
+                        inputs:
+                          solution: $(SigningDir)/sign.proj
+                          msbuildArguments: >-
+                            /p:SignType=$(SignType)
+                            /p:FileToSign="$(ReleaseDir)/pet.exe"
+                            /p:Authenticode=Microsoft400
+                            /bl:"$(Build.ArtifactStagingDirectory)/logs/sign-${{ platform.target }}.binlog"
+                      - pwsh: |
+                          $sig = Get-AuthenticodeSignature -FilePath "$(ReleaseDir)/pet.exe"
+                          Write-Host "Status: $($sig.Status); Signer: $($sig.SignerCertificate.Subject)"
+                          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+                            throw "pet.exe is not validly signed by Microsoft Corporation."
+                          }
+                        displayName: Verify Authenticode signature
+
+                  - task: notice@0
+                    displayName: NOTICE file generation
+                    inputs:
+                      outputfile: $(ReleaseDir)/ThirdPartyNotices.txt
+                      outputformat: text
+
+                  - ${{ if eq(platform.name, 'windows') }}:
+                      - task: PublishSymbols@2
+                        displayName: Publish symbols
+                        inputs:
+                          SymbolsFolder: $(ReleaseDir)
+                          SearchPattern: pet.pdb
+                          IndexSources: false
+                          SymbolServerType: TeamServices
+
+                  # Publish only top-level release outputs (pet binary, PDB, notices, SBOMs); skip cargo
+                  # intermediates such as deps/, which contain unsigned copies of the binary.
+                  - pwsh: |
+                      New-Item -ItemType Directory -Force -Path "$(ArtifactDir)" | Out-Null
+                      Get-ChildItem -LiteralPath "$(ReleaseDir)" -File | Copy-Item -Destination "$(ArtifactDir)"
+                      Get-ChildItem -LiteralPath "$(ArtifactDir)" | ForEach-Object { Write-Host "$($_.Name) ($($_.Length) bytes)" }
+                    displayName: Stage artifact
+
+          # macOS signing and notarization run on a Windows MicroBuild agent; ESRP performs the Apple
+          # operations server-side on the zipped binary, replacing the zip in place.
+          - ${{ each platform in parameters.buildPlatforms }}:
+              - ${{ if eq(platform.name, 'darwin') }}:
+                  - job: sign_${{ replace(platform.target, '-', '_') }}
+                    displayName: Sign & notarize ${{ platform.target }}
+                    dependsOn: build_${{ replace(platform.target, '-', '_') }}
+                    timeoutInMinutes: 90
+                    pool:
+                      name: AzurePipelines-EO
+                      image: 1ESPT-Windows2022
+                      os: windows
+                    variables:
+                      ArtifactDir: $(Build.ArtifactStagingDirectory)/${{ platform.target }}
+                      SignZip: $(Build.ArtifactStagingDirectory)/${{ platform.target }}/pet.zip
+                    templateContext:
+                      mb:
+                        signing:
+                          enabled: true
+                          signType: $(SignType)
+                          signWithProd: true
+                          zipSources: false
+                      inputs:
+                        - input: pipelineArtifact
+                          artifactName: unsigned-${{ platform.target }}
+                          targetPath: $(ArtifactDir)
+                      outputs:
+                        - output: pipelineArtifact
+                          displayName: Publish ${{ platform.target }}
+                          targetPath: $(ArtifactDir)
+                          artifactName: bin-${{ platform.target }}
+                    steps:
+                      - checkout: self
+                        path: s
+
+                      - task: NuGetToolInstaller@1
+                        displayName: Install NuGet
+                      - task: NuGetCommand@2
+                        displayName: Restore MicroBuild signing package
+                        inputs:
+                          command: restore
+                          restoreSolution: $(SigningDir)/packages.config
+                          feedsToUse: config
+                          nugetConfigPath: $(SigningDir)/NuGet.config
+                          restoreDirectory: $(SigningDir)/packages
+
+                      - pwsh: |
+                          $pet = Join-Path "$(ArtifactDir)" 'pet'
+                          if (-not (Test-Path -LiteralPath $pet)) { throw "Unsigned binary not found: $pet" }
+                          Compress-Archive -LiteralPath $pet -DestinationPath "$(SignZip)" -Force
+                        displayName: Zip pet for signing
+
+                      - task: MSBuild@1
+                        displayName: Sign pet (MacDeveloperHarden)
+                        inputs:
+                          solution: $(SigningDir)/sign.proj
+                          msbuildArguments: >-
+                            /p:SignType=$(SignType)
+                            /p:FileToSign="$(SignZip)"
+                            /p:Authenticode=MacDeveloperHarden
+                            /bl:"$(Build.ArtifactStagingDirectory)/logs/sign-${{ platform.target }}.binlog"
+
+                      - task: MSBuild@1
+                        displayName: Notarize pet (8020)
+                        inputs:
+                          solution: $(SigningDir)/sign.proj
+                          msbuildArguments: >-
+                            /p:SignType=$(SignType)
+                            /p:FileToSign="$(SignZip)"
+                            /p:Authenticode=8020
+                            /p:MacAppName=pet
+                            /bl:"$(Build.ArtifactStagingDirectory)/logs/notarize-${{ platform.target }}.binlog"
+
+                      - pwsh: |
+                          Expand-Archive -LiteralPath "$(SignZip)" -DestinationPath "$(ArtifactDir)" -Force
+                          Remove-Item -LiteralPath "$(SignZip)" -Force
+                          Remove-Item -LiteralPath (Join-Path "$(ArtifactDir)" 'signing-obj') -Recurse -Force -ErrorAction SilentlyContinue
+                          Get-ChildItem -LiteralPath "$(ArtifactDir)" | ForEach-Object { Write-Host "$($_.Name) ($($_.Length) bytes)" }
+                        displayName: Extract signed pet
+
+                  - job: verify_${{ replace(platform.target, '-', '_') }}
+                    displayName: Verify signature ${{ platform.target }}
+                    dependsOn: sign_${{ replace(platform.target, '-', '_') }}
+                    pool:
+                      name: Azure Pipelines
+                      image: macos-latest
+                      os: macOS
+                    variables:
+                      BUILDSECMON_OPT_IN: false
+                    templateContext:
+                      inputs:
+                        - input: pipelineArtifact
+                          artifactName: bin-${{ platform.target }}
+                          targetPath: $(Pipeline.Workspace)/bin
+                    steps:
+                      - checkout: none
+                      - bash: |
+                          set -euo pipefail
+                          pet="$(Pipeline.Workspace)/bin/pet"
+                          codesign --verify --strict --verbose=2 "$pet"
+                          details=$(codesign --display --verbose=4 "$pet" 2>&1)
+                          echo "$details"
+                          echo "$details" | grep -q 'Authority=Developer ID Application: Microsoft Corporation' || { echo "##vso[task.logissue type=error]Not signed with Microsoft Developer ID"; exit 1; }
+                          echo "$details" | grep -Eq 'flags=0x[0-9a-f]*\(runtime\)|\(runtime\)' || { echo "##vso[task.logissue type=error]Hardened runtime is not enabled"; exit 1; }
+                        displayName: Verify macOS signature and hardened runtime
