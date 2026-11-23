@@ -44,6 +44,12 @@ impl WindowsRegistry {
             search_result: Arc::new(Mutex::new(None)),
         }
     }
+    pub fn with_conda_locator(&self, conda_locator: Arc<dyn CondaLocator>) -> WindowsRegistry {
+        WindowsRegistry {
+            conda_locator,
+            search_result: self.search_result.clone(),
+        }
+    }
     #[cfg(windows)]
     fn find_with_cache(
         &self,
@@ -519,6 +525,67 @@ mod tests {
             &[PathBuf::from("C:\\fake\\python.exe")],
             "find() must replay cached managers to the reporter on a cache hit",
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_rebound_registry_replays_cached_conda_dirs_to_new_locator() {
+        use pet_core::manager::EnvManager;
+        use pet_core::python_environment::PythonEnvironment;
+        use pet_core::telemetry::TelemetryEvent;
+
+        struct NoopReporter;
+        impl Reporter for NoopReporter {
+            fn report_manager(&self, _manager: &EnvManager) {}
+            fn report_environment(&self, _env: &PythonEnvironment) {}
+            fn report_telemetry(&self, _event: &TelemetryEvent) {}
+        }
+
+        let temp = TempDir::new().unwrap();
+        let conda_prefix = temp.path().join("registry-conda");
+        fs::create_dir_all(conda_prefix.join("conda-meta")).unwrap();
+        fs::create_dir_all(conda_prefix.join("envs")).unwrap();
+        fs::create_dir_all(conda_prefix.join("Scripts")).unwrap();
+        fs::write(conda_prefix.join("conda-meta").join("history"), "").unwrap();
+        fs::write(
+            conda_prefix
+                .join("conda-meta")
+                .join("conda-24.1.0-py312_0.json"),
+            r#"{"version":"24.1.0"}"#,
+        )
+        .unwrap();
+        fs::write(
+            conda_prefix
+                .join("conda-meta")
+                .join("python-3.12.0-h123_0.json"),
+            r#"{"version":"3.12.0"}"#,
+        )
+        .unwrap();
+        fs::write(conda_prefix.join("Scripts").join("conda.bat"), "").unwrap();
+        fs::write(conda_prefix.join("python.exe"), "").unwrap();
+
+        let environment = EnvironmentApi::new();
+        let retired_conda = Arc::new(Conda::from(&environment));
+        let replacement_conda = Arc::new(Conda::from(&environment));
+        let registry = WindowsRegistry::from(retired_conda.clone());
+        registry
+            .search_result
+            .lock()
+            .unwrap()
+            .replace(Arc::new(CachedRegistryWalk {
+                result: LocatorResult {
+                    managers: Vec::new(),
+                    environments: Vec::new(),
+                },
+                conda_install_dirs: vec![conda_prefix.clone()],
+            }));
+        let rebound = registry.with_conda_locator(replacement_conda.clone());
+
+        rebound.find(&NoopReporter);
+
+        assert!(Arc::ptr_eq(&registry.search_result, &rebound.search_result));
+        assert!(replacement_conda.environments.contains_key(&conda_prefix));
+        assert!(!retired_conda.environments.contains_key(&conda_prefix));
     }
 
     /// Smoke test: on a fresh locator (empty cache), `find()` runs the new
