@@ -413,6 +413,31 @@ pub fn resolve_symlink<T: AsRef<Path>>(exe: &T) -> Option<PathBuf> {
     }
 }
 
+/// Returns `true` when both paths refer to the same file, following symlinks.
+///
+/// On Unix this compares the device and inode, so hard links to the same file match even though
+/// their paths and resolved paths differ. For example, CPython's `make install` of a free-threaded
+/// build hard-links `python3.13` to `python3.13t`. Elsewhere the canonical paths are compared.
+///
+/// Returns `false` when either path cannot be read.
+pub fn is_same_file<A: AsRef<Path>, B: AsRef<Path>>(first: A, second: B) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(first), std::fs::metadata(second)) {
+            (Ok(first), Ok(second)) => first.dev() == second.dev() && first.ino() == second.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match (std::fs::canonicalize(first), std::fs::canonicalize(second)) {
+            (Ok(first), Ok(second)) => first == second,
+            _ => false,
+        }
+    }
+}
+
 /// Expands `~` (home directory) and environment variables in a path.
 ///
 /// This function handles:
@@ -990,5 +1015,31 @@ mod tests {
         // Clean up
         let _ = std::fs::remove_file(&symlink_path);
         let _ = std::fs::remove_file(&target_file);
+    }
+
+    // ==================== is_same_file tests ====================
+
+    #[test]
+    fn test_is_same_file_matches_hard_links_and_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("python3.13t");
+        let hard_link = dir.path().join("python3.13");
+        let other = dir.path().join("python3.12");
+        std::fs::write(&original, "python").unwrap();
+        std::fs::write(&other, "python").unwrap();
+        std::fs::hard_link(&original, &hard_link).unwrap();
+
+        assert!(is_same_file(&original, &original));
+        #[cfg(unix)]
+        assert!(is_same_file(&original, &hard_link));
+        assert!(!is_same_file(&original, &other));
+        assert!(!is_same_file(&original, dir.path().join("missing")));
+
+        #[cfg(unix)]
+        {
+            let symlink = dir.path().join("python3");
+            std::os::unix::fs::symlink(&hard_link, &symlink).unwrap();
+            assert!(is_same_file(&symlink, &original));
+        }
     }
 }

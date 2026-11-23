@@ -17,7 +17,7 @@ use pet_core::{
     reporter::Reporter,
     Locator, LocatorKind, RefreshStatePersistence,
 };
-use pet_fs::path::resolve_symlink;
+use pet_fs::path::{is_same_file, resolve_symlink};
 use pet_python_utils::{env::ResolvedPythonEnv, executable::find_executables};
 use pet_virtualenv::is_virtualenv;
 
@@ -244,6 +244,13 @@ fn get_python_in_bin(env: &PythonEnv, is_64bit: bool) -> Option<PythonEnvironmen
                 symlinks.push(possible_symlink.to_owned());
             }
         }
+
+        // A hard link to the executable in the same folder is the same interpreter under another
+        // name. CPython's `make install` of a free-threaded build hard-links `python3.13` to
+        // `python3.13t`.
+        if !possible_symlink.is_symlink() && is_same_file(possible_symlink, &executable) {
+            symlinks.push(possible_symlink.to_owned());
+        }
     }
     symlinks.sort();
     symlinks.dedup();
@@ -387,6 +394,44 @@ mod tests {
 
         assert!(symlinks.contains(&executable));
         assert!(!symlinks.contains(&real_executable));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn get_python_in_bin_collects_hard_linked_free_threaded_executable() {
+        // CPython's `make install` of a free-threaded build hard-links python3.13 to python3.13t.
+        let dir = tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let free_threaded = bin.join("python3.13t");
+        let executable = bin.join("python3.13");
+        create_executable(&free_threaded);
+        fs::hard_link(&free_threaded, &executable).unwrap();
+        let env = create_env(executable.clone(), dir.path().to_path_buf());
+
+        let symlinks = get_python_in_bin(&env, true).unwrap().symlinks.unwrap();
+
+        assert!(symlinks.contains(&executable));
+        assert!(symlinks.contains(&free_threaded));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn get_python_in_bin_keeps_separate_free_threaded_binary_separate() {
+        // Distributions such as Fedora ship the free-threaded build as a separate binary.
+        let dir = tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let free_threaded = bin.join("python3.13t");
+        let executable = bin.join("python3.13");
+        create_executable(&free_threaded);
+        create_executable(&executable);
+        let env = create_env(executable.clone(), dir.path().to_path_buf());
+
+        let symlinks = get_python_in_bin(&env, true).unwrap().symlinks.unwrap();
+
+        assert!(symlinks.contains(&executable));
+        assert!(!symlinks.contains(&free_threaded));
     }
 
     #[test]
