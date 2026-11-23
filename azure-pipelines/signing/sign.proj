@@ -20,25 +20,22 @@
 
   <Import Project="$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.props" Condition="Exists('$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.props')" />
 
+  <ItemGroup>
+    <FilesToSign Include="$(FileToSign)" Condition="'$(MacAppName)' == ''">
+      <Authenticode>$(Authenticode)</Authenticode>
+    </FilesToSign>
+    <FilesToSign Include="$(FileToSign)" Condition="'$(MacAppName)' != ''">
+      <Authenticode>$(Authenticode)</Authenticode>
+      <MacAppName>$(MacAppName)</MacAppName>
+    </FilesToSign>
+  </ItemGroup>
+
   <Target Name="ValidateSigningInputs" BeforeTargets="SignFiles">
     <Error Condition="!Exists('$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.targets')" Text="MicroBuild signing targets are missing. Restore azure-pipelines/signing/packages.config before signing." />
     <Error Condition="'$(SignType)' != 'real' and '$(SignType)' != 'test'" Text="SignType must be 'real' or 'test'." />
     <Error Condition="'$(FileToSign)' == '' or !Exists('$(FileToSign)')" Text="FileToSign does not exist: '$(FileToSign)'." />
     <Error Condition="'$(Authenticode)' == ''" Text="Authenticode (certificate name) is required." />
     <MakeDir Directories="$(IntermediateOutputPath)" />
-  </Target>
-
-  <Target Name="GetFilesToSign" BeforeTargets="SignFiles" DependsOnTargets="ValidateSigningInputs">
-    <ItemGroup>
-      <FilesToSign Include="$(FileToSign)" Condition="'$(MacAppName)' == ''">
-        <Authenticode>$(Authenticode)</Authenticode>
-      </FilesToSign>
-      <FilesToSign Include="$(FileToSign)" Condition="'$(MacAppName)' != ''">
-        <Authenticode>$(Authenticode)</Authenticode>
-        <MacAppName>$(MacAppName)</MacAppName>
-      </FilesToSign>
-    </ItemGroup>
-    <Message Importance="high" Text="Signing '$(FileToSign)' with '$(Authenticode)' (SignType=$(SignType))." />
   </Target>
 
   <Import Project="$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.targets" Condition="Exists('$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.targets')" />

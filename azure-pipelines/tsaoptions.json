@@ -1,0 +1,10 @@
+{
+  "areaPath": "DevDiv\\VS Code (compliance tracking only)\\Visual Studio Code Python Extensions",
+  "codebaseName": "devdiv_microsoft_python_environment_tools",
+  "instanceUrl": "https://devdiv.visualstudio.com/defaultcollection",
+  "notificationAliases": [
+    "monacotools@microsoft.com"
+  ],
+  "serviceTreeID": "6e6194bc-7baa-4486-86d0-9f5419626d46",
+  "projectName": "DevDiv"
+}

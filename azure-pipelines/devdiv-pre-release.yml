@@ -72,6 +72,9 @@ extends:
       sourceAnalysisPool: VSEng-MicroBuildVSStable
       codeSignValidation:
         enabled: true
+      tsa:
+        enabled: true
+        configFile: $(Build.SourcesDirectory)/azure-pipelines/tsaoptions.json
     pool:
       name: AzurePipelines-EO
       image: 1ESPT-Windows2022
@@ -340,3 +343,38 @@ extends:
                           echo "$details" | grep -q 'Authority=Developer ID Application: Microsoft Corporation' || { echo "##vso[task.logissue type=error]Not signed with Microsoft Developer ID"; exit 1; }
                           echo "$details" | grep -Eq 'flags=0x[0-9a-f]*\(runtime\)|\(runtime\)' || { echo "##vso[task.logissue type=error]Hardened runtime is not enabled"; exit 1; }
                         displayName: Verify macOS signature and hardened runtime
+
+          - ${{ each platform in parameters.buildPlatforms }}:
+              - ${{ if eq(platform.target, 'x86_64-pc-windows-msvc') }}:
+                  - job: APIScan
+                    displayName: APIScan
+                    dependsOn: build_x86_64_pc_windows_msvc
+                    pool:
+                      name: AzurePipelines-EO
+                      image: 1ESPT-Windows2022
+                      os: windows
+                    templateContext:
+                      inputs:
+                        - input: pipelineArtifact
+                          artifactName: bin-x86_64-pc-windows-msvc
+                          targetPath: $(Pipeline.Workspace)/apiscan
+                    steps:
+                      - checkout: self
+                        path: s
+                      - task: APIScan@2
+                        displayName: Run APIScan
+                        inputs:
+                          softwareFolder: $(Pipeline.Workspace)/apiscan
+                          softwareName: pet
+                          softwareVersionNum: '2024'
+                          symbolsFolder: $(Pipeline.Workspace)/apiscan
+                          toolVersion: Latest
+                          azureSubscription: VSEng-APIScanSC
+                        env:
+                          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+                      - task: TSAUpload@2
+                        displayName: Upload APIScan results to TSA
+                        inputs:
+                          GdnPublishTsaConfigFile: $(Build.SourcesDirectory)/azure-pipelines/tsaoptions.json
+                          GdnPublishTsaOnboard: true
+                          GdnPublishTsaGdnToolApiScan: true
