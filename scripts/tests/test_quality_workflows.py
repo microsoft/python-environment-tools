@@ -62,6 +62,102 @@ def copy_measurement_helpers(directory: Path, revision: str) -> Path:
 
 
 class QualityWorkflowTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows workflow")
+    def test_windows_pyenv_setup_preserves_scripts_and_stops_on_clone_failure(self) -> None:
+        git = shutil.which("git")
+        pwsh = shutil.which("pwsh")
+        if not git or not pwsh:
+            self.skipTest("git and PowerShell 7 are required")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            upstream = root / "upstream"
+            binary_dir = upstream / "pyenv-win" / "bin"
+            binary_dir.mkdir(parents=True)
+            script_bytes = b"#!/bin/sh\nexit 0\n"
+            (binary_dir / "pyenv").write_bytes(script_bytes)
+            (binary_dir / "pyenv.bat").write_text("@exit /b 0\n", encoding="utf-8")
+            (upstream / ".version").write_text("3.1.1\n", encoding="utf-8")
+
+            env = os.environ.copy()
+            env.update({
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": str(root / "empty-gitconfig"),
+                "GIT_TERMINAL_PROMPT": "0",
+            })
+
+            def git_run(*args: str) -> None:
+                subprocess.run([git, *args], env=env, check=True, capture_output=True)
+
+            git_run("init", "--initial-branch=master", str(upstream))
+            git_run("-C", str(upstream), "add", ".")
+            git_run(
+                "-C", str(upstream), "-c", "user.name=Test", "-c",
+                "user.email=test@example.com", "commit", "-m", "fixture",
+            )
+
+            configs = {}
+            for succeeds, target in ((True, upstream), (False, root / "missing")):
+                config = root / f"gitconfig-{succeeds}"
+                git_run("config", "--file", str(config), "core.autocrlf", "true")
+                git_run(
+                    "config", "--file", str(config),
+                    f"url.{target.as_uri()}.insteadOf",
+                    "https://github.com/pyenv-win/pyenv-win.git",
+                )
+                configs[succeeds] = config
+
+            for workflow in ("pr-check.yml", "coverage.yml", "coverage-baseline.yml"):
+                step = workflow_steps(".github/workflows/" + workflow)["Install pyenv (Windows)"]
+                self.assertEqual(step_property(step, "shell"), "pwsh")
+                lines = step.split("        run: |\n", 1)[1].splitlines()
+                script_lines = []
+                for line in lines:
+                    if not line.startswith("          "):
+                        break
+                    script_lines.append(line[10:])
+                script = "\n".join(script_lines)
+                self.assertNotIn("install-pyenv-win.ps1", script)
+
+                for succeeds in (True, False):
+                    with self.subTest(workflow=workflow, clone_succeeds=succeeds):
+                        profile = root / f"{workflow}-{succeeds}"
+                        profile.mkdir()
+                        github_path = profile / "github-path"
+                        github_env = profile / "github-env"
+                        github_path.touch()
+                        github_env.touch()
+                        process_env = env | {
+                            "USERPROFILE": str(profile),
+                            "GITHUB_PATH": str(github_path),
+                            "GITHUB_ENV": str(github_env),
+                            "GIT_CONFIG_GLOBAL": str(configs[succeeds]),
+                        }
+                        result = subprocess.run(
+                            [pwsh, "-NoProfile", "-NonInteractive", "-Command",
+                             '$ErrorActionPreference = "Stop"\n' + script],
+                            env=process_env, capture_output=True, text=True, timeout=30,
+                        )
+                        if succeeds:
+                            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                            pyenv_root = profile / ".pyenv"
+                            self.assertEqual(
+                                (pyenv_root / "pyenv-win" / "bin" / "pyenv").read_bytes(),
+                                script_bytes,
+                            )
+                            self.assertEqual(
+                                github_path.read_text(encoding="utf-8").splitlines(),
+                                [str(pyenv_root / "pyenv-win" / "bin")],
+                            )
+                            self.assertEqual(
+                                github_env.read_text(encoding="utf-8").splitlines(),
+                                [f"PYENV_ROOT={pyenv_root}"],
+                            )
+                        else:
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertEqual(github_path.read_bytes(), b"")
+                            self.assertEqual(github_env.read_bytes(), b"")
+
     def test_linux_conda_setup_does_not_create_or_activate_an_extra_environment(self) -> None:
         for workflow in (
             "pr-check.yml", "coverage.yml", "coverage-baseline.yml",
