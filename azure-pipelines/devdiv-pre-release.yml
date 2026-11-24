@@ -229,6 +229,18 @@ extends:
                     inputs:
                       outputfile: $(ReleaseDir)/ThirdPartyNotices.txt
                       outputformat: text
+                      ${{ if eq(platform.name, 'windows') }}:
+                        # The generator may still warn that winresource is unharvested.
+                        additionaldata: $(Build.SourcesDirectory)/azure-pipelines/windows-additional-notices.txt
+
+                  - ${{ if eq(platform.name, 'windows') }}:
+                      - pwsh: |
+                          $additional = [IO.File]::ReadAllText("$(Build.SourcesDirectory)/azure-pipelines/windows-additional-notices.txt").Trim()
+                          $notice = [IO.File]::ReadAllText("$(ReleaseDir)/ThirdPartyNotices.txt")
+                          if ([string]::IsNullOrWhiteSpace($additional) -or -not $notice.Contains($additional)) {
+                            throw "Generated NOTICE is missing the supplemental Windows attribution."
+                          }
+                        displayName: Verify supplemental Windows NOTICE
 
                   - ${{ if eq(platform.name, 'windows') }}:
                       - task: PublishSymbols@2
