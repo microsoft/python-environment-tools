@@ -22,6 +22,20 @@ class DevDivPipelineTests(unittest.TestCase):
         self.assertNotIn('continueOnError: true', scan_step)
         self.assertNotIn('condition:', scan_step)
 
+    def test_apiscan_uses_workload_identity_service_connection(self):
+        pipeline = (ROOT / 'azure-pipelines' / 'devdiv-pre-release.yml').read_text(encoding='utf-8')
+        apiscan_start = pipeline.index('- task: APIScan@2')
+        tsa_start = pipeline.index('- task: TSAUpload@2', apiscan_start)
+        apiscan = pipeline[apiscan_start:tsa_start]
+
+        self.assertIn('azureSubscription: VSEng-APIScanSC', apiscan)
+        self.assertRegex(
+            apiscan,
+            r'AzureServicesAuthConnectionString: RunAs=App;AppId=[^;]+;'
+            r'TenantId=[^;]+;ServiceConnectionId=[^;]+;',
+        )
+        self.assertIn('SYSTEM_ACCESSTOKEN: $(System.AccessToken)', apiscan)
+
 
 if __name__ == '__main__':
     unittest.main()
