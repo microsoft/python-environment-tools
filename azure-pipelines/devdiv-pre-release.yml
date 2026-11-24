@@ -69,7 +69,7 @@ extends:
   template: azure-pipelines/MicroBuild.1ES.Official.yml@MicroBuildTemplate
   parameters:
     settings:
-      networkIsolationPolicy: Preferred,GitHub,ESRP
+      networkIsolationPolicy: Preferred,GitHub,ESRP,LinuxDistroRepos
     sdl:
       sourceAnalysisPool: VSEng-MicroBuildVSStable
       codeSignValidation:
