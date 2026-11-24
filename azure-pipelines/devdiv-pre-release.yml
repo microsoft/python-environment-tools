@@ -182,6 +182,8 @@ extends:
                           sudo apt-get update
                           sudo apt-get install -y gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
                           echo "##vso[task.setvariable variable=CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER]arm-linux-gnueabihf-gcc"
+                          # Match the legacy static non-PIE binary; Ubuntu armhf lacks rcrt1.o.
+                          echo "##vso[task.setvariable variable=CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS]-Crelocation-model=static"
                         displayName: Install armv7 cross toolchain
 
                   - script: cargo build --release --frozen --target ${{ platform.target }}
@@ -214,6 +216,11 @@ extends:
                             throw "pet.exe is not validly signed by Microsoft Corporation."
                           }
                         displayName: Verify Authenticode signature
+
+                  - task: ComponentGovernanceComponentDetection@0
+                    displayName: Register components for NOTICE
+                    inputs:
+                      scanType: Register
 
                   - task: notice@0
                     displayName: NOTICE file generation
