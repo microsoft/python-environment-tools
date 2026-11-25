@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Signs a single file in place with MicroBuild (ESRP).
+  Signs files in place with MicroBuild (ESRP).
 
   Run after the MicroBuildSigningPlugin task and a NuGet restore of packages.config:
-    msbuild sign.proj /p:SignType=real /p:FileToSign=<full path> [/p:AdditionalFilesToSign=<full path>] /p:Authenticode=<certificate> [/p:MacAppName=<name>]
+    msbuild sign.proj /p:SignType=real /p:FileToSign=<full path or wildcard> /p:Authenticode=<certificate> [/p:MacAppName=<name>] [/p:OutDir=<common parent>]
 
-  Certificates used by azure-pipelines/devdiv-pre-release.yml:
+  A wildcard FileToSign (for example `macos/*/pet.zip`) signs every match in one MicroBuild operation;
+  pass OutDir as a common parent of the matches.
+
+  Certificates used by azure-pipelines/templates/rust-package.yml:
     Microsoft400        Windows Authenticode (pet.exe)
     MacDeveloperHarden  macOS hardened-runtime signing (zip containing `pet`)
     8020                macOS notarization (same zip, after MacDeveloperHarden)
@@ -25,17 +28,13 @@
       <Authenticode>$(Authenticode)</Authenticode>
       <MacAppName Condition="'$(MacAppName)' != ''">$(MacAppName)</MacAppName>
     </FilesToSign>
-    <FilesToSign Include="$(AdditionalFilesToSign)" Condition="'$(AdditionalFilesToSign)' != ''">
-      <Authenticode>$(Authenticode)</Authenticode>
-      <MacAppName Condition="'$(MacAppName)' != ''">$(MacAppName)</MacAppName>
-    </FilesToSign>
   </ItemGroup>
 
   <Target Name="ValidateSigningInputs" BeforeTargets="SignFiles">
     <Error Condition="!Exists('$(MicroBuildCoreDir)Microsoft.VisualStudioEng.MicroBuild.Core.targets')" Text="MicroBuild signing targets are missing. Restore azure-pipelines/signing/packages.config before signing." />
     <Error Condition="'$(SignType)' != 'real' and '$(SignType)' != 'test'" Text="SignType must be 'real' or 'test'." />
-    <Error Condition="'$(FileToSign)' == '' or !Exists('$(FileToSign)')" Text="FileToSign does not exist: '$(FileToSign)'." />
-    <Error Condition="'$(AdditionalFilesToSign)' != '' and !Exists('$(AdditionalFilesToSign)')" Text="AdditionalFilesToSign does not exist: '$(AdditionalFilesToSign)'." />
+    <Error Condition="'@(FilesToSign)' == ''" Text="FileToSign does not exist: '$(FileToSign)'." />
+    <Error Condition="!Exists('%(FilesToSign.FullPath)')" Text="FileToSign does not exist: '%(FilesToSign.Identity)'." />
     <Error Condition="'$(Authenticode)' == ''" Text="Authenticode (certificate name) is required." />
     <MakeDir Directories="$(IntermediateOutputPath)" />
   </Target>

@@ -7,71 +7,80 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+PIPELINES = ROOT / 'azure-pipelines'
+
+
+def read(path: Path) -> str:
+    return path.read_text(encoding='utf-8').replace('\r\n', '\n')
 
 
 class DevDivPipelineTests(unittest.TestCase):
+    def setUp(self):
+        self.caller = read(PIPELINES / 'devdiv-pre-release.yml')
+        self.template = read(PIPELINES / 'templates' / 'rust-package.yml')
+
+    def test_caller_only_supplies_parameters_to_rust_package_template(self):
+        self.assertIn('extends:\n  template: templates/rust-package.yml', self.caller)
+        self.assertIn('buildPlatforms: ${{ parameters.buildPlatforms }}', self.caller)
+        self.assertIn('windowsAdditionalNotices: $(Build.SourcesDirectory)/azure-pipelines/windows-additional-notices.txt', self.caller)
+        self.assertNotIn('- job:', self.caller)
+        self.assertIn('template: azure-pipelines/MicroBuild.1ES.Official.yml@MicroBuildTemplate', self.template)
+
     def test_notice_follows_a_registered_component_scan_after_build(self):
-        pipeline = (ROOT / 'azure-pipelines' / 'devdiv-pre-release.yml').read_text(encoding='utf-8')
-        build = pipeline.index('- script: cargo build --release')
-        scan = pipeline.index('- task: ComponentGovernanceComponentDetection@0')
-        notice = pipeline.index('- task: notice@0')
+        build = self.template.index('- script: cargo build --release')
+        scan = self.template.index('- task: ComponentGovernanceComponentDetection@0')
+        notice = self.template.index('- task: notice@0')
 
         self.assertLess(build, scan)
         self.assertLess(scan, notice)
-        scan_step = pipeline[scan:notice]
+        scan_step = self.template[scan:notice]
         self.assertIn('scanType: Register', scan_step)
         self.assertNotIn('continueOnError: true', scan_step)
         self.assertNotIn('condition:', scan_step)
 
     def test_windows_notice_includes_unharvested_build_dependency(self):
-        pipeline = (ROOT / 'azure-pipelines' / 'devdiv-pre-release.yml').read_text(encoding='utf-8')
-        notice = pipeline.index('- task: notice@0')
-        symbols = pipeline.index('- task: PublishSymbols@2', notice)
-        notice_steps = pipeline[notice:symbols]
-        self.assertIn(
-            'additionaldata: $(Build.SourcesDirectory)/azure-pipelines/windows-additional-notices.txt',
-            notice_steps,
-        )
+        notice = self.template.index('- task: notice@0')
+        symbols = self.template.index('- task: PublishSymbols@2', notice)
+        notice_steps = self.template[notice:symbols]
+        self.assertIn('additionaldata: ${{ parameters.windowsAdditionalNotices }}', notice_steps)
         self.assertIn('Verify supplemental Windows NOTICE', notice_steps)
 
-        lockfile = (ROOT / 'Cargo.lock').read_text(encoding='utf-8')
+        lockfile = read(ROOT / 'Cargo.lock')
         package = re.search(r'\[\[package\]\]\nname = "winresource"\nversion = "([^"]+)"', lockfile)
         self.assertIsNotNone(package)
-        additional = (ROOT / 'azure-pipelines' / 'windows-additional-notices.txt').read_text(encoding='utf-8')
+        additional = read(PIPELINES / 'windows-additional-notices.txt')
         self.assertIn(f'winresource {package.group(1)} - MIT', additional)
         self.assertIn('Copyright 2016 Max Resch', additional)
         self.assertIn('Permission is hereby granted', additional)
 
     def test_apiscan_uses_workload_identity_service_connection(self):
-        pipeline = (ROOT / 'azure-pipelines' / 'devdiv-pre-release.yml').read_text(encoding='utf-8')
-        apiscan_start = pipeline.index('- task: APIScan@2')
-        tsa_start = pipeline.index('- task: TSAUpload@2', apiscan_start)
-        apiscan = pipeline[apiscan_start:tsa_start]
+        apiscan_start = self.template.index('- task: APIScan@2')
+        tsa_start = self.template.index('- task: TSAUpload@2', apiscan_start)
+        apiscan = self.template[apiscan_start:tsa_start]
 
-        self.assertIn('azureSubscription: VSEng-APIScanSC', apiscan)
-        self.assertRegex(
-            apiscan,
-            r'AzureServicesAuthConnectionString: RunAs=App;AppId=[^;]+;'
-            r'TenantId=[^;]+;ServiceConnectionId=[^;]+;',
-        )
+        self.assertIn('azureSubscription: ${{ parameters.apiScanServiceConnection }}', apiscan)
+        self.assertIn('AzureServicesAuthConnectionString: ${{ parameters.apiScanConnectionString }}', apiscan)
         self.assertIn('SYSTEM_ACCESSTOKEN: $(System.AccessToken)', apiscan)
+        self.assertIn("default: VSEng-APIScanSC", self.template)
+        self.assertRegex(
+            self.caller,
+            r'apiScanConnectionString: RunAs=App;AppId=[^;]+;TenantId=[^;]+;ServiceConnectionId=[^;]+;',
+        )
 
-    def test_macos_artifacts_are_signed_and_verified_together(self):
-        pipeline = (ROOT / 'azure-pipelines' / 'devdiv-pre-release.yml').read_text(encoding='utf-8')
-        macos_guard = pipeline[pipeline.index('- ${{ if and('):pipeline.index('- job: sign_macos')]
-        signing = pipeline[pipeline.index('- job: sign_macos'):pipeline.index('- job: APIScan')]
-        verification = pipeline[pipeline.index('- job: verify_macos'):pipeline.index('- job: APIScan')]
-        sign_project = (ROOT / 'azure-pipelines' / 'signing' / 'sign.proj').read_text(encoding='utf-8')
+    def test_macos_jobs_cover_only_selected_macos_targets(self):
+        signing = self.template[self.template.index('- job: SignMacOS'):self.template.index('- job: VerifyMacOS')]
+        verification = self.template[self.template.index('- job: VerifyMacOS'):self.template.index('- stage: APIScan')]
+        guard = self.template[:self.template.index('- job: SignMacOS')].rsplit('- ${{ if', 1)[1]
 
-        self.assertIn("contains(convertToJson(parameters.buildPlatforms), 'aarch64-apple-darwin')", macos_guard)
-        self.assertIn("contains(convertToJson(parameters.buildPlatforms), 'x86_64-apple-darwin')", macos_guard)
-        self.assertIn('dependsOn:\n                - build_aarch64_apple_darwin\n                - build_x86_64_apple_darwin', signing)
-        self.assertIn('/p:AdditionalFilesToSign="$(Build.ArtifactStagingDirectory)/x86_64-apple-darwin/pet.zip"', signing)
-        self.assertIn('artifactName: bin-aarch64-apple-darwin', signing)
-        self.assertIn('artifactName: bin-x86_64-apple-darwin', signing)
-        self.assertIn('<FilesToSign Include="$(AdditionalFilesToSign)"', sign_project)
-        self.assertIn('lipo -archs "$pet"', verification)
-        self.assertIn('codesign --verify --strict --verbose=2 "$pet"', verification)
+        self.assertIn('''contains(convertToJson(parameters.buildPlatforms), '"darwin"')''', guard)
+        for section in (signing, verification):
+            self.assertIn("${{ each platform in parameters.buildPlatforms }}", section)
+            self.assertIn("${{ if eq(platform.name, 'darwin') }}", section)
+        self.assertIn('- Package_${{ replace(platform.target, \'-\', \'_\') }}', signing)
+        self.assertEqual(signing.count('/macos/*/${{ parameters.binaryName }}.zip"'), 2)
+        self.assertIn('artifactName: bin-${{ platform.target }}', signing)
+        self.assertIn('lipo -archs "$binary"', verification)
+        self.assertIn('codesign --verify --strict --verbose=2 "$binary"', verification)
         self.assertIn('ThirdPartyNotices.txt', verification)
 
 

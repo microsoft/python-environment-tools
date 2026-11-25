@@ -76,6 +76,27 @@ class SigningProjectTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("SignType must be 'real' or 'test'", result.stdout)
 
+    def test_wildcard_signs_every_match_in_one_operation(self):
+        zips = []
+        for target in ('aarch64-apple-darwin', 'x86_64-apple-darwin'):
+            directory = self.root / 'macos' / target
+            directory.mkdir(parents=True)
+            zips.append(directory / 'pet.zip')
+            zips[-1].write_text('fixture')
+
+        result = self.run_signing(
+            f'-p:FileToSign={self.root / "macos" / "*" / "pet.zip"}',
+            f'-p:OutDir={self.root}{os.sep}',
+            '-p:Authenticode=MacDeveloperHarden',
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path in zips:
+            self.assertIn(f'SIGNING {path}|MacDeveloperHarden|', result.stdout)
+
+        result = self.run_signing(f'-p:FileToSign={self.root / "missing" / "*" / "pet.zip"}')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FileToSign does not exist', result.stdout)
+
 
 if __name__ == '__main__':
     unittest.main()
