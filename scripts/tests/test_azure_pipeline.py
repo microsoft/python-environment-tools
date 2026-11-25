@@ -58,11 +58,14 @@ class DevDivPipelineTests(unittest.TestCase):
 
     def test_macos_artifacts_are_signed_and_verified_together(self):
         pipeline = (ROOT / 'azure-pipelines' / 'devdiv-pre-release.yml').read_text(encoding='utf-8')
+        macos_guard = pipeline[pipeline.index('- ${{ if and('):pipeline.index('- job: sign_macos')]
         signing = pipeline[pipeline.index('- job: sign_macos'):pipeline.index('- job: APIScan')]
         verification = pipeline[pipeline.index('- job: verify_macos'):pipeline.index('- job: APIScan')]
         sign_project = (ROOT / 'azure-pipelines' / 'signing' / 'sign.proj').read_text(encoding='utf-8')
 
-        self.assertIn('dependsOn:\n              - build_aarch64_apple_darwin\n              - build_x86_64_apple_darwin', signing)
+        self.assertIn("contains(convertToJson(parameters.buildPlatforms), 'aarch64-apple-darwin')", macos_guard)
+        self.assertIn("contains(convertToJson(parameters.buildPlatforms), 'x86_64-apple-darwin')", macos_guard)
+        self.assertIn('dependsOn:\n                - build_aarch64_apple_darwin\n                - build_x86_64_apple_darwin', signing)
         self.assertIn('/p:AdditionalFilesToSign="$(Build.ArtifactStagingDirectory)/x86_64-apple-darwin/pet.zip"', signing)
         self.assertIn('artifactName: bin-aarch64-apple-darwin', signing)
         self.assertIn('artifactName: bin-x86_64-apple-darwin', signing)
