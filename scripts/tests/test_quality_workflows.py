@@ -229,6 +229,37 @@ class QualityWorkflowTests(unittest.TestCase):
             ),
         )
 
+    def test_workflow_tokens_have_only_required_permissions(self) -> None:
+        for workflow, expected in (
+            ("build.yml", {"contents": "read"}),
+            ("pr-check.yml", {"contents": "read"}),
+            ("coverage.yml", {"contents": "read", "pull-requests": "write"}),
+            ("perf-tests.yml", {"contents": "read", "pull-requests": "write"}),
+        ):
+            with self.subTest(workflow=workflow):
+                text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+                match = re.search(
+                    r"(?m)^permissions:\n((?:  [a-z-]+: [a-z]+\n)+)", text
+                )
+                self.assertIsNotNone(match)
+                assert match is not None
+                self.assertEqual(
+                    dict(re.findall(r"(?m)^  ([a-z-]+): ([a-z]+)$", match.group(1))),
+                    expected,
+                )
+
+    def test_checkout_tokens_are_not_persisted_after_fetch(self) -> None:
+        for workflow in ("build.yml", "lint.yml", "perf-baseline.yml", "pr-check.yml"):
+            text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+            checkouts = [
+                step for step in re.split(r"(?m)^      - name: ", text)[1:]
+                if re.search(r"(?m)^        uses: actions/checkout@", step)
+            ]
+            with self.subTest(workflow=workflow):
+                self.assertTrue(checkouts)
+                for checkout in checkouts:
+                    self.assertRegex(checkout, r"(?m)^          persist-credentials: false$")
+
     def test_coverage_proof_and_source_reports_are_required_and_uploaded(self) -> None:
         for workflow in ("coverage.yml", "coverage-baseline.yml", "coverage-macos.yml"):
             with self.subTest(workflow=workflow):
