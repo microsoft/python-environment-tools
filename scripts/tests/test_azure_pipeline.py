@@ -67,6 +67,12 @@ class DevDivPipelineTests(unittest.TestCase):
             r'apiScanConnectionString: RunAs=App;AppId=[^;]+;TenantId=[^;]+;ServiceConnectionId=[^;]+;',
         )
 
+    def test_every_stage_sets_microbuild_team_name(self):
+        stages = self.template.split('- stage: ')[1:]
+        self.assertEqual(len(stages), 2)
+        for stage in stages:
+            self.assertIn('TeamName: ${{ parameters.teamName }}', stage)
+
     def test_macos_jobs_cover_only_selected_macos_targets(self):
         signing = self.template[self.template.index('- job: SignMacOS'):self.template.index('- job: VerifyMacOS')]
         verification = self.template[self.template.index('- job: VerifyMacOS'):self.template.index('- stage: APIScan')]

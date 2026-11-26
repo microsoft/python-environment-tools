@@ -390,6 +390,9 @@ extends:
           - stage: APIScan
             displayName: APIScan
             dependsOn: Package
+            variables:
+              # MicroBuild auto-injects a telemetry step that requires TeamName in every stage.
+              TeamName: ${{ parameters.teamName }}
             jobs:
               - job: APIScan
                 displayName: APIScan
