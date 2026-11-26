@@ -517,15 +517,9 @@ dependencies = [
 name = "pet-env-var-path"
 version = "0.1.0"
 dependencies = [
- "lazy_static",
- "log",
  "msvc_spectre_libs",
- "pet-conda",
  "pet-core",
  "pet-fs",
- "pet-python-utils",
- "pet-virtualenv",
- "regex",
 ]
 
 [[package]]
@@ -544,12 +538,9 @@ dependencies = [
 name = "pet-global-virtualenvs"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-conda",
- "pet-core",
  "pet-fs",
- "pet-virtualenv",
 ]
 
 [[package]]
@@ -579,8 +570,6 @@ dependencies = [
  "pet-virtualenv",
  "rayon",
  "regex",
- "serde",
- "serde_json",
  "tempfile",
 ]
 
@@ -588,10 +577,8 @@ dependencies = [
 name = "pet-jsonrpc"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "log",
  "msvc_spectre_libs",
- "pet-core",
  "serde",
  "serde_json",
 ]
@@ -600,7 +587,6 @@ dependencies = [
 name = "pet-linux-global-python"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
@@ -613,7 +599,6 @@ dependencies = [
 name = "pet-mac-commandlinetools"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
@@ -625,7 +610,6 @@ dependencies = [
 name = "pet-mac-python-org"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
@@ -637,7 +621,6 @@ dependencies = [
 name = "pet-mac-xcode"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
@@ -655,7 +638,6 @@ dependencies = [
  "pet-core",
  "pet-fs",
  "pet-python-utils",
- "pet-virtualenv",
  "regex",
 ]
 
@@ -663,7 +645,6 @@ dependencies = [
 name = "pet-pixi"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-conda",
  "pet-core",
@@ -682,11 +663,8 @@ dependencies = [
  "pet-core",
  "pet-fs",
  "pet-python-utils",
- "pet-reporter",
  "pet-virtualenv",
  "regex",
- "serde",
- "serde_json",
  "sha2",
  "tempfile",
  "toml 0.8.14",
@@ -705,7 +683,6 @@ dependencies = [
  "pet-python-utils",
  "pet-reporter",
  "regex",
- "serde",
  "serde_json",
  "tempfile",
 ]
@@ -746,13 +723,11 @@ dependencies = [
 name = "pet-telemetry"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "lazy_static",
  "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
- "pet-python-utils",
  "regex",
  "tempfile",
 ]
@@ -775,11 +750,9 @@ dependencies = [
 name = "pet-venv"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-python-utils",
- "pet-virtualenv",
  "tempfile",
 ]
 
@@ -787,10 +760,8 @@ dependencies = [
 name = "pet-virtualenv"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-core",
- "pet-fs",
  "pet-python-utils",
  "tempfile",
 ]
@@ -799,7 +770,6 @@ dependencies = [
 name = "pet-virtualenvwrapper"
 version = "0.1.0"
 dependencies = [
- "log",
  "msvc_spectre_libs",
  "pet-core",
  "pet-fs",
@@ -811,16 +781,13 @@ dependencies = [
 name = "pet-windows-registry"
 version = "0.1.0"
 dependencies = [
- "lazy_static",
  "log",
  "msvc_spectre_libs",
  "pet-conda",
  "pet-core",
  "pet-fs",
- "pet-python-utils",
  "pet-virtualenv",
  "pet-windows-store",
- "regex",
  "tempfile",
  "winreg",
 ]

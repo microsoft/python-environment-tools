@@ -10,7 +10,6 @@ msvc_spectre_libs = { version = "0.1.1", features = ["error"] }
 [dependencies]
 pet-core = { path = "../pet-core" }
 pet-fs = { path = "../pet-fs" }
-pet-virtualenv = { path = "../pet-virtualenv" }
 pet-python-utils = { path = "../pet-python-utils" }
 lazy_static = "1.4.0"
 log = "0.4.21"
