@@ -53,6 +53,29 @@ class DevDivPipelineTests(unittest.TestCase):
         self.assertIn('Copyright 2016 Max Resch', additional)
         self.assertIn('Permission is hereby granted', additional)
 
+    def test_apiscan_source_ref_gate(self):
+        pattern = re.search(r"\$scanRef = \$env:BUILD_SOURCEBRANCH -cmatch '([^']+)'", self.template)
+        self.assertIsNotNone(pattern)
+        for ref, expected in (
+            ('refs/heads/main', True),
+            ('refs/heads/release/latest', True),
+            ('refs/tags/release/2026.12', True),
+            ('refs/tags/v2024.16.0', True),
+            ('refs/pull/585/merge', False),
+            ('refs/heads/devdiv-prerelease', False),
+            ('refs/heads/feature/release/2026.12', False),
+            ('refs/heads/Main', False),
+            ('refs/tags/release/test', False),
+            ('refs/tags/release/2026.12-preview', False),
+            ('refs/tags/vnext', False),
+        ):
+            with self.subTest(ref=ref):
+                self.assertEqual(bool(re.search(pattern[1], ref)), expected)
+
+        stage = self.template.split('- stage: APIScan\n', 1)[1].split('jobs:', 1)[0]
+        self.assertIn("condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), "
+                      "eq(dependencies.Package.outputs['Package_x86_64_pc_windows_msvc.classifySource.scanRef'], 'True'))", stage)
+
     def test_apiscan_uses_workload_identity_service_connection(self):
         apiscan_start = self.template.index('- task: APIScan@2')
         tsa_start = self.template.index('- task: TSAUpload@2', apiscan_start)

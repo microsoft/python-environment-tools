@@ -134,6 +134,13 @@ extends:
                   - checkout: self
                     path: s
 
+                  - ${{ if eq(platform.target, 'x86_64-pc-windows-msvc') }}:
+                      - pwsh: |
+                          $scanRef = $env:BUILD_SOURCEBRANCH -cmatch '^refs/(?:heads/(?:main|release/.+)|tags/(?:release/[0-9]{4}\.[0-9]+|v[0-9]{4}\.[0-9]+\.[0-9]+))$'
+                          Write-Host "##vso[task.setvariable variable=scanRef;isOutput=true]$scanRef"
+                        name: classifySource
+                        displayName: Check APIScan source ref
+
                   - ${{ parameters.preBuildSteps }}
 
                   - task: RustInstaller@1
@@ -390,6 +397,7 @@ extends:
           - stage: APIScan
             displayName: APIScan
             dependsOn: Package
+            condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), eq(dependencies.Package.outputs['Package_x86_64_pc_windows_msvc.classifySource.scanRef'], 'True'))
             variables:
               # MicroBuild auto-injects a telemetry step that requires TeamName in every stage.
               TeamName: ${{ parameters.teamName }}
