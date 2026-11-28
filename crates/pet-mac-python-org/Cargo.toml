@@ -12,4 +12,3 @@ pet-core = { path = "../pet-core" }
 pet-python-utils = { path = "../pet-python-utils" }
 pet-virtualenv = { path = "../pet-virtualenv" }
 pet-fs = { path = "../pet-fs" }
-log = "0.4.21"
